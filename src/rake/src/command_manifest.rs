@@ -1258,11 +1258,14 @@ pub static MANIFEST: LazyLock<CommandManifest> = LazyLock::new(|| {
         category: CommandCategory::Storage,
         description: "Manage storage devices and directories",
         long_description: "Unified storage management for the Zen Garden ecosystem.\n\n\
-            Run bare to list all storages across the garden. Use subcommands to add,\n\
-            inspect, release, pin/unpin, or view detailed status.\n\n\
+            Run bare to list all storages across the garden. Use subcommands to discover,\n\
+            adopt, format, inspect, release, pin/unpin, or view detailed status.\n\n\
             Subcommands:\n\
-            - add: Add a storage device or directory\n\
+            - add: Discover and list available storage candidates\n\
+            - adopt: Adopt a device or directory, preserving existing files\n\
+            - format: Wipe a device and add as fresh managed storage (destructive)\n\
             - list: List all storages and eligible devices\n\
+            - info: Show detailed info for a single storage (filesystem, capabilities)\n\
             - status: Detailed capacity/health breakdown\n\
             - release: Safely unmount for removal\n\
             - pin: Claim Primary role on this stone\n\
@@ -1321,6 +1324,58 @@ pub static MANIFEST: LazyLock<CommandManifest> = LazyLock::new(|| {
                 args: vec![ArgSpec::positional("name", "Storage name to unpin").required()],
                 subcommands: vec![],
             },
+            // STORAGE-0019: adopt / format / info verb split.
+            SubDef {
+                name: "adopt",
+                description: "Adopt a device or directory, preserving existing files",
+                args: vec![
+                    ArgSpec::positional(
+                        "target",
+                        "Device path or directory (omit to discover)",
+                    ),
+                    ArgSpec::option(
+                        "set",
+                        "Replica set name (joins 'storage::<set>'; omit for default 'storage')",
+                    ),
+                    ArgSpec::multi_option("roles", "Roles to assign (e.g., seed-bank)")
+                        .delimiter(','),
+                    ArgSpec::flag("encrypted", "Enable encryption (pond-scoped)"),
+                    ArgSpec::flag(
+                        "explain",
+                        "Show long-form caveats inline (POSIX flattening, etc.)",
+                    ),
+                    ArgSpec::flag("yes", "Skip confirmation (non-interactive)").short('y'),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "format",
+                description: "Wipe a device and add it as fresh managed storage",
+                args: vec![
+                    ArgSpec::positional(
+                        "target",
+                        "Device path to format (omit to discover Raw devices)",
+                    ),
+                    ArgSpec::option(
+                        "set",
+                        "Replica set name (joins 'storage::<set>'; omit for default)",
+                    ),
+                    ArgSpec::multi_option("roles", "Roles to assign").delimiter(','),
+                    ArgSpec::option("fs", "Filesystem (ext4, btrfs)").default("btrfs"),
+                    ArgSpec::flag("encrypted", "Enable encryption (pond-scoped)"),
+                    ArgSpec::flag("yes", "Skip confirmation (DESTRUCTIVE — type 'yes' otherwise)")
+                        .short('y'),
+                ],
+                subcommands: vec![],
+            },
+            SubDef {
+                name: "info",
+                description: "Show detailed info for a single storage including filesystem tier",
+                args: vec![
+                    ArgSpec::positional("name", "Storage name").required(),
+                ],
+                subcommands: vec![],
+            },
         ],
         examples: vec![
             CommandExample {
@@ -1328,12 +1383,24 @@ pub static MANIFEST: LazyLock<CommandManifest> = LazyLock::new(|| {
                 syntax: "garden-rake storage",
             },
             CommandExample {
-                description: "Add a USB drive with zen syntax",
-                syntax: "garden-rake storage add /dev/sdb as photos with role seed-bank",
+                description: "Discover what's available to adopt or format",
+                syntax: "garden-rake storage add",
             },
             CommandExample {
-                description: "Add a NAS mount",
-                syntax: "garden-rake storage add /mnt/nas-media as media",
+                description: "Adopt a USB drive preserving its files",
+                syntax: "garden-rake storage adopt /mnt/usb",
+            },
+            CommandExample {
+                description: "Adopt into a named replica set",
+                syntax: "garden-rake storage adopt /mnt/usb --set media",
+            },
+            CommandExample {
+                description: "Wipe a blank drive and add as fresh storage",
+                syntax: "garden-rake storage format /dev/sdb --fs btrfs",
+            },
+            CommandExample {
+                description: "View detailed info for one storage",
+                syntax: "garden-rake storage info storage::media",
             },
             CommandExample {
                 description: "View detailed storage status",

@@ -584,6 +584,45 @@ pub async fn route(
                     m,
                 )
             }
+            // STORAGE-0019: adopt / format / info verb split.
+            Some(("adopt", sub)) => {
+                let roles: Vec<String> = sub
+                    .get_many::<String>("roles")
+                    .map(|v| v.cloned().collect())
+                    .unwrap_or_default();
+                Inv::remote(
+                    commands::storage::AdoptStorageCommand::new(
+                        opt(sub, "target"),
+                        opt(sub, "set"),
+                        roles,
+                        sub.get_flag("encrypted"),
+                        sub.get_flag("explain"),
+                        sub.get_flag("yes"),
+                    ),
+                    m,
+                )
+            }
+            Some(("format", sub)) => {
+                let roles: Vec<String> = sub
+                    .get_many::<String>("roles")
+                    .map(|v| v.cloned().collect())
+                    .unwrap_or_default();
+                Inv::remote(
+                    commands::storage::FormatStorageCommand::new(
+                        opt(sub, "target"),
+                        opt(sub, "set"),
+                        roles,
+                        opt(sub, "fs"),
+                        sub.get_flag("encrypted"),
+                        sub.get_flag("yes"),
+                    ),
+                    m,
+                )
+            }
+            Some(("info", sub)) => Inv::remote(
+                commands::storage::StorageInfoCommand::new(req(sub, "name")?),
+                m,
+            ),
             // Bare `storage` — list all storages (same as `storage list`)
             _ => Inv::remote(commands::storage::ListStorageCommand::new(), m),
         },

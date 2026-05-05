@@ -1515,3 +1515,572 @@ impl Command for StorageStatusCommand {
         "storage-status"
     }
 }
+
+// ============================================================================
+// Adopt Storage (STORAGE-0019)
+// ============================================================================
+//
+// `garden-rake storage adopt [target] [as set]` — preserves any
+// existing data on the target and registers it as managed storage.
+// Routes through `POST /api/v1/stone/storage/add` with `format=false`,
+// matching what `storage add` does today without the `--format` flag.
+//
+// Naming this verb separately from `format` makes the destructive vs
+// preserving intent explicit at the CLI level: every `format`
+// invocation is typed consent to erase the drive; every `adopt`
+// invocation is typed consent to preserve it.
+
+pub struct AdoptStorageCommand {
+    /// Target — block device path or directory path. None → discover.
+    pub target: Option<String>,
+    /// Replica set name (`as <name>`). None → default "storage" set.
+    pub set_name: Option<String>,
+    /// Roles to assign on adoption.
+    pub roles: Vec<String>,
+    /// Encrypt content (pond-scoped).
+    pub encrypted: bool,
+    /// Show the long-form caveats inline.
+    pub explain: bool,
+    /// Skip confirmation prompt.
+    pub yes: bool,
+}
+
+impl AdoptStorageCommand {
+    pub fn new(
+        target: Option<String>,
+        set_name: Option<String>,
+        roles: Vec<String>,
+        encrypted: bool,
+        explain: bool,
+        yes: bool,
+    ) -> Self {
+        Self {
+            target,
+            set_name,
+            roles,
+            encrypted,
+            explain,
+            yes,
+        }
+    }
+}
+
+impl Command for AdoptStorageCommand {
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a Context,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
+
+            let api = ctx.api();
+
+            // Resolve target — when not provided, discover and pick.
+            let (target, hint_filesystem, hint_existing_data) = match &self.target {
+                Some(t) => (t.clone(), None, None),
+                None => self.discover_adoptable(ctx).await?,
+            };
+
+            let set_label = self
+                .set_name
+                .as_deref()
+                .map(|n| format!("'storage::{}'", n))
+                .unwrap_or_else(|| "the 'storage' set".to_string());
+
+            // Three-bullet confirmation, plain language.
+            if !self.yes {
+                println!();
+                let fs_suffix = hint_filesystem
+                    .as_deref()
+                    .map(|f| format!(" \u{00B7} {}", garden_common::storage::render_fs_label(f)))
+                    .unwrap_or_default();
+                println!("Adopt '{target}'{fs_suffix} into {set_label}?");
+                println!();
+                if let Some(label) = hint_existing_data.as_deref() {
+                    println!("  \u{2022} Your files stay where they are \u{2014} {label}.");
+                } else {
+                    println!("  \u{2022} Your files stay where they are.");
+                }
+                println!("  \u{2022} Read, write, and sharing all work.");
+                println!("  \u{2022} The garden's other drives stay in sync with this one.");
+
+                if self.explain {
+                    println!();
+                    println!("  --explain:");
+                    println!("    \u{00B7} Foreign filesystems (NTFS, exFAT) flatten POSIX");
+                    println!("      permission bits and Linux extended attributes when files");
+                    println!("      round-trip with Native filesystems. Filenames, content,");
+                    println!("      and timestamps are unaffected.");
+                    println!("    \u{00B7} Read-only tiers (APFS) adopt as a library — no writes");
+                    println!("      land on the drive.");
+                    println!("    \u{00B7} The trailing 'storage migrate' tip after adoption is");
+                    println!("      forward-compatible scaffolding; the workflow itself ships");
+                    println!("      separately.");
+                }
+
+                println!();
+                print!("  Continue? [Y/n]: ");
+                io::stdout().flush()?;
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                let trimmed = input.trim().to_lowercase();
+                if !(trimmed.is_empty() || trimmed == "y" || trimmed == "yes") {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            }
+
+            let request = AddStorageRequest {
+                target: target.clone(),
+                name: self.set_name.clone(),
+                format: false,
+                filesystem: "btrfs".to_string(), // unused when format=false
+                encrypted: self.encrypted,
+                roles: self.roles.clone(),
+            };
+
+            let result: AddStorageResponseData = serde_json::from_value(
+                api.storage()
+                    .add(&request)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Adopt failed: {}", e.display_message()))?,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?;
+
+            println!();
+            println!(
+                "{} Adopted into {}.",
+                ui::status_indicator("success", ctx.term.supports_color),
+                set_label,
+            );
+            println!("  Mount: {}", result.mount_path);
+            if result.cataloged > 0 {
+                println!("  Cataloged: {} existing items", result.cataloged);
+            }
+
+            // Forward-compatible migrate hint, if Foreign.
+            if let Some(fs) = hint_filesystem.as_deref() {
+                if let Some(caps) = garden_common::storage::FsCapabilities::for_filesystem(fs) {
+                    if caps.tier != garden_common::storage::FsTier::Native {
+                        println!();
+                        println!(
+                            "  Tip: 'garden-rake storage migrate' can move your files onto a"
+                        );
+                        println!(
+                            "  Linux filesystem on the same drive when you're ready \u{2014} fully"
+                        );
+                        println!(
+                            "  optional, your data is fine where it is."
+                        );
+                    }
+                }
+            }
+
+            Ok(())
+        })
+    }
+
+    fn requires_endpoint(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &'static str {
+        "storage-adopt"
+    }
+}
+
+impl AdoptStorageCommand {
+    /// Find a candidate suitable for adoption. Returns
+    /// `(target, filesystem, existing_data_summary)`.
+    async fn discover_adoptable(
+        &self,
+        ctx: &Context,
+    ) -> anyhow::Result<(String, Option<String>, Option<String>)> {
+        let api = ctx.api();
+        let resp = api.storage().candidates().await.map_err(|e| {
+            anyhow::anyhow!("Failed to fetch candidates: {}", e.display_message())
+        })?;
+
+        // Adoptable = mounted volume + has data, OR medium with Adoptable
+        // condition. For now we use the existing eligible-spaces list
+        // (subset of "mounted, removable, online, unmanaged"), pick if
+        // exactly one, otherwise interactive.
+        let eligible: Vec<_> = resp.spaces.iter().filter(|s| s.eligible).collect();
+
+        if eligible.is_empty() {
+            anyhow::bail!(
+                "No adoptable devices found. Insert a USB drive with existing files, \
+                 or specify a directory path."
+            );
+        }
+        let chosen = if eligible.len() == 1 {
+            eligible[0]
+        } else {
+            println!("\nMultiple adoptable devices:");
+            for (i, dev) in eligible.iter().enumerate() {
+                println!(
+                    "  [{}] {} \u{2014} {}",
+                    i + 1,
+                    dev.mount_path.as_deref().unwrap_or(&dev.device),
+                    format_bytes(dev.capacity_bytes),
+                );
+            }
+            print!("\nSelect device [1-{}]: ", eligible.len());
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let idx: usize = input
+                .trim()
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
+            if idx == 0 || idx > eligible.len() {
+                anyhow::bail!("Selection out of range");
+            }
+            eligible[idx - 1]
+        };
+
+        let target = chosen
+            .mount_path
+            .clone()
+            .unwrap_or_else(|| chosen.device.clone());
+        // Look up filesystem and label from the matching MediumInfo's
+        // partitions list. Best effort; missing data is fine.
+        let mut filesystem: Option<String> = None;
+        let mut data_summary: Option<String> = None;
+        for m in &resp.media {
+            for p in &m.partitions {
+                if p.mount_path.as_deref() == chosen.mount_path.as_deref()
+                    || p.mount_path.as_deref() == Some(&chosen.device)
+                {
+                    filesystem = p.filesystem.clone();
+                    if let Some(label) = p.label.as_deref() {
+                        data_summary = Some(format!(
+                            "{} cataloged",
+                            label
+                        ));
+                    }
+                }
+            }
+        }
+        let _ = ctx;
+        Ok((target, filesystem, data_summary))
+    }
+}
+
+// ============================================================================
+// Format Storage (STORAGE-0019)
+// ============================================================================
+//
+// `garden-rake storage format [target] [as set] [--fs ...]` — wipes
+// the target drive and adds it as fresh managed storage. Routes
+// through the same add endpoint with `format=true`. Confirmation
+// requires typing 'yes' in full because the action is irreversible.
+
+pub struct FormatStorageCommand {
+    pub target: Option<String>,
+    pub set_name: Option<String>,
+    pub roles: Vec<String>,
+    pub filesystem: String,
+    pub encrypted: bool,
+    pub yes: bool,
+}
+
+impl FormatStorageCommand {
+    pub fn new(
+        target: Option<String>,
+        set_name: Option<String>,
+        roles: Vec<String>,
+        filesystem: Option<String>,
+        encrypted: bool,
+        yes: bool,
+    ) -> Self {
+        Self {
+            target,
+            set_name,
+            roles,
+            filesystem: filesystem.unwrap_or_else(|| "btrfs".to_string()),
+            encrypted,
+            yes,
+        }
+    }
+}
+
+impl Command for FormatStorageCommand {
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a Context,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
+
+            let api = ctx.api();
+
+            let target = match &self.target {
+                Some(t) => t.clone(),
+                None => self.discover_formattable(ctx).await?,
+            };
+
+            let set_label = self
+                .set_name
+                .as_deref()
+                .map(|n| format!("'storage::{}'", n))
+                .unwrap_or_else(|| "'storage'".to_string());
+
+            if !self.yes {
+                let fs_label = garden_common::storage::render_fs_label(&self.filesystem);
+                println!();
+                println!("Format '{target}' and add as {set_label}?");
+                println!();
+                println!("  \u{2022} Filesystem: {fs_label}");
+                println!("  \u{2022} Single partition spanning the whole drive");
+                println!(
+                    "  \u{2022} {} ANYTHING currently on the drive will be erased.",
+                    ui::status_indicator("warn", ctx.term.supports_color)
+                );
+                println!();
+                print!("  Type 'yes' to continue: ");
+                io::stdout().flush()?;
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                if input.trim().to_lowercase() != "yes" {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            }
+
+            let request = AddStorageRequest {
+                target: target.clone(),
+                name: self.set_name.clone(),
+                format: true,
+                filesystem: self.filesystem.clone(),
+                encrypted: self.encrypted,
+                roles: self.roles.clone(),
+            };
+
+            let result: AddStorageResponseData = serde_json::from_value(
+                api.storage()
+                    .add(&request)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Format failed: {}", e.display_message()))?,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?;
+
+            println!();
+            println!(
+                "{} Formatted and added into {}.",
+                ui::status_indicator("success", ctx.term.supports_color),
+                set_label,
+            );
+            println!("  Mount: {}", result.mount_path);
+            if let Some(ref job_id) = result.job_id {
+                println!("  Job: {job_id}");
+                println!("  Tip: 'garden-rake watch' monitors format progress.");
+            }
+
+            Ok(())
+        })
+    }
+
+    fn requires_endpoint(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &'static str {
+        "storage-format"
+    }
+}
+
+impl FormatStorageCommand {
+    /// Find a Raw / unpartitioned candidate suitable for fresh format.
+    async fn discover_formattable(&self, ctx: &Context) -> anyhow::Result<String> {
+        let api = ctx.api();
+        let resp = api.storage().candidates().await.map_err(|e| {
+            anyhow::anyhow!("Failed to fetch candidates: {}", e.display_message())
+        })?;
+
+        let raw_media: Vec<_> = resp
+            .media
+            .iter()
+            .filter(|m| matches!(m.condition, garden_common::storage::MediumCondition::Raw))
+            .collect();
+        if raw_media.is_empty() {
+            anyhow::bail!(
+                "No raw devices found to format. Use 'garden-rake storage add' to see \
+                 every available device, or pass a specific path."
+            );
+        }
+        let chosen = if raw_media.len() == 1 {
+            raw_media[0]
+        } else {
+            println!("\nMultiple unpartitioned devices:");
+            for (i, m) in raw_media.iter().enumerate() {
+                println!(
+                    "  [{}] {} \u{2014} {}",
+                    i + 1,
+                    m.model.as_deref().unwrap_or(&m.device_id),
+                    format_bytes(m.size_bytes),
+                );
+            }
+            print!("\nSelect device [1-{}]: ", raw_media.len());
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let idx: usize = input
+                .trim()
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
+            if idx == 0 || idx > raw_media.len() {
+                anyhow::bail!("Selection out of range");
+            }
+            raw_media[idx - 1]
+        };
+        let _ = ctx;
+        Ok(chosen.device_id.clone())
+    }
+}
+
+// ============================================================================
+// Storage Info (STORAGE-0019)
+// ============================================================================
+//
+// `garden-rake storage info <name>` — long-form per-storage detail
+// including the filesystem tier, capabilities, and the explicit
+// pin / migrate paths. Complements `storage list` (overview) and
+// `storage status` (capacity).
+
+pub struct StorageInfoCommand {
+    pub name: String,
+}
+
+impl StorageInfoCommand {
+    pub fn new(name: String) -> Self {
+        Self { name }
+    }
+}
+
+impl Command for StorageInfoCommand {
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a Context,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::ui::rendering as ui;
+            let api = ctx.api();
+
+            // Find the bank by name. The storage list endpoint is the
+            // simplest path; fetching by name returns a wider response
+            // shape that we can render here too if needed.
+            let banks: Vec<StorageInfo> = api.storage().banks().await.map_err(|e| {
+                anyhow::anyhow!("Failed to fetch storage banks: {}", e.display_message())
+            })?;
+
+            let target = banks
+                .iter()
+                .find(|b| b.name == self.name || b.replica_set_name == self.name);
+
+            let Some(bank) = target else {
+                anyhow::bail!(
+                    "No managed storage named '{}' on this stone. Try 'garden-rake storage list'.",
+                    self.name
+                );
+            };
+
+            // Derive the filesystem token. Today `StorageInfo` carries a
+            // `btrfs: bool` rather than a generic filesystem string, so
+            // we surface what we can. A future unit lifts the full
+            // filesystem token onto the wire type.
+            let fs_token = if bank.btrfs { "btrfs" } else { "ext4" };
+            let fs_label = garden_common::storage::render_fs_label(fs_token);
+            let caps = garden_common::storage::FsCapabilities::for_filesystem(fs_token);
+
+            println!(
+                "\n{} {}",
+                ui::status_indicator("info", ctx.term.supports_color),
+                bank.name
+            );
+            println!("  Filesystem:    {fs_label}");
+            if let Some(c) = caps.as_ref() {
+                println!("  Tier:          {}", c.tier);
+                println!("  Capabilities:");
+                println!(
+                    "    case-sensitive:    {}",
+                    if c.case_sensitive { "yes" } else { "no" }
+                );
+                println!(
+                    "    POSIX permissions: {}",
+                    if c.posix_permissions { "yes" } else { "no" }
+                );
+                println!(
+                    "    extended attrs:    {}",
+                    if c.xattrs { "yes" } else { "no" }
+                );
+                println!(
+                    "    atomic rename:     {}",
+                    if c.atomic_rename { "yes" } else { "no" }
+                );
+                println!(
+                    "    sparse files:      {}",
+                    if c.sparse_files { "yes" } else { "no" }
+                );
+            }
+            println!(
+                "  Replica set:   {}",
+                if bank.replica_set_name.is_empty() {
+                    "storage (default)".to_string()
+                } else {
+                    format!("storage::{}", bank.replica_set_name)
+                }
+            );
+            println!("  Capacity:      {}", format_bytes(bank.capacity_bytes));
+            println!(
+                "  Used:          {} ({:.1}%)",
+                format_bytes(bank.used_bytes),
+                if bank.capacity_bytes > 0 {
+                    (bank.used_bytes as f64) * 100.0 / (bank.capacity_bytes as f64)
+                } else {
+                    0.0
+                }
+            );
+            println!("  Mount:         {}", bank.mount_path);
+            println!(
+                "  State:         {}",
+                if bank.online { "online" } else { "offline" }
+            );
+            if bank.encrypted {
+                println!("  Encrypted:     yes");
+            }
+            if !bank.roles.is_empty() {
+                println!("  Roles:         {}", bank.roles.join(", "));
+            }
+
+            println!();
+            println!("  Levers:");
+            println!(
+                "    garden-rake storage pin {}      (claim Primary)",
+                bank.name
+            );
+            if caps.map(|c| c.tier).unwrap_or(garden_common::storage::FsTier::Native)
+                != garden_common::storage::FsTier::Native
+            {
+                println!(
+                    "    garden-rake storage migrate {}  (convert to Linux fs; planned)",
+                    bank.name
+                );
+            }
+            println!(
+                "    garden-rake storage release {}  (safely unmount)",
+                bank.name
+            );
+
+            Ok(())
+        })
+    }
+
+    fn requires_endpoint(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &'static str {
+        "storage-info"
+    }
+}

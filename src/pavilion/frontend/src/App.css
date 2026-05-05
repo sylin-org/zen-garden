@@ -323,3 +323,20 @@
 .sep {
   color: var(--s4);
 }
+
+/* ─── Activity severity pip ────────────────────────────────── */
+
+.severity-pip {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+  background: var(--s4);
+}
+
+.severity-info   { background: var(--s5); }
+.severity-notice { background: var(--sage); }
+.severity-warn   { background: var(--clay); }
+.severity-urgent { background: var(--red);  animation: breathe 1.5s var(--ease) infinite; }

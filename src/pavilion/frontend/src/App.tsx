@@ -50,6 +50,28 @@ interface StoragePayload {
   banks: BankSummary[]
 }
 
+type Severity = "info" | "notice" | "warn" | "urgent"
+
+interface StoneJoinedEvent { kind: "stone_joined"; stone_id: string; stone_name: string; endpoint: string }
+interface StoneLeftEvent { kind: "stone_left"; stone_id: string; stone_name: string }
+interface StorageActivityEvent {
+  kind: "storage_activity"
+  stone_name: string
+  bank_name: string
+  creates: number
+  modifies: number
+  deletes: number
+}
+type GardenEventPayload = StoneJoinedEvent | StoneLeftEvent | StorageActivityEvent
+
+interface ActivityEntry {
+  id: string
+  at: string
+  event: GardenEventPayload
+  severity: Severity
+  promoted: boolean
+}
+
 function App() {
   const [version, setVersion] = useState<string>("…")
   const [now, setNow] = useState<string>(new Date().toLocaleTimeString())
@@ -61,6 +83,7 @@ function App() {
   const [pondError, setPondError] = useState<string | null>(null)
   const [storage, setStorage] = useState<StoragePayload | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
+  const [activity, setActivity] = useState<ActivityEntry[]>([])
 
   // Fetch tended-stone data (services + pond). Called on mount and on
   // every tending-changed event. Errors are surfaced into per-tile
@@ -92,21 +115,33 @@ function App() {
     }
   }, [])
 
+  const refreshActivity = useCallback(async () => {
+    try {
+      const result = await invoke<ActivityEntry[]>("get_activity")
+      setActivity(result)
+    } catch (e) {
+      console.error("get_activity failed:", e)
+    }
+  }, [])
+
   // Initial load + push subscriptions.
   useEffect(() => {
     let unlistenTopology: UnlistenFn | undefined
     let unlistenTending: UnlistenFn | undefined
+    let unlistenActivity: UnlistenFn | undefined
     let cancelled = false
 
     const setup = async () => {
       try {
-        const [initialStones, initialTended] = await Promise.all([
+        const [initialStones, initialTended, initialActivity] = await Promise.all([
           invoke<AwareStone[]>("get_topology"),
           invoke<TendedStone | null>("get_tended"),
+          invoke<ActivityEntry[]>("get_activity"),
         ])
         if (cancelled) return
         setStones(initialStones)
         setTended(initialTended)
+        setActivity(initialActivity)
         if (initialTended) {
           refreshTendedData()
         }
@@ -122,6 +157,9 @@ function App() {
         // Tending changed → re-fetch all tended-stone data.
         refreshTendedData()
       })
+      unlistenActivity = await listen<null>("activity-changed", () => {
+        refreshActivity()
+      })
     }
     setup()
 
@@ -132,9 +170,10 @@ function App() {
       cancelled = true
       unlistenTopology?.()
       unlistenTending?.()
+      unlistenActivity?.()
       clearInterval(clockId)
     }
-  }, [refreshTendedData])
+  }, [refreshTendedData, refreshActivity])
 
   const setStoneAsTended = useCallback(async (stone: AwareStone) => {
     try {
@@ -333,6 +372,25 @@ function App() {
           </section>
         )}
 
+        {activity.length > 0 && (
+          <section className="stones-list">
+            <div className="stones-list-title">Recent activity</div>
+            {activity.slice(0, 12).map(entry => {
+              const { primary, secondary } = describeActivity(entry.event)
+              return (
+                <div className="stone-row" key={entry.id} style={{ cursor: "default" }}>
+                  <span className="stone-name">
+                    <span className={`severity-pip severity-${entry.severity}`} />
+                    {primary}
+                  </span>
+                  <span className="stone-endpoint">{secondary}</span>
+                  <span className="stone-age">{formatAgeFromIso(entry.at)}</span>
+                </div>
+              )
+            })}
+          </section>
+        )}
+
         <section className="placeholder-note">
           <div className="placeholder-title">Awareness · API integration</div>
           <div className="placeholder-body">
@@ -340,8 +398,10 @@ function App() {
             <code> DISCOVERY_RESPONSE</code>. Services, pond, and storage are
             pull-on-demand against the tended stone (refresh on every
             <code> tending-changed</code>). Tending file shared with Rake at
-            <code> ~/.zen-garden/.tending</code>. Toasts, Cloud Filter, and
-            companions arrive in the next milestone.
+            <code> ~/.zen-garden/.tending</code>. Toasts fire on stone joined /
+            offline and on storage activity bursts; the same events feed the
+            Activity row above. Cloud Filter and companions arrive in the
+            next milestone.
           </div>
         </section>
       </main>
@@ -356,6 +416,34 @@ function App() {
       </footer>
     </div>
   )
+}
+
+function describeActivity(event: GardenEventPayload): { primary: string; secondary: string } {
+  switch (event.kind) {
+    case "stone_joined":
+      return { primary: `${event.stone_name} joined`, secondary: event.endpoint }
+    case "stone_left":
+      return { primary: `${event.stone_name} offline`, secondary: "lost contact" }
+    case "storage_activity": {
+      const total = event.creates + event.modifies + event.deletes
+      return {
+        primary: `${event.bank_name} synced ${total} files`,
+        secondary: `${event.creates} new · ${event.modifies} changed · ${event.deletes} removed`,
+      }
+    }
+  }
+}
+
+function formatAgeFromIso(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (ms < 0) return "just now"
+  const secs = Math.floor(ms / 1000)
+  if (secs < 60) return `${secs}s`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins}m`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h`
+  return `${Math.floor(hrs / 24)}d`
 }
 
 export default App

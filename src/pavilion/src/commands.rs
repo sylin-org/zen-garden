@@ -11,6 +11,7 @@ use garden_common::storage::GardenStorageSummary;
 use serde::Serialize;
 use tauri::State;
 
+use crate::announce::{ActivityEntry, ActivityStore};
 use crate::awareness::{AwareStone, Awareness};
 use crate::connection;
 use crate::tending::{TendedStone, Tending};
@@ -181,6 +182,17 @@ pub async fn get_pond_status(
 pub struct StoragePayload {
     pub count: usize,
     pub banks: Vec<GardenStorageSummary>,
+}
+
+/// Snapshot of the in-memory Activity ring buffer. Newest first.
+/// Frontend calls on mount and listens for an `activity-changed` event
+/// thereafter (event wiring is a follow-up — for v1 the frontend may
+/// poll on demand).
+#[tauri::command]
+pub async fn get_activity(
+    store: State<'_, ActivityStore>,
+) -> Result<Vec<ActivityEntry>, String> {
+    Ok(store.snapshot().await)
 }
 
 /// Fetch the garden-wide storage summary from the currently-tended

@@ -12,6 +12,8 @@
 )]
 
 #[cfg(target_os = "windows")]
+mod announce;
+#[cfg(target_os = "windows")]
 mod app;
 #[cfg(target_os = "windows")]
 mod awareness;

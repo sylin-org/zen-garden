@@ -24,6 +24,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::RwLock;
 
+use crate::announce::{Announcer, GardenEvent};
+
 /// Stones whose last sighting is older than this are evicted from the
 /// cache. Matches Moss's 90-second topology TTL.
 const TTL: Duration = Duration::from_secs(90);
@@ -56,6 +58,7 @@ pub struct AwareStone {
 pub struct Awareness {
     stones: Arc<RwLock<HashMap<String, CacheEntry>>>,
     app: AppHandle,
+    announcer: Announcer,
 }
 
 #[derive(Clone)]
@@ -76,10 +79,11 @@ struct CacheEntry {
 }
 
 impl Awareness {
-    pub fn new(app: AppHandle) -> Self {
+    pub fn new(app: AppHandle, announcer: Announcer) -> Self {
         Self {
             stones: Arc::new(RwLock::new(HashMap::new())),
             app,
+            announcer,
         }
     }
 
@@ -175,14 +179,28 @@ impl Awareness {
     async fn run_ttl_eviction(self: Arc<Self>) {
         loop {
             tokio::time::sleep(EVICTION_INTERVAL).await;
-            let evicted = {
+            let evicted_entries: Vec<(String, String)> = {
                 let mut stones = self.stones.write().await;
-                let before = stones.len();
-                stones.retain(|_, e| e.received_at.elapsed() < TTL);
-                before - stones.len()
+                let mut gone = Vec::new();
+                stones.retain(|id, e| {
+                    let alive = e.received_at.elapsed() < TTL;
+                    if !alive {
+                        gone.push((id.clone(), e.stone_name.clone()));
+                    }
+                    alive
+                });
+                gone
             };
-            if evicted > 0 {
-                tracing::info!(evicted, "awareness: TTL eviction");
+            if !evicted_entries.is_empty() {
+                tracing::info!(evicted = evicted_entries.len(), "awareness: TTL eviction");
+                for (stone_id, stone_name) in &evicted_entries {
+                    self.announcer
+                        .observe(GardenEvent::StoneLeft {
+                            stone_id: stone_id.clone(),
+                            stone_name: stone_name.clone(),
+                        })
+                        .await;
+                }
                 self.emit_topology().await;
             }
         }
@@ -212,7 +230,7 @@ impl Awareness {
     async fn ingest_chirp(&self, chirp: TopologyEntry, from: String) {
         let stone_id = chirp.stone_id.clone();
         let now = Instant::now();
-        let was_new = {
+        let (was_new, name_for_event, endpoint_for_event) = {
             let mut stones = self.stones.write().await;
             let was_new = !stones.contains_key(&stone_id);
             let entry = stones.entry(stone_id.clone()).or_insert_with(|| CacheEntry {
@@ -232,10 +250,17 @@ impl Awareness {
             entry.services_count = chirp.services.len();
             entry.last_seen = chirp.last_seen;
             entry.received_at = now;
-            was_new
+            (was_new, entry.stone_name.clone(), entry.endpoint.clone())
         };
         if was_new {
             tracing::info!(stone_id = %stone_id, %from, "awareness: new stone via chirp");
+            self.announcer
+                .observe(GardenEvent::StoneJoined {
+                    stone_id: stone_id.clone(),
+                    stone_name: name_for_event,
+                    endpoint: endpoint_for_event,
+                })
+                .await;
         }
         self.emit_topology().await;
     }
@@ -246,7 +271,7 @@ impl Awareness {
             .clone()
             .unwrap_or_else(|| resp.stone_name.clone());
         let now = Instant::now();
-        let was_new = {
+        let (was_new, name_for_event, endpoint_for_event) = {
             let mut stones = self.stones.write().await;
             let was_new = !stones.contains_key(&stone_id);
             let entry = stones.entry(stone_id.clone()).or_insert_with(|| CacheEntry {
@@ -265,10 +290,17 @@ impl Awareness {
             entry.endpoint = resp.address.http_base();
             entry.last_seen = Utc::now();
             entry.received_at = now;
-            was_new
+            (was_new, entry.stone_name.clone(), entry.endpoint.clone())
         };
         if was_new {
             tracing::info!(stone_id = %stone_id, %from, "awareness: new stone via discovery response");
+            self.announcer
+                .observe(GardenEvent::StoneJoined {
+                    stone_id: stone_id.clone(),
+                    stone_name: name_for_event,
+                    endpoint: endpoint_for_event,
+                })
+                .await;
         }
         self.emit_topology().await;
     }

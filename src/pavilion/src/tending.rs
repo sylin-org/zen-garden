@@ -31,7 +31,7 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
-use tokio::sync::RwLock;
+use tokio::sync::{watch, RwLock};
 
 use crate::awareness::{AwareStone, Awareness};
 
@@ -70,6 +70,10 @@ impl From<&TendingState> for TendedStone {
 
 pub struct Tending {
     current: Arc<RwLock<Option<TendingState>>>,
+    /// Watch channel mirroring `current` so Rust-side subscribers
+    /// (the storage-observer supervisor) can rebind on tending
+    /// changes without polling the file or the Tauri event bus.
+    tx: watch::Sender<Option<TendedStone>>,
     app: AppHandle,
 }
 
@@ -81,14 +85,24 @@ impl Tending {
         } else {
             tracing::info!("tending: no existing .tending file");
         }
+        let initial = stored.as_ref().map(TendedStone::from);
+        let (tx, _) = watch::channel(initial);
         Self {
             current: Arc::new(RwLock::new(stored)),
+            tx,
             app,
         }
     }
 
     pub async fn current(&self) -> Option<TendedStone> {
         self.current.read().await.as_ref().map(TendedStone::from)
+    }
+
+    /// Subscribe to tending changes — the receiver yields a fresh
+    /// snapshot on every `set` call (and one snapshot of the initial
+    /// state on first read).
+    pub fn subscribe(&self) -> watch::Receiver<Option<TendedStone>> {
+        self.tx.subscribe()
     }
 
     /// Replace the tended stone. Persists to disk and emits the event.
@@ -112,6 +126,9 @@ impl Tending {
         }
 
         let payload = TendedStone::from(&state);
+        // Notify Rust-side subscribers (observer supervisor) and the
+        // frontend in parallel — both must see the new tending.
+        let _ = self.tx.send(Some(payload.clone()));
         if let Err(e) = self.app.emit(EVENT_TENDING_CHANGED, &payload) {
             tracing::warn!(error = %e, "tending: failed to emit");
         }

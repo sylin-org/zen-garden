@@ -13,6 +13,7 @@ use tauri::{
     Manager, WindowEvent,
 };
 
+use crate::announce::{observer, policy, ActivityStore, Announcer};
 use crate::awareness::Awareness;
 use crate::commands;
 use crate::integration::cloud_filter;
@@ -27,6 +28,7 @@ pub fn run() {
             commands::get_services,
             commands::get_pond_status,
             commands::get_storage,
+            commands::get_activity,
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // Another invocation tried to start; focus the existing window.
@@ -101,9 +103,19 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Announcer — coalesces and dedupes events fed from
+            // Awareness and the SSE storage observer; activity rows
+            // for the Activity view; toasts when the policy promotes.
+            let activity_store = ActivityStore::default();
+            let announcer = Announcer::new(app.handle().clone(), activity_store.clone());
+            policy::spawn_flush_loop(announcer.clone());
+            app.manage(activity_store.clone());
+            app.manage(announcer.clone());
+
             // Awareness — subscribes to STONE_CHIRP, evicts stale entries,
-            // emits `topology-changed` events to the frontend.
-            let awareness = Arc::new(Awareness::new(app.handle().clone()));
+            // emits `topology-changed` events to the frontend, and feeds
+            // join/leave events to the Announcer.
+            let awareness = Arc::new(Awareness::new(app.handle().clone(), announcer.clone()));
             awareness.spawn_listeners();
             app.manage(awareness.clone());
 
@@ -113,10 +125,15 @@ pub fn run() {
             // both in one task avoids racing the tending state.
             // Spawned async because `Tending::new` reads the file.
             let app_handle = app.handle().clone();
+            let supervisor_announcer = announcer.clone();
             tauri::async_runtime::spawn(async move {
                 let tending = Arc::new(Tending::new(app_handle.clone()).await);
                 app_handle.manage(tending.clone());
                 tending.clone().spawn_auto_tend(awareness);
+
+                // Storage observer supervisor — rebinds the SSE
+                // observer task to the currently tended stone.
+                spawn_observer_supervisor(supervisor_announcer, tending.clone());
 
                 // Cloud Filter — register sync root + connect provider.
                 // Non-fatal on failure (no admin, Win32 API unavailable);
@@ -139,3 +156,39 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running Pavilion");
 }
+
+/// Watch the tending channel and rebind the storage SSE observer to
+/// the currently tended stone. Cancels the previous observer's token
+/// before spawning a new one so streams don't overlap.
+fn spawn_observer_supervisor(announcer: Announcer, tending: Arc<Tending>) {
+    tauri::async_runtime::spawn(async move {
+        let mut rx = tending.subscribe();
+        let mut current_token: Option<tokio_util::sync::CancellationToken> = None;
+
+        // Prime with the current value (`watch::Receiver` yields the
+        // initial state on the first `borrow_and_update`).
+        let initial = rx.borrow_and_update().clone();
+        if let Some(stone) = initial {
+            tracing::info!(stone = %stone.stone_name, "observer supervisor: starting initial observer");
+            current_token = Some(observer::spawn_storage_observer(announcer.clone(), stone));
+        }
+
+        loop {
+            if rx.changed().await.is_err() {
+                tracing::warn!("observer supervisor: tending channel closed");
+                break;
+            }
+            let next = rx.borrow_and_update().clone();
+            if let Some(token) = current_token.take() {
+                token.cancel();
+            }
+            if let Some(stone) = next {
+                tracing::info!(stone = %stone.stone_name, "observer supervisor: rebinding to new tending");
+                current_token = Some(observer::spawn_storage_observer(announcer.clone(), stone));
+            } else {
+                tracing::info!("observer supervisor: tending cleared");
+            }
+        }
+    });
+}
+

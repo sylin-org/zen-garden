@@ -64,6 +64,12 @@ tauri-plugin-autostart = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-notification = "2"
 
+# Win11 acrylic backdrop on the tray popover only — the spec
+# (PAVILION-0002 §M2 "Tray popover polish") explicitly forbids
+# Mica on the main window because it interferes with the in-app
+# 3D topology surface in M2/M3.
+window-vibrancy = "0.6"
+
 # Cloud Filter — native Windows Explorer sync provider (PAVILION-0001
 # §"Cloud Filter migration"). Hydration is backed by the tended stone's
 # StoneApi (read range / list directory) — no local storage in Pavilion.

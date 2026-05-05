@@ -285,6 +285,24 @@ pub async fn wake_service(
     run_service_action(&tending, &name, ServiceOp::Wake).await
 }
 
+// ── Window control ─────────────────────────────────────────────────
+
+/// Show the main Pavilion window (focused, restored from minimized).
+/// Used by the tray popover's "Open Pavilion" CTA: the popover hides
+/// itself on focus loss after this call brings the main window
+/// forward, so there's no overlap window.
+#[tauri::command]
+pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager as _;
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window missing".to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.unminimize().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ── Facilitators ───────────────────────────────────────────────────
 
 /// Current active facilitator suggestion, if any. Frontend calls

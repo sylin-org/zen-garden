@@ -23,6 +23,20 @@
         "resizable": true,
         "visible": true,
         "center": true
+      },
+      {
+        "label": "popover",
+        "title": "Pavilion popover",
+        "width": 360,
+        "height": 480,
+        "decorations": false,
+        "resizable": false,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "transparent": true,
+        "shadow": false,
+        "focus": true
       }
     ],
     "security": {

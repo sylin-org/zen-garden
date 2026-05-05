@@ -2385,6 +2385,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "window-vibrancy",
  "windows-sys 0.52.0",
 ]
 

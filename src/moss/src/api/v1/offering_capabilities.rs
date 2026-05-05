@@ -17,10 +17,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use urlencoding::encode;
 
-use crate::api::responses::ApiResponse;
 use crate::domain::{CapabilityExecutor, get_offering_port};
+use crate::infra::cross_stone::{self, CrossStoneError};
 use crate::infra::manifests::get_capability_manifest;
-use crate::{Moss, bad_gateway, bad_request, conflict, internal, not_found, not_implemented};
+use crate::{Moss, bad_request, conflict, internal, not_found, not_implemented};
 
 /// Response for capability listing
 #[derive(Debug, Serialize, Deserialize)]
@@ -821,18 +821,22 @@ pub async fn mirror_offering_capabilities_v1(
         ));
     }
 
-    let from_endpoint = resolve_stone_endpoint(&state, from).await.ok_or_else(|| {
-        not_found(
-            "STONE_NOT_FOUND",
-            format!("Stone '{}' not found in topology cache", from),
-        )
-    })?;
-    let to_endpoint = resolve_stone_endpoint(&state, to).await.ok_or_else(|| {
-        not_found(
-            "STONE_NOT_FOUND",
-            format!("Stone '{}' not found in topology cache", to),
-        )
-    })?;
+    let from_endpoint = cross_stone::resolve_stone_endpoint(&state, from)
+        .await
+        .ok_or_else(|| {
+            CrossStoneError::StoneNotFound {
+                stone: from.to_string(),
+            }
+            .into_api_error()
+        })?;
+    let to_endpoint = cross_stone::resolve_stone_endpoint(&state, to)
+        .await
+        .ok_or_else(|| {
+            CrossStoneError::StoneNotFound {
+                stone: to.to_string(),
+            }
+            .into_api_error()
+        })?;
 
     let client = Client::builder()
         .timeout(garden_common::constants::timeouts::capability_check_timeout())
@@ -935,72 +939,37 @@ pub async fn mirror_offering_capabilities_v1(
     })
 }
 
-async fn resolve_stone_endpoint(state: &Moss, stone_name: &str) -> Option<String> {
-    if stone_name.eq_ignore_ascii_case(&state.current.stone.name) {
-        let base = state.current.address.read().await.http_base();
-        if base.contains("0.0.0.0") {
-            Some(format!("http://127.0.0.1:{}", state.current.api_port))
-        } else {
-            Some(base)
-        }
-    } else {
-        state
-            .topology
-            .get_by_name(stone_name)
-            .await
-            .map(|entry| entry.address.http_base())
-    }
-}
-
+/// Fetch the capabilities of one offering on a remote stone.
+///
+/// Thin wrapper over [`cross_stone::fetch_from_stone`] that knows
+/// the capability endpoint path. Maps the generic
+/// [`CrossStoneError::NotFound`] to an `OFFERING_NOT_FOUND` outer
+/// error so the mirror handler returns 404 (offering not on the
+/// source) instead of 502 (source stone broken).
 async fn fetch_remote_capabilities(
     client: &Client,
     endpoint: &str,
     stone_name: &str,
     offering: &str,
 ) -> Result<CapabilitiesResponse, (StatusCode, Json<ApiErrorResponse>)> {
-    let offering_path = encode(offering);
-    let url = format!(
-        "{}/api/v1/stone/offerings/{}/capabilities",
-        endpoint.trim_end_matches('/'),
-        offering_path
-    );
-
-    let response = client.get(&url).send().await.map_err(|e| {
-        bad_gateway(
-            "REMOTE_UNREACHABLE",
-            format!("Failed to reach stone '{}': {}", stone_name, e),
-        )
-    })?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        let message = serde_json::from_str::<ApiErrorResponse>(&body)
-            .map(|err| err.error.message)
-            .unwrap_or_else(|_| body);
-
-        let err_msg = format!(
-            "Failed to fetch capabilities from '{}': {}",
-            stone_name, message
-        );
-
-        return Err(if status.as_u16() == StatusCode::NOT_FOUND.as_u16() {
-            not_found("OFFERING_NOT_FOUND", err_msg)
-        } else {
-            bad_gateway("REMOTE_ERROR", err_msg)
-        });
-    }
-
-    let api_response: ApiResponse<CapabilitiesResponse> = response.json().await.map_err(|e| {
-        bad_gateway(
-            "REMOTE_PARSE_FAILED",
-            format!("Failed to parse capabilities from '{}': {}", stone_name, e),
-        )
-    })?;
-
-    Ok(api_response.data)
+    let path = format!("/api/v1/stone/offerings/{}/capabilities", encode(offering));
+    cross_stone::fetch_from_stone::<CapabilitiesResponse>(client, endpoint, stone_name, &path)
+        .await
+        .map_err(|e| match e {
+            // 404 from the remote means the offering doesn't exist
+            // there — re-tag the error code so the mirror handler's
+            // outer error reflects the real cause.
+            CrossStoneError::NotFound { .. } => not_found("OFFERING_NOT_FOUND", e.to_string()),
+            other => other.into_api_error(),
+        })
 }
 
+/// POST a single capability to a remote stone.
+///
+/// Returns String errors (not the api-error-tuple) because
+/// `mirror_capabilities` aggregates per-capability failures into
+/// a list of strings rather than aborting the whole mirror on the
+/// first error.
 async fn add_capability_to_stone(
     client: &Client,
     endpoint: &str,
@@ -1009,41 +978,15 @@ async fn add_capability_to_stone(
     capability: &str,
     dry_run: bool,
 ) -> Result<AddCapabilityResponse, String> {
-    let offering_path = encode(offering);
-    let url = format!(
-        "{}/api/v1/stone/offerings/{}/capabilities",
-        endpoint.trim_end_matches('/'),
-        offering_path
-    );
-
+    let path = format!("/api/v1/stone/offerings/{}/capabilities", encode(offering));
     let body = serde_json::json!({
         "name": capability,
         "type": cap_type,
         "dry_run": dry_run,
     });
-
-    let response = client
-        .post(&url)
-        .json(&body)
-        .send()
+    cross_stone::post_to_stone::<_, AddCapabilityResponse>(client, endpoint, "remote", &path, &body)
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        let message = serde_json::from_str::<ApiErrorResponse>(&text)
-            .map(|err| err.error.message)
-            .unwrap_or_else(|_| text);
-        return Err(format!("{}: {}", status, message));
-    }
-
-    let api_response: ApiResponse<AddCapabilityResponse> = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse add response: {}", e))?;
-
-    Ok(api_response.data)
+        .map_err(|e| e.to_string())
 }
 
 /// Convert Offering to ServiceInfo for capability executor compatibility

@@ -330,6 +330,45 @@ pub fn is_removable(path: &str) -> bool {
     }
 }
 
+/// Resolve the filesystem token for an unmounted block device (STORAGE-0019).
+///
+/// Linux: shells out to `blkid -s TYPE -o value <device>`, which reads the
+/// superblock directly without requiring the device to be mounted. Returns
+/// the lowercased token (e.g. `"ntfs"`, `"ext4"`, `"vfat"`) or `None` if
+/// blkid fails or finds no recognizable filesystem.
+/// Windows: not implemented (storage adoption uses mount-path discovery).
+pub fn device_filesystem(device: &str) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::device_filesystem(device)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = device;
+        None
+    }
+}
+
+/// Resolve the filesystem token for the volume that contains `path`
+/// (STORAGE-0019).
+///
+/// Linux: walks `/proc/mounts` to find the longest mount-path prefix that
+/// `path` lives under, then resolves the kernel fstype through
+/// [`resolve_real_fstype`] so FUSE-backed filesystems (NTFS via ntfs-3g,
+/// exFAT via fuse) report their underlying token.
+/// Windows / others: not implemented.
+pub fn filesystem_for_path(path: &str) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::filesystem_for_path(path)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 // ============================================================================
 // Linux implementation
 // ============================================================================
@@ -440,6 +479,63 @@ mod linux {
         } else {
             Some(real)
         }
+    }
+
+    /// STORAGE-0019: detect the filesystem token of an unmounted block
+    /// device by reading its superblock via `blkid`. Returns the
+    /// lowercased token (e.g. `"ntfs"`, `"ext4"`) or `None` when blkid
+    /// fails or finds no recognizable filesystem.
+    pub fn device_filesystem(device: &str) -> Option<String> {
+        let output = std::process::Command::new("blkid")
+            .args(["-s", "TYPE", "-o", "value", device])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let token = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_ascii_lowercase();
+        if token.is_empty() { None } else { Some(token) }
+    }
+
+    /// STORAGE-0019: find the filesystem token for the volume that
+    /// contains `path`. Walks `/proc/mounts` and picks the longest
+    /// mount-path prefix; resolves the result through
+    /// [`resolve_real_fstype`] so fuseblk volumes surface as their
+    /// real type (`"ntfs"` / `"exfat"` / ...).
+    pub fn filesystem_for_path(path: &str) -> Option<String> {
+        let canonical = std::fs::canonicalize(path)
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| path.to_string());
+
+        let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
+
+        let mut best: Option<(usize, String, String)> = None;
+        for line in mounts.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            let device = parts[0];
+            let mount_path = parts[1];
+            let fs_type = parts[2];
+
+            let is_under = canonical == mount_path
+                || (mount_path == "/" && canonical.starts_with('/'))
+                || canonical.starts_with(&format!("{}/", mount_path));
+            if !is_under {
+                continue;
+            }
+            let len = mount_path.len();
+            if best.as_ref().is_none_or(|(b, _, _)| len > *b) {
+                best = Some((len, fs_type.to_string(), device.to_string()));
+            }
+        }
+
+        let (_, fs_type, device) = best?;
+        resolve_real_fstype(&fs_type, &device)
     }
 
     pub fn is_removable(device_path: &str) -> bool {

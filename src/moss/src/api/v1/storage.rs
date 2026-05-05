@@ -1000,10 +1000,17 @@ pub async fn add_storage_v1(
             StorageVisibility::Open
         };
 
+        // STORAGE-0019: read the filesystem token off the unmounted
+        // device (via blkid). Foreign filesystems (NTFS, exFAT, ...)
+        // need the real token persisted in the manifest so post-restart
+        // rendering and FsCapabilities lookup pick the right tier.
+        let detected_fs = crate::infra::storage::platform::device_filesystem(target)
+            .unwrap_or_else(|| "unknown".to_string());
+
         let manifest = StorageManifest::with_roles(
             &name,
             &state.current.stone.name,
-            "unknown",
+            &detected_fs,
             visibility,
             request.roles.clone(),
         );
@@ -1072,10 +1079,17 @@ pub async fn add_storage_v1(
         StorageVisibility::Open
     };
 
+    // STORAGE-0019: resolve the filesystem token for the volume that
+    // contains this directory. Falls back to "unknown" only when
+    // /proc/mounts has no covering entry (non-Linux, or unusual mount
+    // hierarchies).
+    let detected_fs = crate::infra::storage::platform::filesystem_for_path(target)
+        .unwrap_or_else(|| "unknown".to_string());
+
     let manifest = StorageManifest::with_roles(
         &name,
         &state.current.stone.name,
-        "unknown",
+        &detected_fs,
         visibility,
         request.roles.clone(),
     );

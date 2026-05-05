@@ -18,6 +18,8 @@ mod app;
 #[cfg(target_os = "windows")]
 mod awareness;
 #[cfg(target_os = "windows")]
+mod ceremony;
+#[cfg(target_os = "windows")]
 mod commands;
 #[cfg(target_os = "windows")]
 mod connection;

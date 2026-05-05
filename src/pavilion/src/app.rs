@@ -40,6 +40,7 @@ pub fn run() {
             commands::get_suggestion,
             commands::dismiss_suggestion,
             commands::hide_suggestion_kind,
+            crate::ceremony::ceremony_step,
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // Another invocation tried to start; focus the existing window.

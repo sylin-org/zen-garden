@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type JSX } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
+import { CeremonyModal, type CeremonyKind } from "./CeremonyModal"
 
 interface PondPayload {
   initialised: boolean
@@ -36,6 +37,7 @@ export function PondView({ onClose }: PondViewProps): JSX.Element {
   const [pond, setPond] = useState<PondPayload | null>(null)
   const [tended, setTended] = useState<TendedStone | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [ceremony, setCeremony] = useState<CeremonyKind | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -101,14 +103,32 @@ export function PondView({ onClose }: PondViewProps): JSX.Element {
       ) : !pond ? (
         <section className="settings-empty">Loading…</section>
       ) : !pond.initialised ? (
-        <section className="placeholder-note">
-          <div className="placeholder-title">No pond on this stone</div>
-          <div className="placeholder-body">
-            Initialise one with{" "}
-            <code>garden-rake pond init</code> (multi-stone ceremony
-            UX arrives in M2).
-          </div>
-        </section>
+        <>
+          <section className="placeholder-note">
+            <div className="placeholder-title">No pond on this stone</div>
+            <div className="placeholder-body">
+              Place a keystone to initialise the pond — Pavilion will
+              walk you through the ceremony.
+            </div>
+          </section>
+
+          <section className="pond-actions">
+            <button
+              type="button"
+              className="pond-action-primary"
+              onClick={() => setCeremony("init")}
+            >
+              Place keystone
+            </button>
+            <button
+              type="button"
+              className="pond-action-secondary"
+              onClick={() => setCeremony("join")}
+            >
+              Join an existing pond
+            </button>
+          </section>
+        </>
       ) : (
         <>
           <section className="settings-group">
@@ -141,18 +161,39 @@ export function PondView({ onClose }: PondViewProps): JSX.Element {
             />
           </section>
 
-          <section className="placeholder-note">
-            <div className="placeholder-title">Ceremonies arrive in M2</div>
-            <div className="placeholder-body">
-              <code>init</code>, <code>join</code>, <code>invite</code>,
-              and <code>unlock</code> share Rake's state machine — the
-              extraction lands in M2 (PAVILION-0002 §"Move pond
-              ceremonies to M2"). For now use{" "}
-              <code>garden-rake pond &lt;verb&gt;</code>; this view
-              tracks the status from the tended stone live.
-            </div>
+          <section className="pond-actions">
+            <button
+              type="button"
+              className="pond-action-primary"
+              onClick={() => setCeremony("invite")}
+            >
+              Open enrollment
+            </button>
+            <button
+              type="button"
+              className="pond-action-secondary"
+              onClick={() => setCeremony("unlock")}
+              disabled={pond.status.toLowerCase() === "active"}
+              title={
+                pond.status.toLowerCase() === "active"
+                  ? "Already unlocked"
+                  : "Unlock the pond after a stone restart"
+              }
+            >
+              Unlock pond
+            </button>
           </section>
         </>
+      )}
+
+      {ceremony && (
+        <CeremonyModal
+          kind={ceremony}
+          onClose={() => {
+            setCeremony(null)
+            void refresh()
+          }}
+        />
       )}
     </main>
   )

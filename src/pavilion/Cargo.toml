@@ -23,6 +23,11 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 garden-common = { path = "../common" }
 garden-discovery = { path = "../discovery" }
+# Ceremony wire types — Rake and Pavilion both consume the same
+# protocol from Moss's /api/v1/pond/ceremony endpoint, and both
+# pull the typed structs from koi-common::ceremony rather than
+# duplicating them.
+koi-common.workspace = true
 
 # Async / serialization
 anyhow.workspace = true

@@ -59,11 +59,32 @@ use tokio::runtime::Handle;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
 
-/// Per-path "last successfully uploaded `mtime`" cache. Drives the
-/// edit-vs-echo discrimination so an event for an already-pushed
-/// version of a file doesn't re-upload it. Keys are
-/// `"{storage}:{rel_path}"` strings.
-type UploadedCache = Arc<Mutex<HashMap<String, SystemTime>>>;
+/// Per-key uploader state.
+///
+/// `uploaded` is the "last successfully uploaded mtime" map that
+/// drives edit-vs-echo discrimination. `locks` holds a tokio
+/// mutex per key so concurrent events for the same path serialize
+/// — Notify fires several events per save, and without this every
+/// event would race a parallel upload through the same atomic
+/// `.tmp` rename slot on the server.
+///
+/// The locks map grows monotonically (no eviction yet); for a
+/// desktop app's path count this is bounded enough.
+struct UploadState {
+    uploaded: HashMap<String, SystemTime>,
+    locks: HashMap<String, Arc<Mutex<()>>>,
+}
+
+impl UploadState {
+    fn new() -> Self {
+        Self {
+            uploaded: HashMap::new(),
+            locks: HashMap::new(),
+        }
+    }
+}
+
+type SharedState = Arc<std::sync::Mutex<UploadState>>;
 
 /// Brief debounce before processing a watcher event. Coalesces the
 /// duplicate events filesystem APIs produce during create-and-write
@@ -120,8 +141,8 @@ impl Uploader {
 
         // Processor task — consumes the watcher channel and drives
         // each candidate path through `process_one`.
-        let uploaded: UploadedCache = Arc::new(Mutex::new(HashMap::new()));
-        rt.spawn(run_processor(api, sync_root, rx, uploaded));
+        let state: SharedState = Arc::new(std::sync::Mutex::new(UploadState::new()));
+        rt.spawn(run_processor(api, sync_root, rx, state));
 
         Ok(Self { _watcher: watcher })
     }
@@ -131,7 +152,7 @@ async fn run_processor(
     api: Arc<StoneApi>,
     sync_root: PathBuf,
     mut rx: mpsc::Receiver<notify::Event>,
-    uploaded: UploadedCache,
+    state: SharedState,
 ) {
     while let Some(event) = rx.recv().await {
         // Create and Modify both push to the server. Remove fires
@@ -148,9 +169,9 @@ async fn run_processor(
         for path in event.paths {
             let api = api.clone();
             let sync_root = sync_root.clone();
-            let uploaded = uploaded.clone();
+            let state = state.clone();
             tokio::spawn(async move {
-                if let Err(e) = process_one(&api, &sync_root, &path, &uploaded).await {
+                if let Err(e) = process_one(&api, &sync_root, &path, &state).await {
                     warn!(
                         path = %path.display(),
                         error = %e,
@@ -163,20 +184,58 @@ async fn run_processor(
     debug!("uploader: processor channel closed, exiting");
 }
 
+/// Acquire (or create) the per-key serialization mutex. Holding
+/// this for the duration of `process_one` ensures that the burst
+/// of events Notify produces per save collapses into a single
+/// upload — and that two saves of the same file in quick
+/// succession process in order, not in parallel through the
+/// server's atomic-rename slot.
+fn key_lock(state: &SharedState, key: &str) -> Arc<Mutex<()>> {
+    let mut guard = state.lock().expect("uploader state mutex poisoned");
+    guard
+        .locks
+        .entry(key.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
 async fn process_one(
     api: &StoneApi,
     sync_root: &Path,
     path: &Path,
-    uploaded: &UploadedCache,
+    state: &SharedState,
 ) -> anyhow::Result<()> {
     // Brief debounce — Explorer's create-then-write sequence fires
     // back-to-back events; sleeping briefly lets the file settle
     // before we read it.
     tokio::time::sleep(PROCESS_DELAY).await;
 
-    // Skip if path no longer exists — `notify` events are reported
-    // out of order in some cases, and the user might have moved /
-    // removed before we got around to processing.
+    // Resolve before locking — the lookup is keyed on
+    // (storage, rel), and there's nothing to do if the path is
+    // outside our purview anyway.
+    let (storage, rel) = match resolve_path(sync_root, path) {
+        Some(r) => r,
+        None => {
+            debug!(path = %path.display(), "uploader: not under sync root, skipping");
+            return Ok(());
+        }
+    };
+    if storage.is_empty() || rel.is_empty() {
+        return Ok(());
+    }
+    let key = format!("{storage}:{rel}");
+
+    // Per-key serialization. Concurrent events for the same path
+    // queue up here; whichever holds the lock at any moment
+    // re-reads the latest filesystem state, so even if multiple
+    // saves happened, the in-order processing converges to the
+    // newest content with one upload per unique mtime.
+    let lock = key_lock(state, &key);
+    let _guard = lock.lock().await;
+
+    // From here on we're the only task touching this key. Re-read
+    // metadata after acquiring the lock — a lot may have happened
+    // while we waited.
     let metadata = match tokio::fs::metadata(path).await {
         Ok(m) => m,
         Err(_) => {
@@ -193,26 +252,14 @@ async fn process_one(
         return Ok(());
     }
 
-    let (storage, rel) = match resolve_path(sync_root, path) {
-        Some(r) => r,
-        None => {
-            debug!(path = %path.display(), "uploader: not under sync root, skipping");
-            return Ok(());
-        }
-    };
-
-    // The sync root and storage root themselves aren't actionable
-    // — Pavilion doesn't create storages, only contents within them.
-    if storage.is_empty() || rel.is_empty() {
-        return Ok(());
-    }
-
     let local_mtime = metadata.modified().ok();
-    let key = format!("{storage}:{rel}");
 
     // Loop guard 2: same-mtime echo. If we've already uploaded
     // this exact mtime, nothing to do.
-    let cached = { uploaded.lock().await.get(&key).copied() };
+    let cached = {
+        let guard = state.lock().expect("uploader state mutex poisoned");
+        guard.uploaded.get(&key).copied()
+    };
     if let (Some(local), Some(cached)) = (local_mtime, cached)
         && local <= cached
     {
@@ -237,7 +284,8 @@ async fn process_one(
             "uploader: first sighting of existing path, recording mtime silently"
         );
         if let Some(local) = local_mtime {
-            uploaded.lock().await.insert(key, local);
+            let mut guard = state.lock().expect("uploader state mutex poisoned");
+            guard.uploaded.insert(key, local);
         }
         return Ok(());
     }
@@ -277,7 +325,8 @@ async fn process_one(
     }
 
     if let Some(local) = local_mtime {
-        uploaded.lock().await.insert(key, local);
+        let mut guard = state.lock().expect("uploader state mutex poisoned");
+        guard.uploaded.insert(key, local);
     }
 
     Ok(())

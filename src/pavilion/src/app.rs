@@ -208,11 +208,32 @@ fn spawn_autostart_supervisor(settings: Arc<SettingsStore>, app: AppHandle) {
 }
 
 /// Push the desired state to the OS-level autostart launcher.
-/// Failures are logged but never propagated — autostart is a
-/// convenience feature, not a correctness invariant.
-fn apply_autostart(app: &AppHandle, enabled: bool) {
+/// Reads `is_enabled()` first and only flips state when it
+/// differs — `auto-launch`'s `disable()` returns
+/// `ERROR_FILE_NOT_FOUND` when the registry entry is already
+/// missing, which is "already disabled" rather than a real
+/// failure but the crate surfaces it as `Err` regardless.
+///
+/// Failures on the actual flip are logged but never propagated —
+/// autostart is a convenience feature, not a correctness
+/// invariant.
+fn apply_autostart(app: &AppHandle, desired: bool) {
     let manager = app.autolaunch();
-    let result = if enabled {
+    let current = match manager.is_enabled() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "autostart: is_enabled probe failed");
+            return;
+        }
+    };
+    if current == desired {
+        tracing::debug!(
+            enabled = desired,
+            "autostart: OS state already matches settings"
+        );
+        return;
+    }
+    let result = if desired {
         manager.enable()
     } else {
         manager.disable()
@@ -220,12 +241,12 @@ fn apply_autostart(app: &AppHandle, enabled: bool) {
     match result {
         Ok(()) => {
             tracing::info!(
-                enabled,
+                enabled = desired,
                 "autostart: OS state synced to settings"
             );
         }
         Err(e) => {
-            tracing::warn!(error = %e, enabled, "autostart: OS state sync failed");
+            tracing::warn!(error = %e, enabled = desired, "autostart: OS state flip failed");
         }
     }
 }

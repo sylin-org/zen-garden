@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type JSX } from "react"
 import { getVersion } from "@tauri-apps/api/app"
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
+import { FacilitatorBanner } from "./FacilitatorBanner"
 
 interface AwareStone {
   stone_id: string
@@ -72,7 +73,11 @@ interface ActivityEntry {
   promoted: boolean
 }
 
-export function HomeView(): JSX.Element {
+interface HomeViewProps {
+  onNavigate: (view: string) => void
+}
+
+export function HomeView({ onNavigate }: HomeViewProps): JSX.Element {
   const [version, setVersion] = useState<string>("…")
   const [now, setNow] = useState<string>(new Date().toLocaleTimeString())
   const [stones, setStones] = useState<AwareStone[]>([])
@@ -241,6 +246,8 @@ export function HomeView(): JSX.Element {
           v{version} · awareness via UDP chirps · tending via ~/.zen-garden/.tending
         </p>
       </section>
+
+      <FacilitatorBanner onNavigate={onNavigate} />
 
       <section className="tiles">
         <article className="tile">

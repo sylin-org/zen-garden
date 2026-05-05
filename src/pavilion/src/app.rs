@@ -17,6 +17,7 @@ use tauri_plugin_autostart::ManagerExt;
 use crate::announce::{observer, policy, ActivityStore, Announcer};
 use crate::awareness::Awareness;
 use crate::commands;
+use crate::facilitators::{self, FacilitatorEngine};
 use crate::integration::cloud_filter;
 use crate::settings::SettingsStore;
 use crate::tending::Tending;
@@ -36,6 +37,9 @@ pub fn run() {
             commands::restart_service,
             commands::rest_service,
             commands::wake_service,
+            commands::get_suggestion,
+            commands::dismiss_suggestion,
+            commands::hide_suggestion_kind,
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // Another invocation tried to start; focus the existing window.
@@ -149,14 +153,28 @@ pub fn run() {
             // Spawned async because `Tending::new` reads the file.
             let app_handle = app.handle().clone();
             let supervisor_announcer = announcer.clone();
+            let supervisor_settings = settings.clone();
             tauri::async_runtime::spawn(async move {
                 let tending = Arc::new(Tending::new(app_handle.clone()).await);
                 app_handle.manage(tending.clone());
-                tending.clone().spawn_auto_tend(awareness);
+                tending.clone().spawn_auto_tend(awareness.clone());
 
                 // Storage observer supervisor — rebinds the SSE
                 // observer task to the currently tended stone.
                 spawn_observer_supervisor(supervisor_announcer, tending.clone());
+
+                // FacilitatorEngine — sibling pipeline of the
+                // Announcer that watches awareness + tending +
+                // settings + pond status and surfaces a single
+                // active suggestion banner at a time.
+                let engine = FacilitatorEngine::new(
+                    app_handle.clone(),
+                    awareness,
+                    tending.clone(),
+                    supervisor_settings,
+                );
+                app_handle.manage(engine.clone());
+                facilitators::engine::spawn_supervisor(engine);
 
                 // Cloud Filter — register sync root + connect provider.
                 // Non-fatal on failure (no admin, Win32 API unavailable);

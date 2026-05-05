@@ -22,6 +22,8 @@ mod commands;
 #[cfg(target_os = "windows")]
 mod connection;
 #[cfg(target_os = "windows")]
+mod facilitators;
+#[cfg(target_os = "windows")]
 mod integration;
 #[cfg(target_os = "windows")]
 mod settings;

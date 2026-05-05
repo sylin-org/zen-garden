@@ -14,6 +14,7 @@ use tauri::State;
 use crate::announce::{ActivityEntry, ActivityStore};
 use crate::awareness::{AwareStone, Awareness};
 use crate::connection;
+use crate::facilitators::{FacilitatorEngine, Suggestion};
 use crate::settings::{Settings, SettingsPatch, SettingsStore};
 use crate::tending::{TendedStone, Tending};
 
@@ -282,6 +283,51 @@ pub async fn wake_service(
     tending: State<'_, Arc<Tending>>,
 ) -> Result<(), String> {
     run_service_action(&tending, &name, ServiceOp::Wake).await
+}
+
+// ── Facilitators ───────────────────────────────────────────────────
+
+/// Current active facilitator suggestion, if any. Frontend calls
+/// on mount and listens for `suggestion-changed` events thereafter.
+#[tauri::command]
+pub async fn get_suggestion(
+    engine: State<'_, FacilitatorEngine>,
+) -> Result<Option<Suggestion>, String> {
+    Ok(engine.current().await)
+}
+
+/// Dismiss the given suggestion id for the current session. The
+/// engine recomputes immediately so the banner either disappears
+/// or the next-priority suggestion takes its place.
+#[tauri::command]
+pub async fn dismiss_suggestion(
+    id: String,
+    engine: State<'_, FacilitatorEngine>,
+) -> Result<(), String> {
+    engine.dismiss_for_session(&id).await;
+    engine.recompute().await;
+    Ok(())
+}
+
+/// Dismiss a whole suggestion kind permanently — adds the kind to
+/// `Settings::suppressed_kinds`. The settings change triggers an
+/// engine recompute via the supervisor's settings watch.
+#[tauri::command]
+pub async fn hide_suggestion_kind(
+    kind: String,
+    settings: State<'_, Arc<SettingsStore>>,
+) -> Result<Settings, String> {
+    let current = settings.snapshot().await;
+    if current.suppressed_kinds.iter().any(|k| k == &kind) {
+        return Ok(current);
+    }
+    let mut next = current.suppressed_kinds.clone();
+    next.push(kind);
+    let patch = SettingsPatch {
+        suppressed_kinds: Some(next),
+        ..Default::default()
+    };
+    Ok(settings.apply_patch(patch).await)
 }
 
 /// Fetch the garden-wide storage summary from the currently-tended

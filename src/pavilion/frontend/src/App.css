@@ -673,3 +673,89 @@
   color: var(--s5);
   letter-spacing: 0.04em;
 }
+
+/* ─── Facilitator banner ───────────────────────────────────── */
+
+.facilitator {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 1rem;
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-left: 3px solid var(--gold);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1.5rem;
+  max-width: 720px;
+  align-items: start;
+}
+
+.facilitator-glyph {
+  font-size: 1rem;
+  margin-top: 0.15rem;
+  filter: grayscale(0.2);
+}
+
+.facilitator-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.facilitator-title {
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--s9);
+}
+
+.facilitator-text {
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--s7);
+}
+
+.facilitator-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: stretch;
+}
+
+.facilitator-actions button {
+  background: transparent;
+  color: var(--s8);
+  border: 1px solid var(--vb);
+  border-radius: 4px;
+  padding: 0.35rem 0.8rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 200ms var(--ease), color 200ms var(--ease);
+}
+
+.facilitator-actions button:hover:not(:disabled) {
+  background: var(--vh);
+  color: var(--s9);
+}
+
+.facilitator-actions button:disabled {
+  cursor: not-allowed;
+  color: var(--s4);
+}
+
+.facilitator-primary {
+  background: var(--gold) !important;
+  color: var(--bg) !important;
+  border-color: var(--gold) !important;
+  font-weight: 500;
+}
+
+.facilitator-primary:hover:not(:disabled) {
+  background: var(--gold) !important;
+  color: var(--bg) !important;
+  filter: brightness(1.08);
+}

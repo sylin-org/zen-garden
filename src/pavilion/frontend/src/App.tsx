@@ -160,7 +160,15 @@ function App(): JSX.Element {
         </nav>
       </aside>
 
-      {view === "home" && <HomeView />}
+      {view === "home" && (
+        <HomeView
+          onNavigate={(v) => {
+            if (v === "home" || v === "services" || v === "pond" || v === "settings") {
+              setView(v)
+            }
+          }}
+        />
+      )}
       {view === "services" && <ServicesView onClose={goHome} />}
       {view === "pond" && <PondView onClose={goHome} />}
       {view === "settings" && <SettingsView onClose={goHome} />}

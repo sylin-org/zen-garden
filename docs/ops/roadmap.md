@@ -2,7 +2,7 @@
 audience: operator
 doc_type: reference
 status: current
-last_verified: 2026-02-16
+last_verified: 2026-05-04
 ---
 
 # Roadmap

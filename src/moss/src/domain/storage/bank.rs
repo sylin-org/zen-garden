@@ -58,6 +58,7 @@ impl<S: ManagementStoreOps + 'static> VolumeIngestor<S> {
         capacity_bytes: u64,
         used_bytes: u64,
         removable: bool,
+        filesystem: Option<String>,
     ) {
         let snap = VolumeSnapshot {
             path: device_path,
@@ -65,10 +66,11 @@ impl<S: ManagementStoreOps + 'static> VolumeIngestor<S> {
             label,
             capacity_bytes,
             removable,
-            // STORAGE-0019: this constructor is used by hand-rolled
-            // adoption paths; filesystem will be filled in on the
-            // next reconcile cycle when the platform scanner runs.
-            filesystem: None,
+            // STORAGE-0019: filesystem token from the platform listener,
+            // sourced from /proc/mounts (Linux) or GetVolumeInformationW
+            // (Windows). Drives the FsCapabilities lookup so post-mount
+            // Foreign-FS volumes render the correct `<family> (<fs>)`.
+            filesystem,
         };
         let disk_snapshot = DiskResources {
             capacity_bytes,

@@ -57,7 +57,7 @@ impl BackgroundTask for VolumeMonitorTask {
                     event = vol_rx.recv() => {
                         let Some(ev) = event else { break };
                         match ev {
-                            PhysicalStorageEvent::Connected { device_path, mount_path, label, capacity_bytes, used_bytes, removable } => {
+                            PhysicalStorageEvent::Connected { device_path, mount_path, label, capacity_bytes, used_bytes, removable, filesystem } => {
                                 let capacity_gb = capacity_bytes / 1_000_000_000;
                                 let _ = pulse.send(infra::PulseEvent::Domain(
                                     infra::DomainPulse::storage_event(
@@ -71,10 +71,11 @@ impl BackgroundTask for VolumeMonitorTask {
                                             "label": label,
                                             "capacity_gb": capacity_gb,
                                             "removable": removable,
+                                            "filesystem": filesystem,
                                         })),
                                     )
                                 ));
-                                bank.on_appeared(device_path, mount_path, label, capacity_bytes, used_bytes, removable).await;
+                                bank.on_appeared(device_path, mount_path, label, capacity_bytes, used_bytes, removable, filesystem).await;
                             }
                             PhysicalStorageEvent::Disconnected { path } => {
                                 let _ = pulse.send(infra::PulseEvent::Domain(

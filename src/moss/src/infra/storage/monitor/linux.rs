@@ -60,6 +60,7 @@ impl VolumeMonitor for LinuxVolumeMonitor {
                             capacity_bytes: v.capacity_bytes,
                             used_bytes,
                             removable: v.removable,
+                            filesystem: v.filesystem.clone(),
                         };
                         if tx.send(event).await.is_err() {
                             return; // channel closed
@@ -177,6 +178,7 @@ fn run_udev_watcher(
                             capacity_bytes: disk_snapshot.capacity_bytes,
                             used_bytes: disk_snapshot.used_bytes,
                             removable: snap.removable,
+                            filesystem: snap.filesystem,
                         };
                         let _ = tx.blocking_send(event);
                     }

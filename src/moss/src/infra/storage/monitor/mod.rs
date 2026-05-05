@@ -27,6 +27,12 @@ pub enum PhysicalStorageEvent {
         capacity_bytes: u64,
         used_bytes: u64,
         removable: bool,
+        /// Filesystem token from the platform (`"ext4"`, `"ntfs"`, `"exfat"`).
+        /// `None` when the platform couldn't determine it (older monitors,
+        /// edge cases). STORAGE-0019: feeds `Volume::fs_capabilities` so
+        /// post-mount Foreign-FS volumes render the right `<family> (<fs>)`
+        /// label in `storage info` and other surfaces.
+        filesystem: Option<String>,
     },
     /// A volume is no longer accessible.
     ///

@@ -66,6 +66,7 @@ impl VolumeMonitor for WindowsVolumeMonitor {
                             capacity_bytes: v.capacity_bytes,
                             used_bytes,
                             removable: v.removable,
+                            filesystem: v.filesystem.clone(),
                         };
                         if tx.send(event).await.is_err() {
                             return; // channel closed

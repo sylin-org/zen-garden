@@ -45,6 +45,7 @@ pub mod offering_lifecycle;
 pub mod offering_resolution;
 pub mod offering_watermark;
 pub mod offerings;
+pub mod snapshot;
 pub mod orchestration;
 pub mod placement;
 pub mod platform;

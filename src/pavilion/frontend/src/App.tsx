@@ -38,6 +38,18 @@ interface PondPayload {
   cornerstone: string | null
 }
 
+interface BankSummary {
+  name: string
+  replica_count: number
+  primary_stone?: string | null
+  roles?: string[]
+}
+
+interface StoragePayload {
+  count: number
+  banks: BankSummary[]
+}
+
 function App() {
   const [version, setVersion] = useState<string>("…")
   const [now, setNow] = useState<string>(new Date().toLocaleTimeString())
@@ -47,6 +59,8 @@ function App() {
   const [servicesError, setServicesError] = useState<string | null>(null)
   const [pond, setPond] = useState<PondPayload | null>(null)
   const [pondError, setPondError] = useState<string | null>(null)
+  const [storage, setStorage] = useState<StoragePayload | null>(null)
+  const [storageError, setStorageError] = useState<string | null>(null)
 
   // Fetch tended-stone data (services + pond). Called on mount and on
   // every tending-changed event. Errors are surfaced into per-tile
@@ -67,6 +81,14 @@ function App() {
     } catch (e) {
       setPondError(String(e))
       setPond(null)
+    }
+    try {
+      const result = await invoke<StoragePayload | null>("get_storage")
+      setStorage(result)
+      setStorageError(null)
+    } catch (e) {
+      setStorageError(String(e))
+      setStorage(null)
     }
   }, [])
 
@@ -179,6 +201,19 @@ function App() {
     pond.name ? pond.name :
     pond.status
 
+  const storageTileValue =
+    !tended ? "—" :
+    storageError ? "!" :
+    storage === null ? "…" :
+    String(storage.count)
+  const storageTileFoot =
+    !tended ? "no stone tended" :
+    storageError ? "fetch failed" :
+    storage === null ? "fetching…" :
+    storage.count === 0 ? "no banks reachable" :
+    storage.count === 1 ? "1 bank in this garden" :
+    `${storage.count} banks in this garden`
+
   return (
     <div className="pavilion-shell">
       <aside className="sidebar">
@@ -221,8 +256,8 @@ function App() {
           </article>
           <article className="tile">
             <div className="tile-label">Storage</div>
-            <div className="tile-value">—</div>
-            <div className="tile-foot">no banks reachable</div>
+            <div className="tile-value">{storageTileValue}</div>
+            <div className="tile-foot">{storageTileFoot}</div>
           </article>
           <article className="tile">
             <div className="tile-label">Services</div>
@@ -273,14 +308,40 @@ function App() {
           </section>
         )}
 
+        {storage && storage.banks.length > 0 && (
+          <section className="stones-list">
+            <div className="stones-list-title">
+              Banks across the garden
+            </div>
+            {storage.banks.map(bank => {
+              const replicas = bank.replica_count === 1
+                ? "1 replica"
+                : `${bank.replica_count} replicas`
+              const trailing = bank.primary_stone
+                ? `primary · ${bank.primary_stone}`
+                : (bank.roles && bank.roles.length > 0)
+                  ? bank.roles.join(", ")
+                  : "—"
+              return (
+                <div className="stone-row" key={bank.name} style={{ cursor: "default" }}>
+                  <span className="stone-name">{bank.name}</span>
+                  <span className="stone-endpoint">{replicas}</span>
+                  <span className="stone-age">{trailing}</span>
+                </div>
+              )
+            })}
+          </section>
+        )}
+
         <section className="placeholder-note">
-          <div className="placeholder-title">Awareness · API integration · DISC-0001 cleanup</div>
+          <div className="placeholder-title">Awareness · API integration</div>
           <div className="placeholder-body">
             Topology is push-driven from <code>STONE_CHIRP</code> + provoked
-            <code> DISCOVERY_RESPONSE</code>. Services and pond are pull-on-demand
-            against the tended stone (refresh on every <code>tending-changed</code>).
-            Tending file shared with Rake at <code>~/.zen-garden/.tending</code>.
-            Cloud Filter, storage, and companions arrive in the next milestone.
+            <code> DISCOVERY_RESPONSE</code>. Services, pond, and storage are
+            pull-on-demand against the tended stone (refresh on every
+            <code> tending-changed</code>). Tending file shared with Rake at
+            <code> ~/.zen-garden/.tending</code>. Toasts, Cloud Filter, and
+            companions arrive in the next milestone.
           </div>
         </section>
       </main>

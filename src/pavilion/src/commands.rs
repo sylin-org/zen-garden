@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use garden_common::storage::GardenStorageSummary;
 use serde::Serialize;
 use tauri::State;
 
@@ -173,5 +174,35 @@ pub async fn get_pond_status(
         name,
         member_count,
         cornerstone,
+    }))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StoragePayload {
+    pub count: usize,
+    pub banks: Vec<GardenStorageSummary>,
+}
+
+/// Fetch the garden-wide storage summary from the currently-tended
+/// stone. Tended Moss aggregates local volumes with registry beacons,
+/// so a single call surfaces every bank visible to this garden.
+/// Returns `Ok(None)` when no stone is tended.
+#[tauri::command]
+pub async fn get_storage(
+    tending: State<'_, Arc<Tending>>,
+) -> Result<Option<StoragePayload>, String> {
+    let Some(tended) = tending.current().await else {
+        return Ok(None);
+    };
+    let api = connection::api_for(&tended);
+    let banks = api
+        .garden()
+        .storage()
+        .list()
+        .await
+        .map_err(|e| format!("storage fetch from {}: {e}", tended.endpoint))?;
+    Ok(Some(StoragePayload {
+        count: banks.len(),
+        banks,
     }))
 }

@@ -26,6 +26,7 @@ pub fn run() {
             commands::set_tended,
             commands::get_services,
             commands::get_pond_status,
+            commands::get_storage,
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // Another invocation tried to start; focus the existing window.

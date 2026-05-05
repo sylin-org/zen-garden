@@ -14,6 +14,7 @@
 
 pub mod adapter;
 mod beacon;
+pub mod connectivity;
 pub mod handle;
 pub mod layout;
 pub mod monitor;

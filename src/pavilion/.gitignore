@@ -1,0 +1,9 @@
+# Tauri build output
+gen/
+target/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo

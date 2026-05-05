@@ -87,7 +87,7 @@ pci-ids = "0.2"
 dav-server = "0.11"
 
 # Filesystem watcher — detect external writes for replication (STORAGE-0009 Phase 5)
-notify = "7"
+notify = "8"
 
 # S3 gateway
 quick-xml = { version = "0.39", features = ["serialize"] }
@@ -119,10 +119,6 @@ windows = { version = "0.52", features = [
 wmi = "0.14"
 winreg = "0.52"
 
-# Cloud Filter — native Windows Explorer sync (STORAGE-0009 Phase 4)
-cloud-filter = "0.0.6"
-nt-time = "0.8"
-
 [target.'cfg(unix)'.dependencies]
 udev = "0.9"
 libc = "0.2"
@@ -140,6 +136,11 @@ version = "1"
 
 [lints]
 workspace = true
+
+# Cloud Filter (cloud-filter, nt-time) and its sole-purpose Windows-API
+# features moved to garden-pavilion per PAVILION-0001. wmi / winreg /
+# windows / windows-sys remain — they're used by hardware topology
+# detection (infra/topology/*), shell integration, and platform/registry.
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

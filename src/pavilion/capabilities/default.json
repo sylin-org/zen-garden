@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default Pavilion permissions for the main window. M0 scope: core APIs (app version, window manipulation, event subscription) plus the plugins enabled in main.rs.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:app:default",
+    "core:event:default",
+    "core:image:default",
+    "core:menu:default",
+    "core:resources:default",
+    "core:tray:default",
+    "core:webview:default",
+    "core:window:default",
+    "autostart:default",
+    "notification:default",
+    "window-state:default"
+  ]
+}

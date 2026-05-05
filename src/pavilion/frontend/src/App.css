@@ -1,0 +1,325 @@
+/* ═══════════════════════════════════════════════════════════════
+   Pavilion — App layout
+   Built on the canonical zen-garden tokens (tokens.css).
+   Token references only — no hard-coded hex values.
+   ═══════════════════════════════════════════════════════════════ */
+
+.pavilion-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  grid-template-rows: 1fr auto;
+  grid-template-areas:
+    "sidebar content"
+    "statusbar statusbar";
+  height: 100vh;
+}
+
+/* ─── Sidebar ──────────────────────────────────────────────── */
+
+.sidebar {
+  grid-area: sidebar;
+  background: var(--bg2);
+  border-right: 1px solid var(--vb);
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 0.75rem;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.brand-mark {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--sage), var(--s3));
+  color: var(--gold);
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 1.125rem;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.brand-name {
+  font-family: var(--sans);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--s9);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.nav-item {
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--s6);
+  transition: background-color 200ms var(--ease), color 200ms var(--ease);
+}
+
+.nav-item.active {
+  background: var(--vb);
+  color: var(--s9);
+}
+
+.nav-item.disabled {
+  color: var(--s4);
+  cursor: not-allowed;
+}
+
+.nav-item:not(.active):not(.disabled):hover {
+  background: var(--vh);
+  color: var(--s9);
+}
+
+.nav-spacer {
+  flex: 1;
+  min-height: 1rem;
+}
+
+/* ─── Content ──────────────────────────────────────────────── */
+
+.content {
+  grid-area: content;
+  overflow-y: auto;
+  padding: 1.5rem 2rem 2rem;
+  background: var(--bg);
+}
+
+/* ─── Top bar ──────────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.garden-pill {
+  padding: 0.25rem 0.75rem;
+  background: var(--vb);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--s7);
+  border: 1px solid var(--vb);
+}
+
+.topbar-spacer { flex: 1; }
+
+.topbar-clock {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--s5);
+  font-feature-settings: "tnum";
+  margin-left: 0.75rem;
+}
+
+/* ─── Hero ─────────────────────────────────────────────────── */
+
+.hero {
+  margin-bottom: 1.5rem;
+}
+
+.hero h1 {
+  font-family: var(--sans);
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--s9);
+  margin-bottom: 0.4rem;
+}
+
+.subtle {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--s5);
+}
+
+/* ─── Tiles ────────────────────────────────────────────────── */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.tile {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+}
+
+.tile-label {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--s5);
+}
+
+.tile-value {
+  font-family: var(--sans);
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--s9);
+  margin-top: 0.2rem;
+  margin-bottom: 0.2rem;
+}
+
+.tile-foot {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.02em;
+  color: var(--s6);
+}
+
+/* ─── Discovered stones list ───────────────────────────────── */
+
+.stones-list {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1.5rem;
+  max-width: 720px;
+}
+
+.stones-list-title {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--s5);
+  margin-bottom: 0.6rem;
+}
+
+.stone-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 1rem;
+  align-items: baseline;
+  padding: 0.5rem 0.5rem;
+  margin: 0 -0.5rem;
+  border: none;
+  border-bottom: 1px solid var(--vb);
+  border-radius: 4px;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 200ms var(--ease);
+}
+
+.stone-row:last-child { border-bottom: none; }
+
+.stone-row:hover:not(:disabled) {
+  background: var(--vh);
+}
+
+.stone-row:disabled {
+  cursor: default;
+}
+
+.stone-row-tended {
+  background: var(--vb);
+  border-left: 2px solid var(--gold);
+  padding-left: 0.4rem;
+}
+
+.stone-name {
+  color: var(--s9);
+  font-weight: 500;
+}
+
+.stone-row-tended .stone-name {
+  color: var(--gold);
+}
+
+.stone-endpoint {
+  color: var(--s5);
+}
+
+.stone-age {
+  color: var(--s4);
+  font-size: 0.7rem;
+  min-width: 2.5rem;
+  text-align: right;
+}
+
+/* ─── Placeholder note ─────────────────────────────────────── */
+
+.placeholder-note {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-left: 3px solid var(--gold);
+  border-radius: 6px;
+  padding: 0.85rem 1.1rem;
+  max-width: 720px;
+}
+
+.placeholder-title {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--gold);
+  margin-bottom: 0.4rem;
+}
+
+.placeholder-body {
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--s7);
+}
+
+/* ─── Status bar ───────────────────────────────────────────── */
+
+.statusbar {
+  grid-area: statusbar;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 1rem;
+  background: var(--bg2);
+  border-top: 1px solid var(--vb);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--s6);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--s4);
+}
+
+.dot-ok    { background: var(--sage); animation: breathe 3s var(--ease) infinite; }
+.dot-amber { background: var(--clay); }
+.dot-down  { background: var(--red);  animation: breathe 1.5s var(--ease) infinite; }
+
+.sep {
+  color: var(--s4);
+}

@@ -16,6 +16,7 @@ members = [
   "src/companion-sdk",
   "src/build-utils",
   "src/probe",
+  "src/pavilion",
 ]
 exclude = [
   # Orchestrators are standalone crates — not part of this workspace.

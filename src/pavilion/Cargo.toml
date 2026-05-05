@@ -1,0 +1,71 @@
+[package]
+name = "garden-pavilion"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Pavilion — Windows tray client for the Zen Garden"
+
+[[bin]]
+name = "garden-pavilion"
+path = "src/main.rs"
+
+[features]
+# When enabled, Tauri loads the bundled frontend (frontendDist) via the
+# tauri:// asset protocol. When disabled, Tauri loads from devUrl —
+# which is what we want during `cargo tauri dev`. Release builds MUST
+# pass `--features custom-protocol` (the `cargo tauri build` toolchain
+# does this automatically; the bare-metal cargo path does not).
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+garden-common = { path = "../common" }
+garden-discovery = { path = "../discovery" }
+
+# Async / serialization
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "macros", "time", "fs"] }
+chrono = { workspace = true, features = ["serde"] }
+uuid = { workspace = true, features = ["v7"] }
+reqwest = { workspace = true, features = ["json", "rustls", "webpki-roots"] }
+
+# Filesystem / paths
+dirs = "5"
+
+# Observability
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# Tauri 2 — primary platform is Windows. Tauri itself is cross-platform
+# but Pavilion's purpose (Cloud Filter, Win11 tray, Mica backdrop) is
+# Windows-specific. Non-Windows binary builds compile to a stub that
+# exits with a message.
+[target.'cfg(target_os = "windows")'.dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-notification = "2"
+
+# Cloud Filter — native Windows Explorer sync provider (PAVILION-0001
+# §"Cloud Filter migration"). Hydration is backed by the tended stone's
+# StoneApi (read range / list directory) — no local storage in Pavilion.
+cloud-filter = "0.0.6"
+# `nt-time` provides `FileTime` for placeholder timestamps. Pinned to
+# the same minor as cloud-filter 0.0.6 pulls transitively so the type
+# we hand to `cloud_filter::metadata::Metadata::created/written` is
+# compatible.
+nt-time = "0.8"
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Storage_CloudFilters",
+] }
+
+[lints]
+workspace = true

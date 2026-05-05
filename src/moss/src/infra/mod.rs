@@ -17,8 +17,7 @@
 pub mod api_helpers;
 pub mod auth;
 pub mod ceremony_journal;
-#[cfg(target_os = "windows")]
-pub mod cloud_filter;
+// Cloud Filter integration moved to garden-pavilion per PAVILION-0001.
 pub mod companions;
 pub mod config;
 pub mod detection;

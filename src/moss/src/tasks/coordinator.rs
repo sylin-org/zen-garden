@@ -255,27 +255,8 @@ pub(crate) async fn start_background_tasks(
         }
     }
 
-    // Cloud Filter sync provider (STORAGE-0009 Phase 4, Windows only)
-    // Registers a "Zen Garden" sync root in Explorer so storages appear natively.
-    #[cfg(target_os = "windows")]
-    {
-        if let Err(e) = crate::infra::cloud_filter::start(
-            state.current.storage.volumes.clone(),
-            state.tool.registry.clone(),
-            state.current.stone.id.clone(),
-            state.current.storage.coordination.tick.raw.clone(),
-            state.current.storage.changed.subscribe(),
-            state.tool.delta_stream(),
-            state.console.clone(),
-            shutdown_token.child_token(),
-        )
-        .await
-        {
-            tracing::warn!(error = %e, "Cloud Filter provider failed to start (non-fatal)");
-        } else {
-            tracing::info!("Cloud Filter sync provider started (STORAGE-0009 Phase 4)");
-        }
-    }
+    // Cloud Filter sync provider moved to garden-pavilion (PAVILION-0001 §"Cloud Filter migration").
+    // Pavilion registers the "Zen Garden" sync root in Explorer; Moss no longer touches the user session.
 
     // ====================================================================
     // Build task config, channels, registry, and supervisor

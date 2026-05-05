@@ -538,3 +538,34 @@
   color: var(--s4);
   border-color: var(--vb);
 }
+
+/* ─── Pond view ────────────────────────────────────────────── */
+
+.pond-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  color: var(--s9);
+}
+
+.pond-status-label {
+  text-transform: capitalize;
+}
+
+.kv-value {
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--s8);
+  text-align: right;
+}
+
+.kv-value-mono {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--s8);
+  letter-spacing: 0.02em;
+  text-align: right;
+}

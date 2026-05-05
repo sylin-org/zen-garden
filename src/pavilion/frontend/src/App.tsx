@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type JSX } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import { HomeView } from "./views/Home"
+import { PondView } from "./views/Pond"
 import { ServicesView } from "./views/Services"
 import { SettingsView } from "./views/Settings"
 
@@ -27,7 +28,7 @@ interface Settings {
   autostart_enabled: boolean
 }
 
-type View = "home" | "services" | "settings"
+type View = "home" | "services" | "pond" | "settings"
 
 function App(): JSX.Element {
   const [view, setView] = useState<View>("home")
@@ -124,7 +125,12 @@ function App(): JSX.Element {
             Services
           </a>
           <a className="nav-item disabled">Companions</a>
-          <a className="nav-item disabled">Pond</a>
+          <a
+            className={`nav-item ${view === "pond" ? "active" : ""}`}
+            onClick={() => setView("pond")}
+          >
+            Pond
+          </a>
           <a className="nav-item disabled">Activity</a>
           <div className="nav-spacer" />
           <a
@@ -138,6 +144,7 @@ function App(): JSX.Element {
 
       {view === "home" && <HomeView />}
       {view === "services" && <ServicesView onClose={goHome} />}
+      {view === "pond" && <PondView onClose={goHome} />}
       {view === "settings" && <SettingsView onClose={goHome} />}
 
       <footer className="statusbar">

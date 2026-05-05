@@ -52,6 +52,16 @@ const STORAGE_TOAST_THRESHOLD: u32 = 5;
 /// applies and any *new* stone joining fires its toast.
 const STARTUP_QUIET_WINDOW: Duration = Duration::from_secs(5);
 
+/// Default per-event cooldown. After a toast for a specific
+/// `(kind, key)` fires, the same key can't fire another toast
+/// within this window — covers stone-flapping (a flaky USB
+/// adapter / WiFi hiccup) and rapid storage-burst tail events
+/// without dumping every transition into the user's tray.
+///
+/// The activity entry still lands either way; cooldown only gates
+/// the toast surface.
+const DEFAULT_COOLDOWN: Duration = Duration::from_secs(60);
+
 /// In-progress coalesce slot for a `StorageActivity` key.
 struct StorageWindow {
     stone_name: String,
@@ -76,6 +86,12 @@ pub struct Announcer {
 struct Inner {
     /// Active storage coalesce windows keyed by `dedupe_key()`.
     storage_windows: HashMap<String, StorageWindow>,
+    /// Last toast-fire timestamp per `dedupe_key()`. Drives the
+    /// `DEFAULT_COOLDOWN` gate so flapping events don't spam the
+    /// tray. Entries stay forever; for a user session that's fine
+    /// (the key set is bounded by the live garden's stone+bank
+    /// count).
+    last_toasted: HashMap<String, Instant>,
 }
 
 impl Announcer {
@@ -83,6 +99,7 @@ impl Announcer {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 storage_windows: HashMap::new(),
+                last_toasted: HashMap::new(),
             })),
             store,
             settings,
@@ -102,6 +119,7 @@ impl Announcer {
     /// 1. cold-start warmup
     /// 2. per-kind suppression ("Hide this kind")
     /// 3. quiet hours
+    /// 4. per-key cooldown (recently-toasted)
     ///
     /// Each layer can veto; `true` only when every check passes.
     /// The activity entry still lands in the ring buffer either
@@ -117,7 +135,29 @@ impl Announcer {
         if snap.is_quiet_now(chrono::Local::now().time()) {
             return false;
         }
+        let key = event.dedupe_key();
+        let now = Instant::now();
+        let inner = self.inner.lock().await;
+        if let Some(last) = inner.last_toasted.get(&key)
+            && now.duration_since(*last) < DEFAULT_COOLDOWN
+        {
+            tracing::debug!(
+                kind = event.kind_str(),
+                key = %key,
+                "announcer: toast cooldown active, suppressing"
+            );
+            return false;
+        }
         true
+    }
+
+    /// Record that a toast fired for this event so the cooldown
+    /// gate can suppress repeats. Called from `accept` only on
+    /// the path that actually called `toast::fire`.
+    async fn mark_toasted(&self, event: &GardenEvent) {
+        let key = event.dedupe_key();
+        let mut inner = self.inner.lock().await;
+        inner.last_toasted.insert(key, Instant::now());
     }
 
     /// Borrow of the activity store — useful in tests and future
@@ -223,6 +263,7 @@ impl Announcer {
         let severity = event.severity();
         if promote {
             toast::fire(&self.app, &event);
+            self.mark_toasted(&event).await;
         }
         let entry = ActivityEntry {
             id: Uuid::now_v7().to_string(),

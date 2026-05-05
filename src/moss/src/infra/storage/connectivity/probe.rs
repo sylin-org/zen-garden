@@ -288,11 +288,13 @@ fn is_usb_port_token(s: &str) -> bool {
 // Tests
 // ============================================================================
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     /// Build a synthetic sysfs tree under a tempdir containing one
@@ -347,6 +349,11 @@ mod tests {
         ///   <root>/devices/usb2/2-3.4/host1/target.../block/<dev>
         ///   <root>/block/<dev> -> <root>/devices/.../block/<dev>
         /// ```
+        ///
+        /// Unix-only because Windows symlinks need admin or developer
+        /// mode. The two tests that exercise USB topology resolution
+        /// are gated on `#[cfg(unix)]` for the same reason.
+        #[cfg(unix)]
         fn add_usb_topology(&self, dev: &str, port: &str) {
             let target_dir = self
                 .path
@@ -380,6 +387,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn copy_dir_recursive(src: &Path, dst: &Path) {
         fs::create_dir_all(dst).unwrap();
         for entry in fs::read_dir(src).unwrap() {
@@ -502,6 +510,7 @@ mod tests {
         assert_eq!(outcome.verdict, ProbeVerdict::Healthy);
     }
 
+    #[cfg(unix)]
     #[test]
     fn usb_port_resolved_from_topology_symlink() {
         let sysfs = SyntheticSysfs::new();
@@ -511,6 +520,7 @@ mod tests {
         assert_eq!(outcome.data.usb_port.as_deref(), Some("2-3.4"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn usb_port_resolution_returns_deepest_match_for_chained_hubs() {
         // /devices/usb2/2-3/2-3.4 — the deeper port (2-3.4) is the

@@ -17,11 +17,19 @@
 //!
 //! ## Platform support
 //!
-//! Linux only. Windows manages USB device lifecycle through different
-//! mechanisms (Plug and Play subsystem, no /sys equivalent), so the
-//! `probe` and `recovery` submodules don't compile on non-Linux. The
-//! pipeline orchestration in `mod.rs` dispatches to a no-op shim on
-//! non-Linux so the rest of the storage stack stays cross-platform.
+//! Linux is the only target where these modules do real work — the
+//! `/sys/block`, `/sys/bus/usb` paths they read and write are Linux-
+//! specific. On other platforms the production functions still
+//! compile (they use plain `std::fs`), but they read paths that don't
+//! exist and produce verdicts based on the absence of signals
+//! (typically `EmptyEnclosure`). Pipeline orchestration on non-Linux
+//! should skip recovery entirely; the modules are exposed
+//! cross-platform mainly so the type system catches drift across
+//! shared types.
+//!
+//! Tests that require synthetic sysfs trees with symlinks are
+//! Linux-gated since `std::os::unix::fs::symlink` is the cleanest
+//! cross-FS way to fake the topology.
 
-#[cfg(target_os = "linux")]
 pub mod probe;
+pub mod recovery;

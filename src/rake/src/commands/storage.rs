@@ -560,6 +560,41 @@ impl Command for ListStorageCommand {
                         );
                     }
                 }
+
+                // STORAGE-0019: surface any connectivity-stage recoveries
+                // the candidates handler ran during this poll. One line
+                // per device that actually needed help; suppressed when
+                // every device is healthy.
+                let recovered: Vec<_> = cands
+                    .media
+                    .iter()
+                    .filter_map(|m| {
+                        let status = m.connectivity_status.as_ref()?;
+                        if !status.was_recovered() {
+                            return None;
+                        }
+                        Some((m, status))
+                    })
+                    .collect();
+                if !recovered.is_empty() {
+                    println!();
+                    for (m, status) in recovered {
+                        let name = m.model.as_deref().unwrap_or(&m.device_id);
+                        let action = status
+                            .recovered_via
+                            .as_ref()
+                            .map(|a| format!(" via {}", a))
+                            .unwrap_or_default();
+                        let secs = (status.duration_ms as f64) / 1000.0;
+                        println!(
+                            "  {} Recovered {}{} in {:.1}s",
+                            ui::status_indicator("info", ctx.term.supports_color),
+                            name,
+                            action,
+                            secs,
+                        );
+                    }
+                }
             }
 
             let has_candidates = candidates

@@ -35,6 +35,7 @@ pub mod templates;
 pub mod tools;
 pub mod traits;
 pub mod types;
+pub mod uri;
 pub mod utils;
 
 pub use platform_runtime::PlatformRuntime;

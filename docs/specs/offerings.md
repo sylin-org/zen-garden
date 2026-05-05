@@ -179,62 +179,64 @@ HTTP REST API wrapping native service:
 
 ## Service Discovery
 
-### Connection String Format
+URIs follow the [URI-0003](../decisions/URI-0003-zen-garden-urn-form-scheme.md) grammar. The discovery-side resolution algorithm is in [specs/discovery.md](discovery.md). This section describes how *offerings* fit into that scheme.
+
+### Three ways to address an offering
+
+**1. By name** — bare name; cascade hits the offering kind first.
 
 ```
-zen-garden:[<protocol>//]<offering>[::instance][/<partition>]
+zen-garden:mongodb              → the MongoDB offering
+zen-garden:mongodb:staging      → its "staging" instance
+zen-garden:mongodb/myapp        → with database sub-path
+zen-garden:minio                → the MinIO offering (uses S3 wire protocol)
 ```
 
-**Examples:**
+This is the dominant case. The cascade resolves to whichever offering has the matching name, and the offering's manifest determines the wire protocol.
+
+**2. By capability** — empty target, `cap=` query; bypasses cascade.
 
 ```
-zen-garden:mongodb              → MongoDB offering (default protocol)
-zen-garden:mongodb//            → MongoDB via mongodb protocol (explicit)
-zen-garden:s3//                 → Any offering supporting s3 protocol
-zen-garden:s3//minio            → MinIO via S3 protocol
-zen-garden:mongodb::staging     → MongoDB staging instance
-zen-garden:mongodb/myapp        → MongoDB with myapp database
+zen-garden:?cap=s3              → any offering speaking S3 (MinIO, seed-bank gateway, etc.)
+zen-garden:?cap=storage         → any offering speaking the agnostic storage API
+zen-garden:?cap=mongodb         → any offering speaking the MongoDB wire protocol
 ```
 
-### Protocol Requests
+This expresses "I want something speaking this protocol" without naming the offering. The resolver matches the `protocols` TXT record across all advertised offerings.
 
-Protocols specify the wire format, not the software:
-
-```
-zen-garden:s3//                 → Any S3-compatible (MinIO, seed-bank gateway)
-zen-garden:storage//            → Any storage provider
-zen-garden:mongodb//            → MongoDB protocol (MongoDB, DocumentDB)
-```
-
-### Offering Requests
-
-Offerings specify the software:
+**3. By category** — bare name; cascade falls through to the category index when no offering matches.
 
 ```
-zen-garden:minio                → MinIO (uses default protocol: s3)
-zen-garden:mongodb              → MongoDB (uses default protocol: mongodb)
-zen-garden:redis                → Redis (uses default protocol: redis)
+zen-garden:database             → any offering tagged "database" in its taxonomy
+zen-garden:document-database    → MongoDB / CouchDB / similar
+zen-garden:vector               → Weaviate / Qdrant / similar
 ```
 
-### Category Requests (Agnostic)
+Category names are not reserved keywords. They live in `garden-common::constants::categories` and are consulted as the final cascade stage. The first seven kinds (offering, stone, bank, service, companion, pond, garden) are tried first; a category match is the fallback.
+
+### Combining
+
+Query parameters compose with any of the three forms:
 
 ```
-zen-garden:database             → Any database sidecar (port 8080+)
-zen-garden:document-database    → MongoDB/CouchDB sidecar
-zen-garden:vector               → Weaviate/Qdrant sidecar
+zen-garden:mongodb?cap=mongodb              → name + capability constraint
+zen-garden:mongodb?action=wish              → find-or-provision
+zen-garden:?cap=s3&at=seed-usb-01           → capability pinned to a specific bank
+zen-garden:database?tags=document           → category + taxonomy filter
+zen-garden:offering//mongodb                → explicit offering kind (force offering cascade level)
 ```
 
-**Resolution logic:**
+### Resolution
 
-1. Parse connection string: `zen-garden:[<protocol>//]<offering>[::instance][/<partition>]`
-2. Query mDNS: `_koan-stone._tcp.local.`
-3. Filter by protocol or offering:
-   - Protocol specified (s3//) → offerings with matching protocol
-   - Offering specified (mongodb) → specific offering
-   - Category (database) → agnostic endpoints
-4. Filter by instance (if specified)
-5. Select best: health > priority > response time
-6. Build connection string with resolved endpoint
+Defer to the discovery-layer algorithm in [specs/discovery.md §"Connection String Resolution"](discovery.md#connection-string-resolution). In short:
+
+1. Parse URI per URI-0003
+2. Build candidate set (cascade, explicit kind, or capability-only)
+3. Apply query constraints (`at=`, `cap=`, `tags=`, `protocol=`)
+4. Filter by instance qualifier if present
+5. Rank by health → priority → latency
+6. Apply `?action=` if present (`wish` triggers provisioning)
+7. Build native connection string from selected endpoint
 
 ---
 

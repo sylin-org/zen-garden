@@ -2,7 +2,7 @@
 audience: [developer, api-client, contributor]
 doc_type: reference
 status: current
-last_verified: 2026-01-19
+last_verified: 2026-05-04
 canonical: true
 note: "Authoritative technical reference for Zen Garden protocol."
 ---

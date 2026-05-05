@@ -2,7 +2,7 @@
 
 **Version:** 2.0  
 **Status:** Reference Implementation  
-**Last Updated:** 2026-03-25
+**Last Updated:** 2026-05-04
 
 > **Build applications that discover infrastructure automatically.**  
 > This guide helps you create drivers, SDKs, and integrations for Zen Garden.
@@ -1066,13 +1066,21 @@ Port ledger: {data_dir}/companion-ports.json
 
 ## 9. Connection Strings
 
-### 9.1 Format
+The full URI grammar is specified in [URI-0003](../decisions/URI-0003-zen-garden-urn-form-scheme.md). The discovery-side resolution algorithm is in [specs/discovery.md](../specs/discovery.md). This section is the *minimum viable* implementation for client libraries — enough to handle the dominant case (named offering with optional sub-path).
+
+Driver authors implementing the full grammar (capability queries, kind-explicit forms, wish action, replica pinning) should use the shared test corpus at `docs/specs/zen-garden-uri-test-vectors.json` as the conformance contract.
+
+### 9.1 Format (full)
 
 ```
-zen-garden:<service-type>[/<database>]
+zen-garden:[<target>][/<sub-path>][?<query>][#<fragment>]
+
+<target> := <bare-name>            # cascade resolution
+          | <kind>//<name>          # explicit kind
+          | (empty, with cap= query)
 ```
 
-### 9.2 Examples
+### 9.2 Examples (dominant case: bare name + optional sub-path)
 
 | Connection String | Resolved Native String |
 |-------------------|------------------------|
@@ -1081,41 +1089,79 @@ zen-garden:<service-type>[/<database>]
 | `zen-garden:redis` | `redis://stone-beta.local:6379` |
 | `zen-garden:postgres/app` | `postgresql://stone-gamma.local:5432/app` |
 
-### 9.3 Resolution Algorithm
+Advanced forms (full URI-0003 grammar):
+
+| Connection String | Resolution |
+|-------------------|------------|
+| `zen-garden:?cap=s3` | Capability-only — any S3-speaking endpoint |
+| `zen-garden:offering//mongodb` | Explicit offering kind |
+| `zen-garden:mongodb?action=wish` | Find-or-provision |
+| `zen-garden:mongodb:staging` | Specific instance |
+
+### 9.3 Resolution Algorithm — minimum viable (bare name + sub-path)
+
+A starter parser that handles the dominant case. Use a real URI library (Python `urllib.parse`, Node.js `URL`, Rust `url` crate, C# `System.Uri`) for production implementations.
 
 ```python
 def resolve_connection_string(conn_str: str) -> str:
     """
-    Resolve zen-garden:// connection string to native protocol.
-    
-    Format: zen-garden:<service-type>[/<database>]
+    Resolve a zen-garden: URI to native connection string.
+    Handles the dominant case: bare offering name with optional sub-path.
+
+    For full URI-0003 grammar (capability queries, explicit kinds,
+    wish action, replica pinning), use a real URI parser and follow
+    the discovery-layer algorithm in specs/discovery.md.
     """
     if not conn_str.startswith('zen-garden:'):
         return conn_str  # Pass-through native strings
-    
-    # Parse: zen-garden:mongodb/mydb
+
+    # Strip scheme. URL-form (zen-garden://) is accepted as a tolerant
+    # alias and normalises to URN-form on output.
     remainder = conn_str[len('zen-garden:'):]
-    parts = remainder.split('/', 1)
-    service_type = parts[0]
-    database = parts[1] if len(parts) > 1 else None
-    
-    # Discover service
-    service = find_service(service_type)
+    if remainder.startswith('//'):
+        remainder = remainder[2:]
+
+    # Split off query/fragment for this minimum-viable parser
+    # (full grammar handles ?cap=, ?action=, ?at=, #fragment)
+    target_and_path, *_ = remainder.split('?', 1)
+    target_and_path, *_ = target_and_path.split('#', 1)
+
+    # Reject explicit-kind form for this starter parser
+    if '//' in target_and_path:
+        raise NotImplementedError(
+            "Explicit-kind form 'zen-garden:<kind>//<name>' requires "
+            "the full URI-0003 parser"
+        )
+
+    # Bare name + optional sub-path
+    parts = target_and_path.split('/', 1)
+    target = parts[0]
+    sub_path = parts[1] if len(parts) > 1 else None
+
+    # Optional :instance qualifier on the target
+    if ':' in target:
+        service_type, instance = target.split(':', 1)
+    else:
+        service_type, instance = target, None
+
+    # Discover service via cascade (offering → stone → bank → ...)
+    # and apply instance filter if present
+    service = find_service(service_type, instance=instance)
     if not service:
-        raise ServiceNotFoundError(f"Service '{service_type}' not found")
-    
-    # Build native connection string
+        raise ServiceNotFoundError(f"Service '{target}' not found")
+
+    # Build native connection string from the resolved endpoint
     host = parse_host(service.stone_endpoint)
     port = service.ports.get('native', DEFAULT_PORTS.get(service_type, 8080))
-    
+
     if service_type == 'mongodb':
         base = f"mongodb://{host}:{port}"
-        return f"{base}/{database}" if database else base
+        return f"{base}/{sub_path}" if sub_path else base
     elif service_type == 'redis':
         return f"redis://{host}:{port}"
     elif service_type == 'postgres':
         base = f"postgresql://{host}:{port}"
-        return f"{base}/{database}" if database else base
+        return f"{base}/{sub_path}" if sub_path else base
     else:
         # Generic HTTP
         return f"http://{host}:{port}"

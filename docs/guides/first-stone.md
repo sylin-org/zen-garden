@@ -290,7 +290,7 @@ garden-rake describe mongodb
 
 ## Connection Strings
 
-### Using zen-garden:// Protocol
+### Using zen-garden: Protocol
 
 Applications connect using stable resource references (never changes, even when hardware swaps):
 
@@ -529,9 +529,8 @@ dns-sd -G v4 blue-stone.local  # macOS
 1. **mDNS not enabled:** Install Avahi (Linux) or Bonjour (Windows)
    - Linux: `sudo apt install avahi-daemon`
    - Windows: Install Bonjour Print Services or use direct IP
-2. **Wrong service name:** Check exact offering name
-   - Correct: `zen-garden:mongodb`
-   - Wrong: `zen-garden://mongodb` (no protocol slashes)
+2. **Wrong service name:** Check the exact offering name (lowercase, canonical form)
+   - Example: `zen-garden:mongodb` (not `zen-garden:Mongo` or `zen-garden:mongo-db`)
 3. **Stone offline:** Verify Stone reachable via HTTP
    - Test: `curl http://blue-stone:7185/health`
 

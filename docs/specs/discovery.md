@@ -135,35 +135,22 @@ TXT: offering=mongodb-agnostic
 
 ### Goal
 
-Resolve `zen-garden:mongodb` or `zen-garden:database` to a native connection string.
+Resolve a `zen-garden:` URI (e.g. `zen-garden:mongodb`, `zen-garden:database`, `zen-garden:?cap=s3`) to a native connection string.
 
-### Algorithm
+### Summary
 
-```
-1. Parse connection string:
-   - Format: zen-garden:<service-type>[/<database>]
-   - Example: zen-garden:mongodb/myapp
+1. Parse the URI per [URI-0003](../decisions/URI-0003-zen-garden-urn-form-scheme.md) grammar
+2. Build a candidate set:
+   - Empty target + `cap=` → resources matching the capability
+   - Explicit kind (`<kind>//<name>`) → resources of that kind by name
+   - Bare name → run cascade (offering → stone → bank → service → companion → pond → garden → category)
+3. Apply query constraints (`at=`, `cap=`, `tags=`, `protocol=`)
+4. Apply instance qualifier if present
+5. Rank by health → priority → latency
+6. Apply action (`wish`, `logs`, etc.) if present
+7. Build native connection string from the selected endpoint
 
-2. Query mDNS:
-   - Browse _koan-stone._tcp.local.
-   - Collect all service instances with TXT records
-
-3. Filter by service type:
-   - Known service (mongodb) → Filter protocol=native, offering=mongodb
-   - Generic category (database) → Filter protocol=agnostic, categories CONTAINS database
-
-4. Filter by tags (if specified):
-   - zen-garden:database?tags=document → Filter categories CONTAINS document
-
-5. Select best endpoint:
-   - Rank by health: healthy > degraded > offline
-   - Rank by priority: Higher priority first
-   - Rank by response time: Fastest responder first
-
-6. Build native connection string:
-   - Native: mongodb://<stone-ip>:27017/myapp
-   - Agnostic: http://<stone-ip>:8080/v1/data/myapp
-```
+The full algorithm with worked examples is in [§"Connection String Resolution"](#connection-string-resolution) below.
 
 ---
 
@@ -283,81 +270,127 @@ election_hash_algorithm = "blake3"
 
 ## Connection String Resolution
 
-### Connection String Format
+The full URI grammar is specified in [URI-0003](../decisions/URI-0003-zen-garden-urn-form-scheme.md). This section describes how the discovery layer resolves URI-0003 URIs to native connection strings.
+
+### Grammar (summary)
 
 ```
-zen-garden:[<protocol>//]<offering>[:<instance>][/<partition>][?options]
+zen-garden:[<target>][/<sub-path>][?<query>][#<fragment>]
+
+<target> := <bare-name>            # cascade resolution
+          | <kind>//<name>          # explicit kind
+          | (empty, with cap= query)
 ```
 
-**Grammar:**
-- `protocol` (optional): Wire format (s3, mongodb, redis, storage)
-- `offering` (required): Software name or category
-- `instance` (optional): Named instance for multi-instance offerings
-- `partition` (optional): Database, bucket, or namespace
-- `options` (optional): Query parameters
+**Cascade order** (when `<target>` is a bare name): offering → stone → bank → service → companion → pond → garden → category. First match wins.
 
-**Examples:**
+**Reserved kinds**: `offering`, `stone`, `bank`, `service`, `companion`, `pond`, `garden`. Names colliding with these are rejected at resource-creation time.
 
-- `zen-garden:mongodb` → MongoDB offering (default protocol)
-- `zen-garden:mongodb//` → MongoDB via mongodb protocol (explicit)
-- `zen-garden:s3//` → Any S3-compatible offering or seed-bank
-- `zen-garden:s3//minio` → MinIO via S3 protocol
-- `zen-garden:mongodb:staging` → MongoDB staging instance
-- `zen-garden:mongodb/myapp` → MongoDB (myapp database)
-- `zen-garden:s3//@seed-usb-01` → Specific seed-bank via S3
-- `zen-garden:database?tags=transactions` → Filter by tags
+**Standard query parameters**: `cap=` (capability constraint), `action=` (wish, logs, restart, etc.), `at=` (replica/stone pin), `tags=` (taxonomy filter), `protocol=` (wire-protocol hint).
 
-### Resolution Steps
+### Examples
 
-**For protocol-based resolution:**
+| URI | Resolved as |
+|---|---|
+| `zen-garden:mongodb` | Cascade hits offering "mongodb" → `mongodb://10.0.1.10:27017` |
+| `zen-garden:mongodb/mydb` | Same, with database sub-path → `mongodb://10.0.1.10:27017/mydb` |
+| `zen-garden:mongodb:staging` | Offering "mongodb" instance "staging" → `mongodb://10.0.1.10:27018` |
+| `zen-garden:?cap=s3` | Empty target + capability → any S3-speaking endpoint |
+| `zen-garden:?cap=s3&at=seed-usb-01` | Same, pinned to a specific bank |
+| `zen-garden:offering//mongodb` | Explicit offering kind (forces offering cascade level) |
+| `zen-garden:stone//crystal-forest` | Explicit stone reference |
+| `zen-garden:database` | Cascade falls through to category index → any database offering |
+| `zen-garden:mongodb?action=wish` | Find-or-provision MongoDB |
 
-```python
-# Connection string: zen-garden:s3//
+### Resolution algorithm
 
-1. Query mDNS: _koan-stone._tcp.local.
-2. Filter: protocols CONTAINS s3
-3. Prioritize: offerings > seed-bank gateways
-4. Select best: health > priority > latency
-5. Resolve: http://10.0.1.10:9000 (MinIO) or :7185/api/v1/storage (gateway)
+```
+1. Parse URI per URI-0003 grammar
+   - Returns: target (or empty), sub-path, query, fragment
+   - Empty target requires cap= query; otherwise parse error
+
+2. Build candidate set:
+   IF target is empty:
+     candidates = all offerings whose protocols ∋ cap query
+   ELIF target uses explicit kind (kind//name):
+     candidates = resources of that kind matching name
+   ELSE (bare name):
+     candidates = run_cascade(name)
+     where run_cascade tries each kind in order, returning first non-empty match
+     (final stage consults the category index)
+
+3. Apply query constraints in order:
+   - at=<name>: hard filter; resolution fails if no candidate matches
+   - cap=<X[,Y]>: candidates must support all listed capabilities
+   - tags=<X[,Y]>: candidates' taxonomy must include all listed tags
+   - protocol=<X>: soft preference (does not exclude non-matching candidates)
+
+4. Apply instance qualifier (if target has :instance):
+   - candidates = candidates filtered by instance match
+   - empty result is a resolution failure (not a category fallback)
+
+5. Select best endpoint:
+   - Rank by health: healthy > degraded > offline
+   - Rank by priority: higher first
+   - Rank by latency: faster first
+
+6. Apply action (if action= present):
+   - "wish": on candidate-set empty AND resolver has provisioning rights, request provisioning; otherwise return wish-failed error
+   - "logs", "restart", etc.: kind-specific verbs; resolver returns the appropriate endpoint URL or invokes the action
+   - default (no action): return native connection string
+
+7. Build native connection string:
+   - Native protocol: <protocol>://<endpoint>[<sub-path>]
+     Example: mongodb://10.0.1.10:27017/mydb
+   - Agnostic HTTP: http://<endpoint>[/v1/<sub-path>]
+     Example: http://10.0.1.10:8080/v1/data/mydb
 ```
 
-**For offering-based resolution:**
+### Worked examples
 
-```python
-# Connection string: zen-garden:mongodb:staging/myapp
+**Bare name + sub-path** (`zen-garden:mongodb/myapp`):
 
-1. Query mDNS: _koan-stone._tcp.local.
-2. Filter: offering=mongodb AND instance=staging
-3. Select best: health > priority > latency
-4. Resolve: mongodb://10.0.1.10:27018/myapp
+```
+1. Parse: target="mongodb", sub_path="myapp"
+2. Cascade: offering "mongodb" matches → candidate set
+3. Constraints: none
+4. Instance: none
+5. Selection: pick healthy stone-01 (priority 50)
+6. Action: none
+7. Result: mongodb://10.0.1.10:27017/myapp
 ```
 
-**For category-based resolution (agnostic):**
+**Capability-only** (`zen-garden:?cap=s3`):
 
-```python
-# Connection string: zen-garden:database/myapp
-
-1. Query mDNS: _koan-stone._tcp.local.
-2. Filter: protocol=agnostic AND categories CONTAINS database
-3. Select best: health > priority > latency
-4. Resolve: http://10.0.1.10:8080/v1/data/myapp
+```
+1. Parse: target empty, cap=["s3"]
+2. Candidates: all offerings whose `protocols` TXT record contains "s3"
+3. Constraints: cap satisfied by candidate set construction
+4. Instance: none
+5. Selection: prefer offering > gateway > seed-bank
+6. Action: none
+7. Result: http://10.0.1.10:9000 (MinIO native S3)
 ```
 
-### Client Library Support
+**Wish on miss** (`zen-garden:postgres-prod?action=wish`):
 
-**Planned client libraries:**
+```
+1. Parse: target="postgres-prod", action="wish"
+2. Cascade: no match across any kind
+3. Action=wish: request provisioning via Moss API
+   - Resolver MUST have provisioning capability; otherwise wish-failed
+4. Provisioning succeeds: returns endpoint
+5. Result: postgresql://10.0.1.10:5432
+```
 
-- **Python:** `zen_garden.connect("zen-garden:mongodb/myapp")`
-- **JavaScript/Node.js:** `await connect("zen-garden:mongodb/myapp")`
-- **.NET/C#:** `ZenGarden.Connect("zen-garden:mongodb/myapp")`
+### Client library responsibilities
 
-**Library responsibilities:**
-
-1. Parse connection string
-2. Query mDNS or UDP broadcast
-3. Cache resolved endpoint (TTL: 5 minutes)
-4. Reconnect on failure
-5. Fallback to alternate endpoint
+1. Parse URI per URI-0003 grammar (use a real URI library — `url` crate in Rust, `System.Uri` in C#)
+2. Run discovery (mDNS + UDP broadcast); cache topology with 90-second TTL
+3. Apply resolution algorithm above
+4. Cache resolved endpoint (5-minute TTL recommended at application level)
+5. Reconnect on failure: re-run resolution, do not cache failed endpoints
+6. Fallback to alternate candidate when ranked-best fails connection
 
 ---
 

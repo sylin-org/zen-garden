@@ -231,7 +231,7 @@ When your application connects to `zen-garden:redis`, here's what happens inside
    Application connects normally
 ```
 
-The magic is in step 3. The `zen-garden:` prefix triggers discovery. The result is a native connection string that any standard driver understands.
+The magic is in step 3. The `zen-garden:` scheme triggers discovery. The result is a native connection string that any standard driver understands.
 
 ### Category Search
 

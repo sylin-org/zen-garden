@@ -900,7 +900,7 @@ garden-rake observe --at stone-01
 
 1. **mDNS not enabled**: Install Avahi (Linux) or Bonjour (Windows)
 2. **Service not announced**: Verify service running and healthy
-3. **Wrong connection string**: Use `zen-garden:mongodb` not `zen-garden://mongodb`
+3. **Wrong connection string format**: confirm the URI form `zen-garden:<offering>` (e.g., `zen-garden:mongodb`)
 
 ---
 

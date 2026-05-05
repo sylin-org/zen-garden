@@ -1,11 +1,13 @@
 //! Zen Common Constants
 //! Centralized constants for ports, names, paths, timeouts, limits, and error codes
 
+pub mod categories;
 pub mod channels;
 pub mod headers;
 pub mod limits;
 pub mod orchestration;
 pub mod paths;
+pub mod reserved_names;
 pub mod server;
 pub mod storage;
 pub mod timeouts;

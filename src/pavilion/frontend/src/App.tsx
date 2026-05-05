@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import { CommandPalette } from "./views/CommandPalette"
 import { HomeView } from "./views/Home"
+import { OnboardingView } from "./views/Onboarding"
 import { PondView } from "./views/Pond"
 import { ServicesView } from "./views/Services"
 import { SettingsView } from "./views/Settings"
@@ -27,6 +28,7 @@ interface Settings {
   quiet_hours: { enabled: boolean; start: string; end: string }
   suppressed_kinds: string[]
   autostart_enabled: boolean
+  onboarded: boolean
 }
 
 type View = "home" | "services" | "pond" | "settings"
@@ -119,6 +121,24 @@ function App(): JSX.Element {
       window.removeEventListener("keydown", handler)
     }
   }, [])
+
+  // Render onboarding ahead of the dashboard until the user has
+  // explicitly anchored or skipped. Settings is the source of
+  // truth so the choice persists.
+  if (settings && !settings.onboarded) {
+    return (
+      <OnboardingView
+        onComplete={() => {
+          // The settings-changed listener will re-render with
+          // onboarded: true, but we set state eagerly so the
+          // hand-off feels instant.
+          setSettings((prev) =>
+            prev ? { ...prev, onboarded: true } : prev
+          )
+        }}
+      />
+    )
+  }
 
   return (
     <div className="pavilion-shell">

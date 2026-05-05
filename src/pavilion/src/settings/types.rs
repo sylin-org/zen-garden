@@ -25,6 +25,12 @@ pub struct Settings {
     pub suppressed_kinds: Vec<String>,
     #[serde(default)]
     pub autostart_enabled: bool,
+    /// Whether the first-launch onboarding flow has been
+    /// completed. The frontend shows the Onboarding view until
+    /// this flips true (either by tending a stone explicitly or
+    /// by clicking Skip — both paths set this).
+    #[serde(default)]
+    pub onboarded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +60,7 @@ impl Default for Settings {
             quiet_hours: QuietHours::default(),
             suppressed_kinds: Vec::new(),
             autostart_enabled: false,
+            onboarded: false,
         }
     }
 }
@@ -75,6 +82,7 @@ pub struct SettingsPatch {
     pub quiet_hours: Option<QuietHoursPatch>,
     pub suppressed_kinds: Option<Vec<String>>,
     pub autostart_enabled: Option<bool>,
+    pub onboarded: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -103,6 +111,9 @@ impl Settings {
         }
         if let Some(v) = patch.autostart_enabled {
             self.autostart_enabled = v;
+        }
+        if let Some(v) = patch.onboarded {
+            self.onboarded = v;
         }
     }
 

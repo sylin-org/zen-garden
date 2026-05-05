@@ -759,3 +759,192 @@
   color: var(--bg) !important;
   filter: brightness(1.08);
 }
+
+/* ─── Onboarding ───────────────────────────────────────────── */
+
+.onboarding {
+  height: 100vh;
+  background: var(--bg);
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+
+.onboarding-frame {
+  width: min(640px, 100%);
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 8px;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.onboarding-head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1.1rem;
+  align-items: start;
+}
+
+.onboarding-mark {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--sage), var(--s3));
+  color: var(--gold);
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.onboarding-title {
+  font-family: var(--sans);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--s9);
+  margin: 0 0 0.4rem;
+}
+
+.onboarding-sub {
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--s7);
+  margin: 0;
+}
+
+.onboarding-error {
+  background: rgba(255, 80, 80, 0.08);
+  border: 1px solid var(--red);
+  border-radius: 4px;
+  padding: 0.6rem 0.85rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--red);
+}
+
+.onboarding-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.onboarding-empty {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem;
+  background: var(--bg);
+  border: 1px dashed var(--vb);
+  border-radius: 6px;
+}
+
+.onboarding-empty p {
+  margin: 0.3rem 0 0;
+  font-size: 0.8rem;
+}
+
+.onboarding-empty-spinner {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--vb);
+  border-top-color: var(--sage);
+  animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.onboarding-stone {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 0.85rem;
+  align-items: center;
+  padding: 0.65rem 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--vb);
+  border-radius: 6px;
+  font-family: var(--sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 200ms var(--ease), border-color 200ms var(--ease);
+}
+
+.onboarding-stone:hover:not(:disabled) {
+  background: var(--vh);
+  border-color: var(--gold);
+}
+
+.onboarding-stone:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.onboarding-stone-dot {
+  /* size override — the shared dot is small for status-bar use */
+  width: 10px;
+  height: 10px;
+}
+
+.onboarding-stone-name {
+  font-size: 0.95rem;
+  color: var(--s9);
+  font-weight: 500;
+}
+
+.onboarding-stone-endpoint {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--s5);
+  letter-spacing: 0.02em;
+}
+
+.onboarding-stone-cta {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--gold);
+}
+
+.onboarding-foot {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--vb);
+  padding-top: 1rem;
+}
+
+.onboarding-skip {
+  background: transparent;
+  border: 1px solid var(--vb);
+  color: var(--s6);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 200ms var(--ease), color 200ms var(--ease);
+}
+
+.onboarding-skip:hover:not(:disabled) {
+  background: var(--vh);
+  color: var(--s9);
+}
+
+.onboarding-skip:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

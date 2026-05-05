@@ -14,6 +14,7 @@ use tauri::State;
 use crate::announce::{ActivityEntry, ActivityStore};
 use crate::awareness::{AwareStone, Awareness};
 use crate::connection;
+use crate::settings::{Settings, SettingsPatch, SettingsStore};
 use crate::tending::{TendedStone, Tending};
 
 // ── Awareness / tending ─────────────────────────────────────────────
@@ -196,6 +197,28 @@ pub async fn get_activity(
     store: State<'_, ActivityStore>,
 ) -> Result<Vec<ActivityEntry>, String> {
     Ok(store.snapshot().await)
+}
+
+// ── Settings ────────────────────────────────────────────────────────
+
+/// Current settings snapshot. The frontend calls this on mount and
+/// listens for `settings-changed` events thereafter.
+#[tauri::command]
+pub async fn get_settings(
+    settings: State<'_, Arc<SettingsStore>>,
+) -> Result<Settings, String> {
+    Ok(settings.snapshot().await)
+}
+
+/// Apply a partial update and return the new snapshot. The store
+/// persists to disk and emits `settings-changed` for any other
+/// frontend listener and for Rust-side subscribers.
+#[tauri::command]
+pub async fn set_settings(
+    patch: SettingsPatch,
+    settings: State<'_, Arc<SettingsStore>>,
+) -> Result<Settings, String> {
+    Ok(settings.apply_patch(patch).await)
 }
 
 /// Fetch the garden-wide storage summary from the currently-tended

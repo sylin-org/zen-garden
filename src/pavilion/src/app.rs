@@ -17,6 +17,7 @@ use crate::announce::{observer, policy, ActivityStore, Announcer};
 use crate::awareness::Awareness;
 use crate::commands;
 use crate::integration::cloud_filter;
+use crate::settings::SettingsStore;
 use crate::tending::Tending;
 
 pub fn run() {
@@ -29,6 +30,8 @@ pub fn run() {
             commands::get_pond_status,
             commands::get_storage,
             commands::get_activity,
+            commands::get_settings,
+            commands::set_settings,
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // Another invocation tried to start; focus the existing window.
@@ -103,11 +106,22 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Settings — keystone for everything Announcer-shaped.
+            // Loaded synchronously at startup so the Announcer can
+            // hold an Arc<SettingsStore> from first construction.
+            let settings = Arc::new(SettingsStore::new(app.handle().clone()));
+            app.manage(settings.clone());
+
             // Announcer — coalesces and dedupes events fed from
             // Awareness and the SSE storage observer; activity rows
-            // for the Activity view; toasts when the policy promotes.
+            // for the Activity view; toasts when the policy promotes
+            // (warmup + suppressions + quiet hours via SettingsStore).
             let activity_store = ActivityStore::default();
-            let announcer = Announcer::new(app.handle().clone(), activity_store.clone());
+            let announcer = Announcer::new(
+                app.handle().clone(),
+                activity_store.clone(),
+                settings.clone(),
+            );
             policy::spawn_flush_loop(announcer.clone());
             app.manage(activity_store.clone());
             app.manage(announcer.clone());

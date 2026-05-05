@@ -27,6 +27,7 @@ use uuid::Uuid;
 use super::event::{ActivityEntry, GardenEvent};
 use super::store::ActivityStore;
 use super::toast;
+use crate::settings::SettingsStore;
 
 /// Tauri event name fired when a new activity entry has landed.
 /// Frontend subscribers re-fetch via `get_activity` rather than
@@ -67,6 +68,7 @@ struct StorageWindow {
 pub struct Announcer {
     inner: Arc<Mutex<Inner>>,
     store: ActivityStore,
+    settings: Arc<SettingsStore>,
     app: AppHandle,
     started_at: Instant,
 }
@@ -77,12 +79,13 @@ struct Inner {
 }
 
 impl Announcer {
-    pub fn new(app: AppHandle, store: ActivityStore) -> Self {
+    pub fn new(app: AppHandle, store: ActivityStore, settings: Arc<SettingsStore>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 storage_windows: HashMap::new(),
             })),
             store,
+            settings,
             app,
             started_at: Instant::now(),
         }
@@ -92,6 +95,29 @@ impl Announcer {
     /// has, accepted events skip toast promotion.
     fn past_warmup(&self) -> bool {
         self.started_at.elapsed() >= STARTUP_QUIET_WINDOW
+    }
+
+    /// Final promotion gate. Layered checks, fail-closed:
+    ///
+    /// 1. cold-start warmup
+    /// 2. per-kind suppression ("Hide this kind")
+    /// 3. quiet hours
+    ///
+    /// Each layer can veto; `true` only when every check passes.
+    /// The activity entry still lands in the ring buffer either
+    /// way — this only controls whether the user sees a toast.
+    async fn should_promote_now(&self, event: &GardenEvent) -> bool {
+        if !self.past_warmup() {
+            return false;
+        }
+        let snap = self.settings.snapshot().await;
+        if snap.is_suppressed(event.kind_str()) {
+            return false;
+        }
+        if snap.is_quiet_now(chrono::Local::now().time()) {
+            return false;
+        }
+        true
     }
 
     /// Borrow of the activity store — useful in tests and future
@@ -109,11 +135,10 @@ impl Announcer {
     pub async fn observe(&self, event: GardenEvent) {
         match event {
             GardenEvent::StoneJoined { .. } | GardenEvent::StoneLeft { .. } => {
-                // No coalescing. Promote unless we're still in the
-                // cold-start quiet window — the user just opened the
-                // app and doesn't need a toast for every stone the
-                // discovery probe surfaces.
-                let promote = self.past_warmup();
+                // No coalescing. Whether to toast is decided by the
+                // full promotion gate (warmup + suppressions +
+                // quiet hours).
+                let promote = self.should_promote_now(&event).await;
                 self.accept(event, promote).await;
             }
             GardenEvent::StorageActivity { .. } => {
@@ -152,7 +177,11 @@ impl Announcer {
                 modifies: window.modifies,
                 deletes: window.deletes,
             };
-            let promote = total >= STORAGE_TOAST_THRESHOLD && self.past_warmup();
+            // Threshold first (a quiet sync stays in Activity even
+            // when no other gate would suppress it), then the full
+            // gate (warmup, suppressions, quiet hours).
+            let promote =
+                total >= STORAGE_TOAST_THRESHOLD && self.should_promote_now(&event).await;
             self.accept(event, promote).await;
         }
     }

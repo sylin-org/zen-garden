@@ -340,3 +340,122 @@
 .severity-notice { background: var(--sage); }
 .severity-warn   { background: var(--clay); }
 .severity-urgent { background: var(--red);  animation: breathe 1.5s var(--ease) infinite; }
+
+/* ─── Sidebar nav: clickable variant ────────────────────────── */
+
+.nav-item:not(.disabled) {
+  cursor: pointer;
+}
+
+/* ─── Settings ─────────────────────────────────────────────── */
+
+.settings-group {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  border-radius: 6px;
+  padding: 0.85rem 1rem 0.5rem;
+  margin-bottom: 1.25rem;
+  max-width: 720px;
+}
+
+.settings-group-title {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--s5);
+  margin-bottom: 0.65rem;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--vb);
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--s9);
+}
+
+.settings-row:last-of-type {
+  border-bottom: none;
+}
+
+.settings-row-label {
+  color: var(--s9);
+}
+
+.settings-row-help {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--s5);
+  letter-spacing: 0.02em;
+  grid-column: 1 / -1;
+  padding-left: 1.6rem;
+}
+
+.settings-row-time {
+  grid-template-columns: auto auto auto auto 1fr;
+  gap: 0.5rem;
+}
+
+.settings-row-time input[type="time"] {
+  background: var(--bg);
+  color: var(--s9);
+  border: 1px solid var(--vb);
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-feature-settings: "tnum";
+}
+
+.settings-row-time input[type="time"]:disabled {
+  color: var(--s5);
+  cursor: not-allowed;
+}
+
+.settings-input-invalid {
+  border-color: var(--red) !important;
+}
+
+.settings-row-sep {
+  color: var(--s5);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+
+.settings-row-pill {
+  grid-template-columns: 1fr auto;
+}
+
+.settings-row-action {
+  background: transparent;
+  color: var(--gold);
+  border: 1px solid var(--vb);
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background-color 200ms var(--ease);
+}
+
+.settings-row-action:hover:not(:disabled) {
+  background: var(--vh);
+}
+
+.settings-row-action:disabled {
+  cursor: not-allowed;
+  color: var(--s5);
+}
+
+.settings-empty {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--s5);
+  padding: 0.5rem 0;
+}

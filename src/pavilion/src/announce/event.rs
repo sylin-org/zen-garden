@@ -77,6 +77,18 @@ impl GardenEvent {
         }
     }
 
+    /// Stable kind identifier used by [`Settings::is_suppressed`]
+    /// for "Hide this kind" lookups. Matches the wire `kind` tag
+    /// the frontend serialises (snake_case via the enum's serde
+    /// rename).
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            GardenEvent::StoneJoined { .. } => "stone_joined",
+            GardenEvent::StoneLeft { .. } => "stone_left",
+            GardenEvent::StorageActivity { .. } => "storage_activity",
+        }
+    }
+
     /// Severity policy. Stable across observer/policy boundaries so
     /// the UI can colour rows consistently.
     pub fn severity(&self) -> Severity {

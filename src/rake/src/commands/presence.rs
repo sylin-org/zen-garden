@@ -15,7 +15,7 @@ pub async fn presence_command(
     quiet: bool,
     _fresh: bool,
     _verbose: u8,
-    cache: Option<&garden_common::client::discovery::Discovery>,
+    cache: Option<&garden_discovery::cache::Discovery>,
 ) -> Result<()> {
     if quiet {
         anyhow::bail!("Presence streaming requires interactive mode (cannot use --quiet)");

@@ -1,0 +1,28 @@
+[package]
+name = "garden-discovery"
+version = "0.2.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Stone discovery (mDNS, UDP, Lantern, certmesh) for Zen Garden clients"
+
+[dependencies]
+garden-common = { path = "../common" }
+
+# Wire / async
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros", "rt"] }
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid = { workspace = true, features = ["v7"] }
+chrono = { workspace = true, features = ["serde"] }
+
+# Transport
+mdns-sd.workspace = true
+if-addrs.workspace = true
+hostname.workspace = true
+flume = "0.11"
+
+[lints]
+workspace = true

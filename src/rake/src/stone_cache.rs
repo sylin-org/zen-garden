@@ -1,11 +1,11 @@
 use crate::connection::resolution::{CachedStoneInfo, CachedStoneOps};
 use anyhow::Result;
-use garden_common::client::discovery::{Discovery, KnownStone};
 use garden_common::client::StoneApi;
 use garden_common::HardwareCapabilities;
+use garden_discovery::cache::{Discovery, KnownStone};
 use std::sync::{Arc, LazyLock};
 
-pub use garden_common::client::discovery::STONE;
+pub use garden_discovery::cache::STONE;
 
 /// Shared `Arc` wrapper around a `Discovery` instance for use with `Resilient`.
 ///

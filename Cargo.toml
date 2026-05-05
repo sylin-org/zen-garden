@@ -8,6 +8,7 @@ members = [
 
   # New structure
   "src/common",
+  "src/discovery",
   "src/moss",
   "src/rake",
   "src/cricket",
@@ -31,7 +32,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.95"
 authors = ["Koan Framework"]
 
 [workspace.dependencies]
@@ -53,7 +54,10 @@ futures-util = "0.3"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yml = "0.0.12"
+# serde_yml was unmaintained + unsound (RUSTSEC-2025-0067/0068).
+# Aliased to serde_yaml_ng (maintained drop-in with identical API)
+# so the existing `serde_yml::` callsites keep compiling.
+serde_yml = { package = "serde_yaml_ng", version = "0.10" }
 
 # HTTP
 axum = "0.8"

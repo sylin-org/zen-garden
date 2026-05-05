@@ -1,13 +1,8 @@
-//! Client-side stone discovery with TTL
+//! Process-scoped TTL cache of recently-seen stones (RAKE-0010).
 //!
-//! In-process memo for stone discovery results.
-//! Used across commands to avoid redundant network requests within a session.
-//!
-//! # Features
-//! - 90-second TTL for balancing freshness with performance
-//! - Process-scoped singleton via `STONE`
-//! - Thread-safe via `Arc<Mutex>`
-//! - Automatic expiration
+//! Used across CLI commands to avoid redundant discovery within a
+//! session. Moved here from `garden-common::client::discovery` per
+//! [DISC-0001](../../../docs/decisions/DISC-0001-discovery-as-first-class-crate.md).
 
 use std::collections::HashMap;
 use std::sync::LazyLock;

@@ -630,7 +630,7 @@ impl Volume {
         if !self.state.is_online() {
             return None;
         }
-        Some(StorageInfo::new(
+        let mut info = StorageInfo::new(
             mgmt.id.clone(),
             mgmt.name.clone(),
             mgmt.replica_set_id.clone(),
@@ -647,7 +647,14 @@ impl Volume {
             self.state.is_online(),
             mgmt.encrypted,
             mgmt.roles.clone(),
-        ))
+        );
+        // STORAGE-0019: surface the platform-reported filesystem token
+        // so `storage info` can render the proper `<family> (<fs>)`
+        // label and FsCapabilities tier. `Volume::filesystem()` was
+        // populated from /proc/mounts (Linux) or GetVolumeInformationW
+        // (Windows) at scan time.
+        info.filesystem = self.filesystem.clone();
+        Some(info)
     }
 
     pub fn to_summary(&self, stone_name: Option<&str>) -> Option<StorageSummary> {

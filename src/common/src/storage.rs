@@ -368,6 +368,16 @@ pub struct StorageInfo {
     /// Composable roles (e.g., ["seed-bank"])
     #[serde(default = "default_seed_bank_role")]
     pub roles: Vec<String>,
+
+    /// Filesystem token reported by the platform (e.g. `"ext4"`,
+    /// `"ntfs"`, `"exfat"`). Lowercase, machine-readable. `None`
+    /// when the platform couldn't determine it (older Moss versions
+    /// that didn't track this, or fresh manifests on disk).
+    /// STORAGE-0019: feeds the `<family> (<fs>)` rendering and the
+    /// FsCapabilities lookup used by `storage info` and the
+    /// election-aware visibility surfaces.
+    #[serde(default)]
+    pub filesystem: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -414,6 +424,10 @@ impl StorageInfo {
             online,
             encrypted,
             roles,
+            // STORAGE-0019: filled in by the caller via direct field
+            // assignment after construction (kept off the constructor
+            // to avoid bumping its already-too-many-arguments count).
+            filesystem: None,
         }
     }
 

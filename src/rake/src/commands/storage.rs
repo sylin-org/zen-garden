@@ -2020,13 +2020,16 @@ impl Command for StorageInfoCommand {
                 );
             };
 
-            // Derive the filesystem token. Today `StorageInfo` carries a
-            // `btrfs: bool` rather than a generic filesystem string, so
-            // we surface what we can. A future unit lifts the full
-            // filesystem token onto the wire type.
-            let fs_token = if bank.btrfs { "btrfs" } else { "ext4" };
-            let fs_label = garden_common::storage::render_fs_label(fs_token);
-            let caps = garden_common::storage::FsCapabilities::for_filesystem(fs_token);
+            // STORAGE-0019: prefer the platform-reported filesystem
+            // token. Falls back to the legacy `btrfs: bool` flag for
+            // older servers that haven't been rebuilt with the
+            // filesystem field on `StorageInfo`.
+            let fs_token = bank
+                .filesystem
+                .clone()
+                .unwrap_or_else(|| if bank.btrfs { "btrfs" } else { "ext4" }.to_string());
+            let fs_label = garden_common::storage::render_fs_label(&fs_token);
+            let caps = garden_common::storage::FsCapabilities::for_filesystem(&fs_token);
 
             println!(
                 "\n{} {}",

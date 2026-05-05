@@ -1083,3 +1083,111 @@ fn http_client() -> &'static reqwest::Client {
             .unwrap_or_default()
     })
 }
+
+#[cfg(test)]
+mod remote_create_dir_tests {
+    //! Multi-stone proxy validation for `StorageHandle::create_dir`'s
+    //! Remote branch.
+    //!
+    //! We don't have a multi-stone garden in CI, but the proxy path
+    //! is straightforward: when `for_write` returns a `Remote`
+    //! handle, `create_dir` builds a URL via `file_url` and POSTs.
+    //! These tests stand a tiny TCP listener up in front of a fake
+    //! Primary, capture the request line, and assert the URL +
+    //! method are correct end-to-end (no mocks; real reqwest, real
+    //! parsing).
+    //!
+    //! `read`, `write`, `delete`, etc. share the same `file_url` +
+    //! `http_client` machinery, so locking `create_dir`'s URL down
+    //! gives us proxy-correctness coverage that piggybacks on the
+    //! routing the other ops have been exercising in production.
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    /// Spawn a one-shot TCP listener that records the first
+    /// request line + path, replies with `204 No Content`, and
+    /// returns `(addr, request_line)` once a request arrives.
+    /// Times out the test if no request comes within ~5s.
+    fn one_shot_204_capturing_request() -> (String, std::sync::mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(&stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("read request line");
+            tx.send(line.trim().to_string()).expect("send");
+            // Drain headers until blank line so reqwest sees a complete request.
+            loop {
+                let mut h = String::new();
+                let n = reader.read_line(&mut h).unwrap_or(0);
+                if n == 0 || h.trim().is_empty() {
+                    break;
+                }
+            }
+            let mut stream = stream;
+            let _ = stream.write_all(
+                b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        });
+        (addr, rx)
+    }
+
+    fn make_remote_handle(endpoint: String, storage_name: &str) -> StorageHandle {
+        let route = StorageRoute::Proxy(ProxyTarget {
+            endpoint,
+            stone_id: "test-stone-id".to_string(),
+        });
+        StorageHandle::new(route, storage_name.to_string(), None)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn remote_create_dir_posts_to_correct_url() {
+        let (endpoint, rx) = one_shot_204_capturing_request();
+        let handle = make_remote_handle(endpoint, "personal");
+
+        handle
+            .create_dir("Tax Documents/2024")
+            .await
+            .expect("remote create_dir should succeed against the fake Primary");
+
+        let line = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("captured request");
+
+        // Request line shape: "POST /api/v1/garden/storage/personal/fs/Tax%20Documents/2024 HTTP/1.1"
+        // reqwest percent-encodes the space; axum's Path extractor
+        // decodes it back on the receive side.
+        assert!(
+            line.starts_with("POST "),
+            "expected POST, got: {line}"
+        );
+        assert!(
+            line.contains("/api/v1/garden/storage/personal/fs/Tax%20Documents/2024"),
+            "URL did not match expected proxy form: {line}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn remote_create_dir_handles_top_level_path() {
+        let (endpoint, rx) = one_shot_204_capturing_request();
+        let handle = make_remote_handle(endpoint, "personal");
+
+        handle
+            .create_dir("solo-dir")
+            .await
+            .expect("remote create_dir should succeed");
+
+        let line = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("captured request");
+
+        assert!(
+            line.contains("/api/v1/garden/storage/personal/fs/solo-dir"),
+            "URL did not match: {line}"
+        );
+    }
+}

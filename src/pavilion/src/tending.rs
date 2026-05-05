@@ -34,6 +34,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{watch, RwLock};
 
 use crate::awareness::{AwareStone, Awareness};
+use crate::settings::SettingsStore;
 
 /// Tauri event name for tending changes.
 pub const EVENT_TENDING_CHANGED: &str = "tending-changed";
@@ -146,8 +147,25 @@ impl Tending {
     /// give it a brief grace window (10s) to chirp before reselecting.
     /// If it never re-appears, fall through to fresh selection — the
     /// user can re-tend explicitly later.
-    pub fn spawn_auto_tend(self: Arc<Self>, awareness: Arc<Awareness>) {
+    ///
+    /// **Onboarding gate**: when `settings.onboarded` is false (a fresh
+    /// installation), auto-tend stays asleep until the user has made an
+    /// explicit choice via the onboarding view. Otherwise we'd race the
+    /// UI — the user would open Pavilion, see "tending stone-X" before
+    /// they ever read the onboarding prompt, and lose the deliberate
+    /// first-pick the spec calls for.
+    pub fn spawn_auto_tend(
+        self: Arc<Self>,
+        awareness: Arc<Awareness>,
+        settings: Arc<SettingsStore>,
+    ) {
         tauri::async_runtime::spawn(async move {
+            // Wait until onboarding is complete (either by an explicit
+            // tend, which sets tending and lets this loop exit on its
+            // first iteration, or by Skip, which leaves tending None
+            // and lets the fresh-selection branch fire).
+            wait_until_onboarded(&settings).await;
+
             let already = self.current.read().await.clone();
 
             // Phase 1: existing-tending grace.
@@ -279,5 +297,26 @@ mod iso8601 {
         let s = String::deserialize(d)?;
         let dt = chrono::DateTime::parse_from_rfc3339(&s).map_err(serde::de::Error::custom)?;
         Ok(UNIX_EPOCH + std::time::Duration::from_secs(dt.timestamp() as u64))
+    }
+}
+
+/// Block until `settings.onboarded` is `true`. Cheap snapshot first
+/// (covers warm starts), then subscribe to the settings watch
+/// channel and await transitions. Yields without burning CPU.
+async fn wait_until_onboarded(settings: &SettingsStore) {
+    if settings.snapshot().await.onboarded {
+        return;
+    }
+    tracing::info!("tending: auto-tend paused until onboarding completes");
+    let mut rx = settings.subscribe();
+    loop {
+        if rx.changed().await.is_err() {
+            tracing::warn!("tending: settings channel closed before onboarding completed");
+            return;
+        }
+        if rx.borrow_and_update().onboarded {
+            tracing::info!("tending: onboarding complete, auto-tend resuming");
+            return;
+        }
     }
 }

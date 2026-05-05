@@ -157,7 +157,9 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let tending = Arc::new(Tending::new(app_handle.clone()).await);
                 app_handle.manage(tending.clone());
-                tending.clone().spawn_auto_tend(awareness.clone());
+                tending
+                    .clone()
+                    .spawn_auto_tend(awareness.clone(), supervisor_settings.clone());
 
                 // Storage observer supervisor — rebinds the SSE
                 // observer task to the currently tended stone.

@@ -38,7 +38,9 @@ pub mod files;
 pub mod objects;
 pub mod snapshots;
 
-pub use files::{delete_file_v1, get_file_v1, head_file_v1, list_fs_v1, put_file_v1};
+pub use files::{
+    delete_file_v1, get_file_v1, head_file_v1, list_fs_v1, move_file_v1, put_file_v1,
+};
 pub use objects::{delete_object_v1, get_object_v1, head_object_v1, put_object_v1};
 pub use snapshots::{
     download_snapshot_v1, get_offering_manifest_v1, list_memories_v1, list_offering_snapshots_v1,

@@ -539,6 +539,108 @@ pub async fn delete_file_v1(
 }
 
 // ============================================================================
+// PATCH /api/v1/garden/storage/{name}/fs/{*path}
+// ============================================================================
+
+/// Move/rename payload.
+///
+/// `move_to` is the new path *within the same storage*, relative to
+/// the storage mount root and using forward slashes. Cross-storage
+/// moves aren't supported here — those are a delete-then-write at
+/// the client.
+#[derive(Debug, Deserialize)]
+pub struct MoveFileRequest {
+    pub move_to: String,
+}
+
+/// Move/rename within a storage.
+///
+/// Used by Pavilion's Cloud Filter `rename` callback: dragging a
+/// file from `Zen Garden\storage\foo.tax` to `Zen Garden\storage\
+/// Tax Documents\foo.tax` arrives here as `path=foo.tax`,
+/// `move_to=Tax Documents/foo.tax`. The local rename auto-creates
+/// the target's parent directory, so the user can drop into a
+/// folder that only exists locally as a Cloud Filter placeholder.
+pub async fn move_file_v1(
+    State(state): State<Moss>,
+    Path((name, path)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(req): Json<MoveFileRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
+    let src = path.trim_start_matches('/').to_string();
+    if src.is_empty() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "Source path is required",
+        ));
+    }
+    let dst = req.move_to.trim_start_matches('/').to_string();
+    if dst.is_empty() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "move_to is required",
+        ));
+    }
+    if src == dst {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "Source and destination are identical",
+        ));
+    }
+    if let Err((status, msg)) = validate_file_path(&src) {
+        return Err(err(status, "INVALID_PATH", msg));
+    }
+    if let Err((status, msg)) = validate_file_path(&dst) {
+        return Err(err(status, "INVALID_PATH", msg));
+    }
+
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+        && local.role != StorageRole::Primary
+    {
+        return Err(err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "PROXY_LOOP",
+            "Proxied request reached a non-primary stone",
+        ));
+    }
+
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: Some(state.current.storage.coordination.tick.raw.clone()),
+    };
+    let handle = resolver.for_write(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
+
+    let is_dir = handle
+        .metadata(&src)
+        .await
+        .map(|m| m.is_dir)
+        .unwrap_or(false);
+
+    handle.rename(&src, &dst, is_dir).await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "MOVE_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    debug!(storage = %name, src = %src, dst = %dst, is_dir, "garden PATCH move");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ============================================================================
 // HEAD /api/v1/garden/storage/{name}/fs/{*path}
 // ============================================================================
 

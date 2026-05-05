@@ -18,17 +18,18 @@
 //!
 //! ## Callback coverage
 //!
-//! | Callback              | Status   | Behavior                                       |
-//! |-----------------------|----------|------------------------------------------------|
-//! | `fetch_data`          | Active   | Range read via `read_file_range`               |
-//! | `fetch_placeholders`  | Active   | Sync root: `list()`. Subdir: `list_directory`  |
-//! | `delete`              | Active   | File delete via `delete_file`; dirs rejected   |
-//! | `dehydrate`           | Approve  | Free local cache; data is recoverable          |
-//! | `rename`              | Reject   | No server-side rename endpoint yet             |
-//! | `opened` / `closed`   | Logging  | Diagnose corrupt/unsupported placeholders      |
-//! | `deleted` / `renamed` | Logging  | Post-completion confirmation                   |
-//! | `dehydrated`          | Logging  | Post-dehydration confirmation                  |
-//! | `state_changed`       | Logging  | Attribute change notifications                 |
+//! | Callback              | Status   | Behavior                                              |
+//! |-----------------------|----------|-------------------------------------------------------|
+//! | `fetch_data`          | Active   | Range read via `read_file_range`                      |
+//! | `fetch_placeholders`  | Active   | Sync root: `list()`. Subdir: `list_directory`         |
+//! | `delete`              | Active   | Files and directories via `delete_file`               |
+//! | `rename`              | Active   | Intra-storage moves via `move_file` (server creates   |
+//! |                       |          | the target's parent dir if it only exists locally)    |
+//! | `dehydrate`           | Approve  | Free local cache; data is recoverable                 |
+//! | `opened` / `closed`   | Logging  | Diagnose corrupt/unsupported placeholders             |
+//! | `deleted` / `renamed` | Logging  | Post-completion confirmation                          |
+//! | `dehydrated`          | Logging  | Post-dehydration confirmation                         |
+//! | `state_changed`       | Logging  | Attribute change notifications                        |
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -340,18 +341,13 @@ impl SyncFilter for PavilionProvider {
             return Err(CloudErrorKind::NotSupported);
         }
 
-        if delete_info.is_directory() {
-            warn!(
-                storage = %storage_name,
-                path = %rel_path,
-                "delete rejected: directory delete is not yet implemented in the garden API"
-            );
-            return Err(CloudErrorKind::NotSupported);
-        }
+        let is_dir = delete_info.is_directory();
 
         let api = self.api.clone();
         let storage_owned = storage_name.clone();
         let rel_owned = rel_path.clone();
+        // The garden DELETE handler dispatches on on-disk metadata,
+        // so the same call works for files and directories.
         self.rt
             .block_on(async move {
                 api.garden()
@@ -363,8 +359,9 @@ impl SyncFilter for PavilionProvider {
                 warn!(
                     storage = %storage_name,
                     path = %rel_path,
+                    is_dir,
                     error = %e,
-                    "delete_file failed"
+                    "delete failed"
                 );
                 CloudErrorKind::NotInSync
             })?;
@@ -377,6 +374,7 @@ impl SyncFilter for PavilionProvider {
         info!(
             storage = %storage_name,
             path = %rel_path,
+            is_dir,
             "delete approved and propagated to stone"
         );
         Ok(())
@@ -391,15 +389,80 @@ impl SyncFilter for PavilionProvider {
     fn rename(
         &self,
         request: Request,
-        _ticket: ticket::Rename,
+        ticket: ticket::Rename,
         rename_info: info::Rename,
     ) -> CResult<()> {
-        warn!(
-            source = %request.path().display(),
-            target = %rename_info.target_path().display(),
-            "rename rejected: the garden API has no rename endpoint yet"
+        let source_path = request.path();
+        let target_path = rename_info.target_path();
+
+        let (src_storage, src_rel) = match self.resolve_path(&source_path) {
+            Some(r) => r,
+            None => return Err(CloudErrorKind::NotUnderSyncRoot),
+        };
+        let (dst_storage, dst_rel) = match self.resolve_path(&target_path) {
+            Some(r) => r,
+            None => return Err(CloudErrorKind::NotUnderSyncRoot),
+        };
+
+        // Cross-storage moves aren't a single-op concept on the
+        // server (different replica sets, different mount roots).
+        // Cloud Filter usually fires delete+create for those; reject
+        // the rename so it falls back to that path.
+        if src_storage != dst_storage {
+            warn!(
+                source = %source_path.display(),
+                target = %target_path.display(),
+                src_storage = %src_storage,
+                dst_storage = %dst_storage,
+                "rename rejected: cross-storage moves are not supported"
+            );
+            return Err(CloudErrorKind::NotSupported);
+        }
+
+        // Renaming/moving the storage root itself isn't meaningful —
+        // that's the user-facing replica-set name.
+        if src_rel.is_empty() || dst_rel.is_empty() {
+            warn!(
+                storage = %src_storage,
+                "rename rejected: storage root renames must go through `rake storage rename`"
+            );
+            return Err(CloudErrorKind::NotSupported);
+        }
+
+        let api = self.api.clone();
+        let storage_owned = src_storage.clone();
+        let src_owned = src_rel.clone();
+        let dst_owned = dst_rel.clone();
+        self.rt
+            .block_on(async move {
+                api.garden()
+                    .storage()
+                    .move_file(&storage_owned, &src_owned, &dst_owned)
+                    .await
+            })
+            .map_err(|e| {
+                warn!(
+                    storage = %src_storage,
+                    src = %src_rel,
+                    dst = %dst_rel,
+                    error = %e,
+                    "move_file failed"
+                );
+                CloudErrorKind::NotInSync
+            })?;
+
+        ticket.pass().map_err(|e| {
+            warn!(error = %e, "rename ticket.pass() failed");
+            CloudErrorKind::NotInSync
+        })?;
+
+        info!(
+            storage = %src_storage,
+            src = %src_rel,
+            dst = %dst_rel,
+            "rename approved and propagated to stone"
         );
-        Err(CloudErrorKind::NotSupported)
+        Ok(())
     }
 
     fn renamed(&self, request: Request, rename_info: info::Renamed) {

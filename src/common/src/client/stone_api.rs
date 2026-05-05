@@ -239,6 +239,19 @@ impl StoneApi {
         self.parse_api_response(response, &url).await
     }
 
+    /// PATCH with a JSON body, expecting an empty response (204 No
+    /// Content). Used for write-only endpoints like the file
+    /// move/rename surface.
+    async fn patch_raw_with_body<B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<reqwest::Response, StoneApiError> {
+        let url = self.url(path);
+        let response = self.client.patch(&url).json(body).send().await?;
+        self.check_status(response, &url).await
+    }
+
     /// PUT with JSON body, returning `T` unwrapped from `ApiResponse<T>`.
     async fn put<T: DeserializeOwned, B: Serialize>(
         &self,
@@ -1280,10 +1293,32 @@ impl GardenStorageApi<'_> {
         Ok(bytes.to_vec())
     }
 
-    /// Delete a user file under `{storage}/fs/{path}`.
+    /// Delete a user file or directory under `{storage}/fs/{path}`.
+    /// The server handler dispatches based on the on-disk metadata,
+    /// so the same call works for both file and directory deletes.
     pub async fn delete_file(&self, storage: &str, path: &str) -> Result<(), StoneApiError> {
         let url_path = build_garden_fs_path(storage, path);
         self.api.delete_raw(&url_path).await?;
+        Ok(())
+    }
+
+    /// Move/rename a file or directory within the same storage.
+    ///
+    /// `src` and `dst` are paths relative to the storage mount root,
+    /// using forward slashes. The server auto-creates the target's
+    /// parent directory if it doesn't exist, so this is enough to
+    /// move into a folder the user just created via Explorer (whose
+    /// local-only Cloud Filter placeholder has no server-side dir
+    /// behind it yet).
+    pub async fn move_file(
+        &self,
+        storage: &str,
+        src: &str,
+        dst: &str,
+    ) -> Result<(), StoneApiError> {
+        let url_path = build_garden_fs_path(storage, src);
+        let body = serde_json::json!({ "move_to": dst });
+        self.api.patch_raw_with_body(&url_path, &body).await?;
         Ok(())
     }
 }

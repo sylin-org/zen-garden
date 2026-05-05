@@ -529,6 +529,59 @@ pub async fn rename_bank_v1(
     crate::api::ok(updated)
 }
 
+/// Refine a medium's condition with the connectivity helper's verdict.
+///
+/// STORAGE-0019: a medium that the platform scanner classified as
+/// `Unreachable` (or zero-bytes-with-the-current-classifier) gets a
+/// more accurate label after the connectivity stage runs:
+///
+/// - If recovery succeeded and the device now reports a real size,
+///   keep the platform's recovered classification (probably
+///   `Adoptable` or `Raw`).
+/// - If recovery did not succeed and the connectivity status records
+///   I/O errors → stay `Unreachable` (replug hint to the user).
+/// - If recovery did not run / did not succeed and there are no I/O
+///   errors → reclassify as `NoMedia` (empty enclosure, insert a
+///   drive).
+fn refine_condition_with_connectivity(
+    platform_condition: crate::infra::storage::platform::MediumCondition,
+    size_bytes: u64,
+    connectivity_status: Option<&garden_common::storage::ConnectivityStatus>,
+) -> crate::infra::storage::platform::MediumCondition {
+    use crate::infra::storage::platform::MediumCondition as MC;
+
+    // Connectivity didn't run → defer entirely to the platform.
+    let Some(status) = connectivity_status else {
+        return platform_condition;
+    };
+
+    // Recovery succeeded — trust the post-recovery platform
+    // classification regardless of the original condition.
+    if status.was_recovered() && size_bytes > 0 {
+        return platform_condition;
+    }
+
+    // Recovery couldn't help (or wasn't tried). Distinguish empty
+    // enclosure from a real fault by the presence of I/O errors in
+    // the residual warnings.
+    let has_io_errors = status.residual_warnings.iter().any(|w| {
+        matches!(
+            w,
+            garden_common::storage::ConnectivityWarning::PriorIoErrors { .. }
+        )
+    });
+
+    if size_bytes == 0 {
+        if has_io_errors {
+            MC::Unreachable
+        } else {
+            MC::NoMedia
+        }
+    } else {
+        platform_condition
+    }
+}
+
 // ============================================================================
 // GET /api/v1/stone/storage/candidates
 // ============================================================================
@@ -559,67 +612,122 @@ pub async fn list_candidates_v1(
             .collect();
 
         // Medium candidates: physical disks (USB/external only).
+        // STORAGE-0019: degraded candidates (zero size or already
+        // marked Unreachable) flow through the connectivity helper —
+        // SCSI rescan / USB re-auth — before the response is built.
+        // The per-device retry budget (default 1 attempt of each
+        // action per minute) caps the impact of repeated polls.
         let media_map = state.current.storage.media.read().await;
-        let media: Vec<MediumInfo> = media_map
-            .values()
-            .filter(|m| m.removable)
-            .map(|m| {
-                let managed = m.has_managed_space(&volumes_map);
-                // STORAGE-0019: the new five-state MediumCondition
-                // taxonomy maps to the existing MediumAction surface
-                // until unit 6 lands the full `adopt` / `format` verb
-                // split in Rake.
-                //
-                // Adoptable subsumes the legacy `Partitioned` value;
-                // when a managed `.zen-garden/` is present it's
-                // already adopted; when a mounted filesystem is
-                // present it's ready to add as-is; otherwise the user
-                // sees a "needs format" hint that resolves to
-                // `garden-rake storage adopt` or `storage format` in
-                // the new CLI.
-                let suggested_action = match m.condition {
-                    crate::infra::storage::platform::MediumCondition::Unreachable
-                    | crate::infra::storage::platform::MediumCondition::NoMedia => {
-                        MediumAction::Unreadable
-                    }
-                    crate::infra::storage::platform::MediumCondition::Raw => {
-                        MediumAction::NeedsPartition
-                    }
-                    crate::infra::storage::platform::MediumCondition::Adoptable
-                    | crate::infra::storage::platform::MediumCondition::Empty => {
-                        if managed {
-                            MediumAction::AlreadyManaged
-                        } else if m.has_mounted_space() {
-                            MediumAction::Ready
-                        } else {
-                            MediumAction::NeedsFormat
-                        }
-                    }
-                };
+        let connectivity_budget = crate::infra::storage::connectivity::shared_budget();
+        let cancel = state.shutdown_token.child_token();
 
-                MediumInfo {
-                    device_id: m.device_id.clone(),
-                    model: m.model.clone(),
-                    bus_type: garden_common::storage::BusType::from(m.bus_type),
-                    size_bytes: m.size_bytes,
-                    removable: m.removable,
-                    condition: garden_common::storage::MediumCondition::from(m.condition),
-                    partitions: m
+        let mut media: Vec<MediumInfo> = Vec::with_capacity(media_map.len());
+        for m in media_map.values().filter(|m| m.removable) {
+            let snapshot = m.snapshot();
+
+            // Run connectivity evaluation only when the cached medium
+            // already shows signs of trouble. Healthy media skip this
+            // path entirely so storage list stays fast.
+            let needs_connectivity_check = matches!(
+                snapshot.condition,
+                crate::infra::storage::platform::MediumCondition::Unreachable
+                    | crate::infra::storage::platform::MediumCondition::NoMedia
+            ) || snapshot.size_bytes == 0;
+
+            let (effective_snapshot, connectivity_status) = if needs_connectivity_check {
+                if let Some(basename) = crate::infra::storage::connectivity::extract_basename(
+                    &snapshot.device_id,
+                ) {
+                    let enriched = crate::infra::storage::connectivity::evaluate_candidate(
+                        snapshot.clone(),
+                        &basename,
+                        connectivity_budget,
+                        &cancel,
+                    )
+                    .await;
+                    (enriched.snapshot, Some(enriched.status))
+                } else {
+                    // Non-Linux device id format — connectivity helper
+                    // is sysfs-driven, so skip and forward as-is.
+                    (snapshot, None)
+                }
+            } else {
+                (snapshot, None)
+            };
+
+            // Refine the condition with the connectivity verdict so
+            // NoMedia / Unreachable reflect the post-recovery reality.
+            let refined_condition = refine_condition_with_connectivity(
+                effective_snapshot.condition,
+                effective_snapshot.size_bytes,
+                connectivity_status.as_ref(),
+            );
+
+            // Inline the partition-level checks that exist on
+            // `Medium`; the snapshot doesn't carry domain methods.
+            let managed = effective_snapshot.partitions.iter().any(|p| {
+                p.mount_path.as_ref().is_some_and(|mp| {
+                    volumes_map.values().any(|v| {
+                        v.is_managed() && v.mount_path().to_string_lossy() == mp.as_str()
+                    })
+                })
+            });
+            // STORAGE-0019: the new five-state MediumCondition
+            // taxonomy maps to the existing MediumAction surface
+            // until unit 6 lands the full `adopt` / `format` verb
+            // split in Rake. Adoptable subsumes the legacy
+            // `Partitioned` value; managed `.zen-garden/` → already
+            // adopted; mounted filesystem → ready as-is; otherwise
+            // the user sees a "needs format" hint that resolves to
+            // `garden-rake storage adopt` or `storage format` in
+            // the new CLI.
+            let suggested_action = match refined_condition {
+                crate::infra::storage::platform::MediumCondition::Unreachable
+                | crate::infra::storage::platform::MediumCondition::NoMedia => {
+                    MediumAction::Unreadable
+                }
+                crate::infra::storage::platform::MediumCondition::Raw => {
+                    MediumAction::NeedsPartition
+                }
+                crate::infra::storage::platform::MediumCondition::Adoptable
+                | crate::infra::storage::platform::MediumCondition::Empty => {
+                    let has_mounted = effective_snapshot
                         .partitions
                         .iter()
-                        .map(|p| MediumPartitionInfo {
-                            index: p.index,
-                            size_bytes: p.size_bytes,
-                            filesystem: p.filesystem.clone(),
-                            mount_path: p.mount_path.clone(),
-                            label: p.label.clone(),
-                        })
-                        .collect(),
-                    managed,
-                    suggested_action,
+                        .any(|p| p.mount_path.is_some());
+                    if managed {
+                        MediumAction::AlreadyManaged
+                    } else if has_mounted {
+                        MediumAction::Ready
+                    } else {
+                        MediumAction::NeedsFormat
+                    }
                 }
-            })
-            .collect();
+            };
+
+            media.push(MediumInfo {
+                device_id: effective_snapshot.device_id.clone(),
+                model: effective_snapshot.model.clone(),
+                bus_type: garden_common::storage::BusType::from(effective_snapshot.bus_type),
+                size_bytes: effective_snapshot.size_bytes,
+                removable: effective_snapshot.removable,
+                condition: garden_common::storage::MediumCondition::from(refined_condition),
+                partitions: effective_snapshot
+                    .partitions
+                    .iter()
+                    .map(|p| MediumPartitionInfo {
+                        index: p.index,
+                        size_bytes: p.size_bytes,
+                        filesystem: p.filesystem.clone(),
+                        mount_path: p.mount_path.clone(),
+                        label: p.label.clone(),
+                    })
+                    .collect(),
+                managed,
+                suggested_action,
+                connectivity_status,
+            });
+        }
 
         (spaces, media)
     };

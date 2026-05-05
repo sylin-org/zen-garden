@@ -224,6 +224,16 @@ pub struct MediumInfo {
     pub managed: bool,
     /// Suggested action for the user.
     pub suggested_action: MediumAction,
+    /// Connectivity-stage outcome (STORAGE-0019).
+    ///
+    /// Present when the connectivity helper ran on this medium —
+    /// either because the device looked degraded and recovery was
+    /// attempted, or because warnings (e.g. historical I/O errors)
+    /// were observed even on a healthy device. Absent when the
+    /// helper didn't run (non-Linux platforms, candidates path
+    /// that bypasses the helper).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connectivity_status: Option<ConnectivityStatus>,
 }
 
 /// What action the user should take for this medium.

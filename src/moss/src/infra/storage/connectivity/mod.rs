@@ -34,12 +34,31 @@
 pub mod probe;
 pub mod recovery;
 
+use std::sync::OnceLock;
+
 use garden_common::storage::ConnectivityStatus;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::storage::platform_types::MediumSnapshot;
 
-use self::recovery::RecoveryBudget;
+use self::recovery::{RecoveryBudget, RecoveryConfig};
+
+/// Process-wide recovery budget, shared across every caller.
+///
+/// The budget tracks per-device retry counts so a flapping bridge
+/// doesn't get rescanned/reauthorized on every `storage list` poll.
+/// One instance lives for the process lifetime; the per-device retry
+/// window (60 s by default) caps how often any single device can be
+/// poked, regardless of how often the candidates handler is invoked.
+static SHARED_BUDGET: OnceLock<RecoveryBudget> = OnceLock::new();
+
+/// Get a reference to the shared recovery budget.
+///
+/// First call initializes it with [`RecoveryConfig::default`]; later
+/// calls return the same instance.
+pub fn shared_budget() -> &'static RecoveryBudget {
+    SHARED_BUDGET.get_or_init(|| RecoveryBudget::new(RecoveryConfig::default()))
+}
 
 /// A medium snapshot enriched with the connectivity stage's verdict.
 ///

@@ -55,6 +55,21 @@ impl Medium {
         }
     }
 
+    /// Project back to an OS snapshot for callers that need the
+    /// platform-layer shape (STORAGE-0019: connectivity helper).
+    pub fn snapshot(&self) -> MediumSnapshot {
+        MediumSnapshot {
+            device_id: self.device_id.clone(),
+            model: self.model.clone(),
+            serial: self.serial.clone(),
+            bus_type: self.bus_type,
+            size_bytes: self.size_bytes,
+            removable: self.removable,
+            condition: self.condition,
+            partitions: self.partitions.clone(),
+        }
+    }
+
     /// Human-readable summary: model or device_id.
     pub fn display_name(&self) -> &str {
         self.model.as_deref().unwrap_or(&self.device_id)

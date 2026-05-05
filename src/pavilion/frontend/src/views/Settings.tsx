@@ -237,8 +237,9 @@ export function SettingsView({ onClose }: SettingsViewProps): JSX.Element {
             Start Pavilion when I sign in
           </span>
           <span className="settings-row-help">
-            Persisted to the settings file. OS-side autostart sync
-            arrives in M1.
+            Adds Pavilion to your user-level autostart entries. The
+            OS state is reconciled on every change, including this
+            one.
           </span>
         </label>
       </section>

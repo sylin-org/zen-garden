@@ -10,8 +10,9 @@ use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
+    AppHandle, Manager, WindowEvent,
 };
+use tauri_plugin_autostart::ManagerExt;
 
 use crate::announce::{observer, policy, ActivityStore, Announcer};
 use crate::awareness::Awareness;
@@ -112,6 +113,11 @@ pub fn run() {
             let settings = Arc::new(SettingsStore::new(app.handle().clone()));
             app.manage(settings.clone());
 
+            // Autostart — reconcile the OS-level autostart state
+            // with the persisted setting, both at startup and on
+            // every subsequent settings change.
+            spawn_autostart_supervisor(settings.clone(), app.handle().clone());
+
             // Announcer — coalesces and dedupes events fed from
             // Awareness and the SSE storage observer; activity rows
             // for the Activity view; toasts when the policy promotes
@@ -169,6 +175,59 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Pavilion");
+}
+
+/// Reconcile OS-level autostart with the persisted `autostart_enabled`
+/// setting. Runs once at startup (so an externally-edited settings
+/// file lines up with the OS), then watches the settings channel and
+/// flips OS state whenever the setting changes.
+///
+/// Idempotent — calling `enable()` on an already-enabled launcher is
+/// a no-op, and same for `disable()`. We still gate on a "changed"
+/// check just to keep log noise minimal.
+fn spawn_autostart_supervisor(settings: Arc<SettingsStore>, app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let initial = settings.snapshot().await.autostart_enabled;
+        apply_autostart(&app, initial);
+
+        let mut rx = settings.subscribe();
+        let mut last = initial;
+        loop {
+            if rx.changed().await.is_err() {
+                tracing::warn!("autostart supervisor: settings channel closed");
+                break;
+            }
+            let next = rx.borrow_and_update().autostart_enabled;
+            if next == last {
+                continue;
+            }
+            apply_autostart(&app, next);
+            last = next;
+        }
+    });
+}
+
+/// Push the desired state to the OS-level autostart launcher.
+/// Failures are logged but never propagated — autostart is a
+/// convenience feature, not a correctness invariant.
+fn apply_autostart(app: &AppHandle, enabled: bool) {
+    let manager = app.autolaunch();
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    match result {
+        Ok(()) => {
+            tracing::info!(
+                enabled,
+                "autostart: OS state synced to settings"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, enabled, "autostart: OS state sync failed");
+        }
+    }
 }
 
 /// Watch the tending channel and rebind the storage SSE observer to

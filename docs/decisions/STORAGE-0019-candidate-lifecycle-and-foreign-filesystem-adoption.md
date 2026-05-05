@@ -254,23 +254,34 @@ Capability-gated behaviors:
 | Format as fresh managed storage | ✓ | offered as "convert first" | not supported |
 | Live participant in a replica set | ✓ | ✓ | ✗ |
 | Take the Primary role | ✓ | ✓ | ✗ |
-| Preferred for Primary when both kinds coexist | ✓ | secondary preference | n/a |
 | Hold encrypted content (pond keystone) | ✓ | accepted, less ideal — NTFS uid/gid simulation cannot match POSIX 0600 file mode enforcement | ✗ |
 | Pavilion / Cloud Filter access | ✓ | ✓ | ✓ |
 
-**Election preference is a tie-breaker, not a veto.** Single-Foreign sets
-work normally; the Foreign drive becomes Primary because it is the only
-candidate, and stays Primary as long as that holds. The bias only
-applies when both Native and Foreign replicas exist for the same set,
-where Moss prefers the Native replica as Primary so writes land on the
-more-proven filesystem.
+**Tier is observable, not enforced.** The original draft of this ADR
+proposed an election tie-breaker that auto-preferred Native over Foreign
+for the Primary role. We dropped it: silently demoting a user's working
+NTFS drive when they later add a Native peer is paternalistic and the
+kind of surprise that erodes trust in an appliance. The user-visible
+levers are explicit:
+
+- `garden-rake storage pin <name>` — claim Primary on a specific drive
+  when the user wants that drive to lead writes.
+- `garden-rake storage migrate <name>` — convert a drive from Foreign
+  to Native in place when the user is ready (planned, see Open Questions).
+- `garden-rake storage info <name>` — surface the tier and capabilities
+  so users who care can read what they're working with.
+
+Foreign drives become Primary the same way Native ones do (whoever was
+first, modulo explicit pinning) and stay Primary unless the user
+intervenes. The `<family> (<fs>)` labels and `storage info` output make
+the tier visible at all times; documentation guides users toward
+migrating replication-heavy workloads to Native filesystems when it
+matters.
 
 **Dormant ≠ inactive.** Every replica in a set, Primary or Dormant, holds
 the same data and stays live-synced via the changelog stream. Primary is
 the current write coordinator; Dormant is the current secondary, fully
-caught up, ready to take over if asked. A Foreign drive in Dormant role
-stays just-as-current as the Native Primary — it isn't downgraded
-operationally, only de-prioritized for the write-coordinator role.
+caught up, ready to take over if asked.
 
 ### 5. Plain-language presentation
 
@@ -363,8 +374,8 @@ Questions); the trailing hint is forward-compatible scaffolding.
 
 The `--explain` flag and `garden-rake storage info <name>` provide the
 long-form caveats (POSIX permission flattening, atomicity differences,
-election semantics) for users and docs that want them, without cluttering
-the default flow.
+when migrating to a Native filesystem is worth it) for users and docs
+that want them, without cluttering the default flow.
 
 ### 6. Notification surface
 
@@ -535,8 +546,10 @@ as btrfs, and re-syncs.
   block another) and per-device retry budgets (no infinite loops).
 - Foreign drives in the Primary role have weaker semantic guarantees
   than Native ones (no POSIX perms, NTFS-specific atomicity edge
-  cases). Mitigated by the election preference: when a Native peer is
-  available, it gets Primary by default. Surfaced via `storage info`.
+  cases). Mitigated by visibility (the tier appears in `storage list`
+  and `storage info`) plus explicit user controls (`storage pin`,
+  future `storage migrate`). The system never silently demotes a
+  Foreign drive when a Native peer arrives.
 - The coalescing heuristic can suppress messages a user wanted to see.
   "Recovered, recovered again, recovered again within a minute" emits
   one line on tty1, which may understate a chronic issue. Mitigated by
@@ -584,7 +597,7 @@ as btrfs, and re-syncs.
 
 | File | Change |
 |---|---|
-| `src/moss/src/domain/storage/*` | Classifier emits the five new states. `Volume` carries `FsCapabilities`. Election service tie-breaker prefers Native > Foreign > ForeignReadOnly when scoring candidates for the Primary role. |
+| `src/moss/src/domain/storage/*` | Classifier emits the five new states. `Volume` carries `FsCapabilities` — observable, not enforced. Election logic is unchanged: whoever was first stays Primary unless the user pins or migrates explicitly. |
 | `src/moss/src/domain/storage/health.rs` | Surface `ConnectivityStatus` alongside the existing health view. |
 
 ### Notifications
@@ -603,7 +616,7 @@ as btrfs, and re-syncs.
 | `src/rake/src/commands/storage/add.rs` | Render the five-state candidate menu with `<family> (<fs>)` labels and per-state suggested verbs. |
 | `src/rake/src/commands/storage/adopt.rs` *(new)* | Three-bullet confirmation; `[Y/n]`; `--explain` flag. |
 | `src/rake/src/commands/storage/format.rs` *(new)* | Explicit `yes`-typed confirmation; `--fs` flag for filesystem choice. |
-| `src/rake/src/commands/storage/info.rs` *(new)* | Long-form per-storage detail including capability tier, election preference, residual warnings. |
+| `src/rake/src/commands/storage/info.rs` *(new)* | Long-form per-storage detail including capability tier, residual warnings, and the explicit `pin` / `migrate` paths. |
 | `src/rake/src/commands/storage/list.rs` | Render `<family> (<fs>)` labels, dormant peer status with sync lag, recent-recovery note. |
 
 ### Tests
@@ -671,9 +684,12 @@ ships a coherent slice.
    `storage list` recent-recovery note. Coalescing window.
    **Risk**: low. **Independent of**: everything else; can land last.
 
-Election service tie-breaker (Native > Foreign for Primary preference)
-slots into unit 5, since the classifier is what produces the candidate
-ranking the election consumes.
+The originally-proposed election tie-breaker (Native > Foreign for
+Primary preference) was dropped after design review: silent
+auto-demotion is paternalistic and the kind of surprise that erodes
+trust in an appliance. The user-visible levers (`storage pin`, future
+`storage migrate`) plus tier visibility in `storage list` /
+`storage info` cover the cases that matter without hidden behavior.
 
 ## Open Questions
 

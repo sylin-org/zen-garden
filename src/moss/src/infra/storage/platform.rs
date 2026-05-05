@@ -360,7 +360,7 @@ mod linux {
 
             let device = parts[0];
             let mount_path = parts[1];
-            let _fs_type = parts[2];
+            let fs_type = parts[2];
 
             // Only real block devices
             if !device.starts_with("/dev/") {
@@ -397,6 +397,10 @@ mod linux {
                 label,
                 capacity_bytes: capacity,
                 removable,
+                // STORAGE-0019: filesystem token from /proc/mounts
+                // (already in `fs_type`). Normalize to lowercase so
+                // `FsCapabilities::for_filesystem` can match it.
+                filesystem: Some(fs_type.to_ascii_lowercase()),
             });
         }
 
@@ -1254,6 +1258,7 @@ mod windows {
 
                         let label = get_volume_label(&drive);
                         let capacity = get_capacity(&drive_str);
+                        let filesystem = get_filesystem(&drive);
 
                         results.push(VolumeSnapshot {
                             path: drive_str.clone(),
@@ -1261,6 +1266,7 @@ mod windows {
                             label,
                             capacity_bytes: capacity,
                             removable,
+                            filesystem,
                         });
                     }
                 }
@@ -1350,6 +1356,41 @@ mod windows {
         disk_usage(path)
             .map(|du| du.used_bytes + du.available_bytes)
             .unwrap_or(0)
+    }
+
+    /// Read the filesystem name (e.g., "NTFS", "exFAT", "FAT32")
+    /// for a drive via Win32 `GetVolumeInformationW`.
+    /// STORAGE-0019: feeds the FsCapabilities lookup that drives
+    /// election tie-breakers and the `<family> (<fs>)` rendering.
+    fn get_filesystem(drive_wide: &[u16]) -> Option<String> {
+        use windows_sys::Win32::Storage::FileSystem::GetVolumeInformationW;
+
+        let mut fs_buf = [0u16; 256];
+        // SAFETY: `drive_wide` is a null-terminated wide string. `fs_buf`
+        // is a stack-allocated [u16; 256] valid for writes; its length
+        // is passed via `fs_buf.len() as u32`. Null pointers for label,
+        // serial, max-component, and flags are accepted by the API as
+        // "don't write these".
+        let ok = unsafe {
+            GetVolumeInformationW(
+                drive_wide.as_ptr(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                fs_buf.as_mut_ptr(),
+                fs_buf.len() as u32,
+            )
+        };
+        if ok == 0 {
+            return None;
+        }
+        let len = fs_buf.iter().position(|&c| c == 0).unwrap_or(0);
+        if len == 0 {
+            return None;
+        }
+        Some(String::from_utf16_lossy(&fs_buf[..len]).to_ascii_lowercase())
     }
 
     /// Check if a drive letter is on a USB bus.
@@ -1717,10 +1758,12 @@ mod tests {
             label: Some("TEST".to_string()),
             capacity_bytes: 1_000_000,
             removable: true,
+            filesystem: Some("ntfs".to_string()),
         };
         let cloned = snap.clone();
         assert_eq!(cloned.path, snap.path);
         assert_eq!(cloned.removable, snap.removable);
+        assert_eq!(cloned.filesystem.as_deref(), Some("ntfs"));
     }
 
     #[test]

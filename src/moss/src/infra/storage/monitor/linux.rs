@@ -196,14 +196,17 @@ fn build_snapshot_for_device(device: &str) -> Option<platform::VolumeSnapshot> {
     let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
     for line in mounts.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 && parts[0] == device {
+        if parts.len() >= 3 && parts[0] == device {
             let mount_path = parts[1];
+            let fs_type = parts[2];
             return Some(platform::VolumeSnapshot {
                 path: device.to_string(),
                 mount_path: mount_path.to_string(),
                 label: platform::device_label(device),
                 capacity_bytes: platform::device_capacity(device),
                 removable: platform::is_removable(device),
+                // STORAGE-0019: feeds FsCapabilities lookup downstream.
+                filesystem: Some(fs_type.to_ascii_lowercase()),
             });
         }
     }

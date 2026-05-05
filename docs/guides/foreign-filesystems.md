@@ -30,11 +30,15 @@ stone-golden-summit
   ● storage::media    2 TB    Mac (APFS)       · primary, read-only
 ```
 
-A drive's format determines two things: whether Moss can write to it,
-and how it's preferred when more than one drive is part of the same
-replica set. Everything else — adoption, browsing, sharing through
-Pavilion's Cloud Filter, replication to other stones — works the
-same regardless of format.
+A drive's format determines one thing: whether Moss can write to it.
+Native (Linux) and Foreign (Windows) drives both adopt, replicate,
+and share through Pavilion's Cloud Filter the same way. Mac-formatted
+drives adopt as read-only libraries — Linux can read them but not
+write to them reliably.
+
+Moss never auto-promotes or auto-demotes a drive based on its format.
+Whoever was Primary first stays Primary; the user's `storage pin`
+command is the explicit lever for changing that.
 
 ---
 
@@ -143,33 +147,29 @@ $ garden-rake storage info storage::media
 
 ## Mixed Replica Sets
 
-When a replica set has drives in both tiers, Moss prefers the
-Linux-formatted one as the Primary write coordinator. This is a
-preference, not a veto — the foreign drive stays a fully active peer,
-synchronized in real time through the changelog stream. It just
-isn't the one accepting writes first.
+When a replica set has drives in both tiers, Moss treats them as
+equal peers. Whichever drive was Primary stays Primary; the others
+sync in real time through the changelog stream regardless of format.
 
 ```text
 stone-golden-summit
-  ● storage::archive  238 GB  Windows (NTFS)   · dormant (in sync, ~3 s behind)
+  ● storage::archive  238 GB  Windows (NTFS)   · primary
 
 stone-coral-prairie
-  ● storage::archive  916 GB  Linux (btrfs)    · primary
+  ● storage::archive  916 GB  Linux (btrfs)    · dormant (in sync, ~3 s behind)
 ```
 
-Single-Foreign sets work normally — a NTFS drive that's the only
-member of its replica set IS the Primary, because there's nothing
-else to defer to. The preference only kicks in when a Native peer
-exists.
-
-If you ever want the Foreign drive to take Primary anyway (for
-example, because it's the one closer to your application), pin it:
+If you'd rather have the Linux-formatted drive lead writes — for
+heavier replication workloads or strict POSIX semantics — pin it:
 
 ```text
-$ garden-rake storage pin storage::archive
+$ garden-rake storage pin storage::archive --on stone-coral-prairie
 ```
 
-The pin overrides the tier preference. Unpin to restore default behavior.
+For a one-time conversion of the Foreign drive itself (move its
+files onto a Linux filesystem on the same physical drive), use
+`garden-rake storage migrate` (planned, see "Reformatting Later"
+below).
 
 ---
 

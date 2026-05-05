@@ -65,6 +65,10 @@ impl<S: ManagementStoreOps + 'static> VolumeIngestor<S> {
             label,
             capacity_bytes,
             removable,
+            // STORAGE-0019: this constructor is used by hand-rolled
+            // adoption paths; filesystem will be filled in on the
+            // next reconcile cycle when the platform scanner runs.
+            filesystem: None,
         };
         let disk_snapshot = DiskResources {
             capacity_bytes,

@@ -304,6 +304,7 @@ mod tests {
             label: Some("TEST".to_string()),
             capacity_bytes: 64_000_000_000,
             removable,
+            filesystem: Some("ext4".to_string()),
         }
     }
 

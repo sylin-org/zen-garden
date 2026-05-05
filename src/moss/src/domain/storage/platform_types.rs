@@ -31,6 +31,14 @@ pub struct VolumeSnapshot {
 
     /// Whether the OS considers this removable (USB, SD card, etc.).
     pub removable: bool,
+
+    /// Filesystem token reported by the platform (e.g. `"ext4"`,
+    /// `"ntfs"`, `"exfat"`). Lowercase, machine-readable.
+    /// `None` when the platform couldn't determine it.
+    /// STORAGE-0019: feeds the `FsCapabilities` lookup that drives
+    /// election tie-breakers and the `<family> (<fs>)` rendering.
+    #[serde(default)]
+    pub filesystem: Option<String>,
 }
 
 // ============================================================================

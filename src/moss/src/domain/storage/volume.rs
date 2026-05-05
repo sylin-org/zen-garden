@@ -143,6 +143,11 @@ pub struct Volume {
     used_bytes: u64,
     removable: bool,
     state: VolumeState,
+    /// Filesystem token from the platform (`"ext4"`, `"ntfs"`, etc.).
+    /// `None` when the platform couldn't determine it.
+    /// STORAGE-0019: drives the FsCapabilities lookup that election
+    /// and rendering both consume.
+    filesystem: Option<String>,
 
     // --- Domain enrichment ---
     management: Option<Management>,
@@ -216,6 +221,34 @@ impl Volume {
             .and_then(|m| m.pin.as_ref())
             .map(|ps| ps.pin_id.as_str())
     }
+
+    /// Filesystem token reported by the platform (`"ext4"`, `"ntfs"`,
+    /// `"exfat"`, …). `None` when the platform couldn't determine it.
+    pub fn filesystem(&self) -> Option<&str> {
+        self.filesystem.as_deref()
+    }
+
+    /// Operational capabilities derived from the filesystem token.
+    ///
+    /// `None` when the filesystem is unknown — callers can fall back
+    /// to a conservative default. STORAGE-0019: drives the
+    /// election tie-breaker (Native > Foreign for Primary), CLI
+    /// rendering, and any future feature gating.
+    pub fn fs_capabilities(&self) -> Option<garden_common::storage::FsCapabilities> {
+        self.filesystem
+            .as_deref()
+            .and_then(garden_common::storage::FsCapabilities::for_filesystem)
+    }
+
+    /// Operational tier (`Native` / `Foreign` / `ForeignReadOnly`).
+    /// Falls back to `Native` when the filesystem is unknown — the
+    /// most permissive default; consumers wanting strict gating
+    /// should match on `fs_capabilities()` directly.
+    pub fn fs_tier(&self) -> garden_common::storage::FsTier {
+        self.fs_capabilities()
+            .map(|c| c.tier)
+            .unwrap_or(garden_common::storage::FsTier::Native)
+    }
 }
 
 // ── Construction ────────────────────────────────────────────────────
@@ -233,6 +266,7 @@ impl Volume {
             used_bytes: 0,
             removable: snap.removable,
             state: VolumeState::Offline,
+            filesystem: snap.filesystem.clone(),
             management: None,
         }
     }
@@ -648,6 +682,7 @@ impl Volume {
             used_bytes,
             removable,
             state,
+            filesystem: None,
             management,
         }
     }
@@ -666,6 +701,7 @@ mod tests {
             label: Some("TEST".to_string()),
             capacity_bytes: 64_000_000_000,
             removable: true,
+            filesystem: Some("ext4".to_string()),
         };
         let mut vol = Volume::from_snapshot(&snap);
         vol.connect(DiskResources {

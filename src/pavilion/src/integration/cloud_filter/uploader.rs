@@ -14,38 +14,56 @@
 //!
 //! ## What gets uploaded
 //!
-//! M0.5 scope: **new files and directories only**. The check is
-//! `HEAD /fs/{path}` returning 404 — if the server already knows
-//! about a path, we leave it alone. Edits to existing files are a
-//! follow-up that requires placeholder conversion + dirty-bit
-//! tracking.
+//! New files, edited files, and new directories under the sync
+//! root. Discrimination uses an in-memory mtime cache:
+//!
+//! - **Cache miss + server miss** → new content; upload, then
+//!   record `mtime` in the cache.
+//! - **Cache miss + server hit** → freshly-hydrated placeholder
+//!   we're seeing for the first time; record `mtime` silently and
+//!   skip.
+//! - **Cache hit, local `mtime` advanced** → user edit; upload,
+//!   update cache.
+//! - **Cache hit, local `mtime` unchanged** → no-op event; skip.
 //!
 //! ## Loop guards
 //!
-//! Two ways for our own writes to come back through the watcher:
+//! Three ways our own writes could echo back through the watcher:
 //!
 //! 1. **Hydrated placeholders.** When [`SyncFilter::fetch_data`]
 //!    populates a placeholder, the local file is briefly written.
 //!    Cloud Filter placeholders are NTFS reparse points
 //!    ([FILE_ATTRIBUTE_REPARSE_POINT]) — we filter them out so we
 //!    never re-upload content we just hydrated.
-//! 2. **Server already knows.** A second event for the same path
-//!    (e.g. attribute change after our upload) would otherwise
-//!    trigger a re-upload. The HEAD probe short-circuits.
+//! 2. **Same-mtime echo.** Filesystem APIs sometimes fire a Modify
+//!    event without an mtime change (touched timestamp, attribute
+//!    flip). The cache equality check skips those.
+//! 3. **First sighting of an existing path.** If the user opens a
+//!    file we haven't tracked yet, the cache is empty but the
+//!    server already has the content. The cache-miss-with-
+//!    server-hit branch records the current mtime silently rather
+//!    than re-uploading the bytes back to where they came from.
 //!
 //! [trait]: cloud_filter::filter::SyncFilter::state_changed
 //! [FILE_ATTRIBUTE_REPARSE_POINT]: https://learn.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::Context;
 use garden_common::client::StoneApi;
 use notify::{EventKind, RecursiveMode, Watcher};
 use tokio::runtime::Handle;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
+
+/// Per-path "last successfully uploaded `mtime`" cache. Drives the
+/// edit-vs-echo discrimination so an event for an already-pushed
+/// version of a file doesn't re-upload it. Keys are
+/// `"{storage}:{rel_path}"` strings.
+type UploadedCache = Arc<Mutex<HashMap<String, SystemTime>>>;
 
 /// Brief debounce before processing a watcher event. Coalesces the
 /// duplicate events filesystem APIs produce during create-and-write
@@ -102,7 +120,8 @@ impl Uploader {
 
         // Processor task — consumes the watcher channel and drives
         // each candidate path through `process_one`.
-        rt.spawn(run_processor(api, sync_root, rx));
+        let uploaded: UploadedCache = Arc::new(Mutex::new(HashMap::new()));
+        rt.spawn(run_processor(api, sync_root, rx, uploaded));
 
         Ok(Self { _watcher: watcher })
     }
@@ -112,20 +131,26 @@ async fn run_processor(
     api: Arc<StoneApi>,
     sync_root: PathBuf,
     mut rx: mpsc::Receiver<notify::Event>,
+    uploaded: UploadedCache,
 ) {
     while let Some(event) = rx.recv().await {
-        // Only Create events are interesting for the M0.5 upload
-        // path. Modify and Remove are deferred (would need
-        // placeholder conversion / propagation).
-        if !matches!(event.kind, EventKind::Create(_)) {
+        // Create and Modify both push to the server. Remove fires
+        // when the user deletes via Explorer; that path is handled
+        // by Cloud Filter's delete callback (provider.rs) and we
+        // skip it here to avoid double-handling.
+        if !matches!(
+            event.kind,
+            EventKind::Create(_) | EventKind::Modify(_)
+        ) {
             continue;
         }
 
         for path in event.paths {
             let api = api.clone();
             let sync_root = sync_root.clone();
+            let uploaded = uploaded.clone();
             tokio::spawn(async move {
-                if let Err(e) = process_one(&api, &sync_root, &path).await {
+                if let Err(e) = process_one(&api, &sync_root, &path, &uploaded).await {
                     warn!(
                         path = %path.display(),
                         error = %e,
@@ -138,7 +163,12 @@ async fn run_processor(
     debug!("uploader: processor channel closed, exiting");
 }
 
-async fn process_one(api: &StoneApi, sync_root: &Path, path: &Path) -> anyhow::Result<()> {
+async fn process_one(
+    api: &StoneApi,
+    sync_root: &Path,
+    path: &Path,
+    uploaded: &UploadedCache,
+) -> anyhow::Result<()> {
     // Brief debounce — Explorer's create-then-write sequence fires
     // back-to-back events; sleeping briefly lets the file settle
     // before we read it.
@@ -177,19 +207,50 @@ async fn process_one(api: &StoneApi, sync_root: &Path, path: &Path) -> anyhow::R
         return Ok(());
     }
 
-    // Loop guard 2: skip paths the server already knows about.
-    // M0.5 scope is new content only; edit-and-push requires
-    // placeholder conversion + dirty tracking which is a follow-up.
-    if api.garden().storage().path_exists(&storage, &rel).await? {
+    let local_mtime = metadata.modified().ok();
+    let key = format!("{storage}:{rel}");
+
+    // Loop guard 2: same-mtime echo. If we've already uploaded
+    // this exact mtime, nothing to do.
+    let cached = { uploaded.lock().await.get(&key).copied() };
+    if let (Some(local), Some(cached)) = (local_mtime, cached)
+        && local <= cached
+    {
         debug!(
             storage = %storage,
             path = %rel,
-            "uploader: server already knows this path, skipping"
+            "uploader: mtime unchanged since last upload, skipping"
         );
         return Ok(());
     }
 
+    // Cache miss: ask the server whether it already knows this
+    // path. If yes, this is a freshly-hydrated placeholder we're
+    // seeing for the first time — record its mtime silently and
+    // skip the upload (we'd just be sending the bytes back to
+    // where they came from). If no, it's new local content.
+    let server_exists = api.garden().storage().path_exists(&storage, &rel).await?;
+    if cached.is_none() && server_exists {
+        debug!(
+            storage = %storage,
+            path = %rel,
+            "uploader: first sighting of existing path, recording mtime silently"
+        );
+        if let Some(local) = local_mtime {
+            uploaded.lock().await.insert(key, local);
+        }
+        return Ok(());
+    }
+
+    // Either: cache miss + server miss (new content) or cache hit
+    // + local mtime advanced (edit). Both paths upload.
     if metadata.is_dir() {
+        // Skip dir Modify events — directory mtime advances when
+        // children change, but the directory itself has nothing
+        // new to push. Children fire their own events.
+        if cached.is_some() {
+            return Ok(());
+        }
         info!(
             storage = %storage,
             path = %rel,
@@ -201,16 +262,22 @@ async fn process_one(api: &StoneApi, sync_root: &Path, path: &Path) -> anyhow::R
             .await?;
     } else {
         let bytes = tokio::fs::read(path).await?;
+        let log_kind = if cached.is_some() { "edit" } else { "new" };
         info!(
             storage = %storage,
             path = %rel,
             size = bytes.len(),
-            "uploader: pushing new file to server"
+            kind = log_kind,
+            "uploader: pushing file to server"
         );
         api.garden()
             .storage()
             .write_file(&storage, &rel, bytes)
             .await?;
+    }
+
+    if let Some(local) = local_mtime {
+        uploaded.lock().await.insert(key, local);
     }
 
     Ok(())

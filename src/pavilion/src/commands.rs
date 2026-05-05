@@ -91,7 +91,10 @@ pub async fn get_services(
             .map(|s| ServiceLite {
                 name: s.name,
                 offering: s.offering,
-                status: format!("{:?}", s.status).to_lowercase(),
+                // FoundService.status is already a lowercase string
+                // ("running", "stopped", "degraded") so no Debug
+                // formatting is needed.
+                status: s.status,
             })
             .collect(),
     }))

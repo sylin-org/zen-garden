@@ -374,8 +374,17 @@ pub struct ServicesApi<'a> {
 
 impl ServicesApi<'_> {
     /// List all local services.
-    pub async fn list(&self) -> Result<Vec<crate::ServiceInfo>, StoneApiError> {
-        self.api.get("/api/v1/stone/services").await
+    ///
+    /// Returns the typed `services` array from the moss handler's
+    /// `ServiceDiscoveryResponse`. The endpoint wraps the array in
+    /// `{ found, services, source, timestamp }`; this method unwraps
+    /// it so callers see the canonical `FoundService` list directly.
+    pub async fn list(
+        &self,
+    ) -> Result<Vec<crate::discovery::FoundService>, StoneApiError> {
+        let resp: crate::discovery::ServiceDiscoveryResponse =
+            self.api.get("/api/v1/stone/services").await?;
+        Ok(resp.services)
     }
 
     /// Create a service from an offering. Returns raw response for status inspection.

@@ -16,7 +16,7 @@ use anyhow::Result;
 use garden_common::api_utils::ApiResponse;
 use garden_common::client::StoneApi;
 use garden_common::offerings::OfferingFqn;
-use garden_common::{HardwareCapabilities, ServiceInfo};
+use garden_common::HardwareCapabilities;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -264,7 +264,10 @@ async fn refresh_offerings_index(api: &StoneApi) -> Result<()> {
 
 // format_offering_flag removed - search results now use direct compatibility comparison
 
-fn render_services_table(services: &[ServiceInfo], term: &ui::TerminalInfo) {
+fn render_services_table(
+    services: &[garden_common::discovery::FoundService],
+    term: &ui::TerminalInfo,
+) {
     let mut table = ui::TableBuilder::new()
         .add_column(ui::constants::MAX_SERVICE_NAME_LEN, ui::Align::Left)
         .add_column(20, ui::Align::Left)
@@ -274,17 +277,14 @@ fn render_services_table(services: &[ServiceInfo], term: &ui::TerminalInfo) {
     let mut stopped_count = 0;
 
     for svc in services {
-        let status_str = format!("{:?}", svc.status);
-        if status_str
-            .to_lowercase()
-            .contains(garden_common::constants::SERVICE_RUNNING)
-        {
+        let status_lower = svc.status.to_lowercase();
+        if status_lower.contains(garden_common::constants::SERVICE_RUNNING) {
             running_count += 1;
         } else {
             stopped_count += 1;
         }
 
-        let status_display = ui::status_indicator(&status_str.to_lowercase(), term.supports_color);
+        let status_display = ui::status_indicator(&status_lower, term.supports_color);
         table.add_row(vec![
             ui::truncate_name(&svc.name, ui::constants::MAX_SERVICE_NAME_LEN),
             status_display,
@@ -311,13 +311,14 @@ async fn print_offerings_index(api: &StoneApi) -> Result<()> {
     let term = ui::TerminalInfo::detect();
 
     // Fetch running services
-    let services: Vec<ServiceInfo> = match api.services().list().await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to fetch services for offerings index");
-            Vec::new()
-        }
-    };
+    let services: Vec<garden_common::discovery::FoundService> =
+        match api.services().list().await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to fetch services for offerings index");
+                Vec::new()
+            }
+        };
 
     // Display running services if any
     if !services.is_empty() {
@@ -1407,7 +1408,7 @@ impl Command for OfferCommand {
                     // Check if service is already installed
                     if let Ok(services) = api.services().list().await {
                             if let Some(existing) = services.iter().find(|s| s.name == service_name) {
-                                let status_str = format!("{:?}", existing.status).to_lowercase();
+                                let status_str = existing.status.to_lowercase();
                                 let status_icon =
                                     ui::status_indicator(&status_str, term.supports_color);
 

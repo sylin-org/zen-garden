@@ -88,7 +88,10 @@ async fn connect_and_read(
     tended: &TendedStone,
     token: &CancellationToken,
 ) -> anyhow::Result<()> {
-    let api = crate::connection::api_for(tended);
+    // Streaming-tuned client (no overall timeout, longer per-read).
+    // The default `api_for` 8 s timeout would abort the SSE stream
+    // every 8 s regardless of whether keep-alive comments arrived.
+    let api = crate::connection::streaming_api_for(tended);
     let response = api.storage().stream().await.map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut byte_stream = response.bytes_stream();
     let mut buffer = String::new();

@@ -43,6 +43,14 @@ const STORAGE_WINDOW: Duration = Duration::from_secs(30);
 /// but stays quiet.
 const STORAGE_TOAST_THRESHOLD: u32 = 5;
 
+/// Cold-start quiet window. Stones that respond to the initial
+/// discovery probe within this span land in Activity but never fire
+/// toasts — a fresh Pavilion launch shouldn't dump 14 notifications
+/// in the user's face just because it discovered the LAN they were
+/// already on. After the window closes, normal promotion policy
+/// applies and any *new* stone joining fires its toast.
+const STARTUP_QUIET_WINDOW: Duration = Duration::from_secs(5);
+
 /// In-progress coalesce slot for a `StorageActivity` key.
 struct StorageWindow {
     stone_name: String,
@@ -60,6 +68,7 @@ pub struct Announcer {
     inner: Arc<Mutex<Inner>>,
     store: ActivityStore,
     app: AppHandle,
+    started_at: Instant,
 }
 
 struct Inner {
@@ -75,7 +84,14 @@ impl Announcer {
             })),
             store,
             app,
+            started_at: Instant::now(),
         }
+    }
+
+    /// Whether the cold-start quiet window has elapsed. Until it
+    /// has, accepted events skip toast promotion.
+    fn past_warmup(&self) -> bool {
+        self.started_at.elapsed() >= STARTUP_QUIET_WINDOW
     }
 
     /// Borrow of the activity store — useful in tests and future
@@ -93,8 +109,12 @@ impl Announcer {
     pub async fn observe(&self, event: GardenEvent) {
         match event {
             GardenEvent::StoneJoined { .. } | GardenEvent::StoneLeft { .. } => {
-                // No coalescing — accept and promote immediately.
-                self.accept(event, true).await;
+                // No coalescing. Promote unless we're still in the
+                // cold-start quiet window — the user just opened the
+                // app and doesn't need a toast for every stone the
+                // discovery probe surfaces.
+                let promote = self.past_warmup();
+                self.accept(event, promote).await;
             }
             GardenEvent::StorageActivity { .. } => {
                 self.absorb_storage_tick(event).await;
@@ -132,7 +152,7 @@ impl Announcer {
                 modifies: window.modifies,
                 deletes: window.deletes,
             };
-            let promote = total >= STORAGE_TOAST_THRESHOLD;
+            let promote = total >= STORAGE_TOAST_THRESHOLD && self.past_warmup();
             self.accept(event, promote).await;
         }
     }

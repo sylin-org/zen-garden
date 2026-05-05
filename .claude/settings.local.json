@@ -13,7 +13,8 @@
       "Task",
       "WebFetch",
       "WebSearch",
-      "Bash(rm -f \"F:ReplicaNASFilesrepogithubsylin-orgzen-garden.claudebuild-linux-x64.log\" \"F:ReplicaNASFilesrepogithubsylin-orgzen-gardeninstallerbuild-linux-x64.log\" .claude/build-linux-x64-3.log .claude/build-linux-x64.log 2>&1)"
+      "Bash(rm -f \"F:ReplicaNASFilesrepogithubsylin-orgzen-garden.claudebuild-linux-x64.log\" \"F:ReplicaNASFilesrepogithubsylin-orgzen-gardeninstallerbuild-linux-x64.log\" .claude/build-linux-x64-3.log .claude/build-linux-x64.log 2>&1)",
+      "Bash(rm -f .claude/build-1207.log .claude/build-1223.log .claude/build-1252.log .claude/pavilion-build.log; git status)"
     ],
     "additionalDirectories": [
       "F:\\Replica\\NAS\\Files\\repo\\github\\sylin-org\\zen-garden\\.claude"

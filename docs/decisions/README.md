@@ -65,6 +65,15 @@ canonical: true
 - **[MOSS-0004](MOSS-0004-phased-cooperative-shutdown.md)**: Phased Cooperative Shutdown — Accepted (2026-02-09)
 - **[MOSS-0005](MOSS-0005-manageable-env-vars.md)**: Manageable Environment Variables — Accepted (2026-03-06)
 
+### Pavilion (Windows Client)
+- **[PAVILION-0001](PAVILION-0001-windows-client-separation.md)**: Pavilion — Standalone Windows Client for Garden Visibility and OS Integration — Accepted (2026-05-04)
+
+### URI / Resolution
+- **[URI-0003](URI-0003-zen-garden-urn-form-scheme.md)**: `zen-garden:` URI Scheme — URN-Form Cascade Intent Resolution — Accepted (2026-05-04)
+
+### Discovery
+- **[DISC-0001](DISC-0001-discovery-as-first-class-crate.md)**: Discovery as a First-Class Crate (`garden-discovery`) — Accepted (2026-05-04)
+
 ### Orchestration
 - **[ORCH-0001](ORCH-0001-replant-ceremony.md)**: Replant Ceremony — Offering State Transfer Between Stones — Proposed (2026-02-16)
 - **[ORCH-0002](ORCH-0002-routing-safety-net.md)**: Routing Safety Net — Never Refuse an Installed Model — Accepted (2026-02-18)
@@ -108,6 +117,9 @@ canonical: true
 - **[STORAGE-0014](STORAGE-0014-storage-platform-architecture.md)**: Storage Platform Architecture — Accepted (2026-03-11)
 - **[STORAGE-0015](STORAGE-0015-cloud-drive-storage-router.md)**: Cloud Drive Storage Router (streaming I/O, StorageHandle) — Accepted (2026-03-12)
 - **[STORAGE-0016](STORAGE-0016-s3-port-per-storage-listener.md)**: Unified S3 Storage Gateway (port-per-storage, unified namespace) — Accepted (2026-03-19)
+- **[STORAGE-0017](STORAGE-0017-volume-state-machine.md)**: Volume Domain Object with Encapsulated State Machine — Proposed (2026-04-04)
+- **[STORAGE-0018](STORAGE-0018-device-health-monitor.md)**: Device Health Monitor — Proposed (2026-04-04)
+- **[STORAGE-0019](STORAGE-0019-candidate-lifecycle-and-foreign-filesystem-adoption.md)**: Candidate Storage Lifecycle and Foreign-Filesystem Adoption — Proposed (2026-05-05)
 
 ### Tools
 - **[TOOLS-0001](TOOLS-0001-garden-tools-domain.md)**: Unified Garden Tools Domain — Accepted (2026-02-06)
@@ -126,7 +138,9 @@ See [archive/proposals/](../archive/proposals/) for historical proposals.
 
 ## Superseded / Deprecated
 
-_No superseded ADRs at this time._
+### URI / Resolution
+- **[URI-0001](URI-0001-zen-garden-uri-scheme.md)**: `zen-garden://` URI Scheme — Cascade Intent Resolution — Superseded by URI-0003 (2026-05-04). The URL-form (`://`) was syntactically misleading for an intent scheme; URN-form (`:`) reflects intent semantics honestly.
+- **[URI-0002](URI-0002-protocol-prefix-deprecation-and-extensions.md)**: Protocol-Prefix Deprecation and Capability/Action Extensions — Superseded by URI-0003 (2026-05-04). The cascade extensions (capability queries, categories, wish, at) carry forward into URI-0003 unchanged; only the surface syntax changed.
 
 ---
 
@@ -237,6 +251,9 @@ We will [ACTION] by [METHOD].
 - `POND-` - Security/Pond decisions
 - `CLI-` - CLI design decisions
 - `API-` - API design decisions
+- `PAVILION-` - Pavilion (Windows client) decisions
+- `URI-` - URI scheme and intent resolution decisions
+- `DISC-` - Discovery (mDNS, UDP, cache, providers)
 
 **Examples**:
 - `BUILD-0001-versioning.md`

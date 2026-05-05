@@ -567,6 +567,417 @@ pub struct SetRolesRequest {
 }
 
 // ============================================================================
+// Garden Storage Wire Types
+// ============================================================================
+//
+// Wire shapes returned by `/api/v1/garden/storage` and the user-content
+// listing endpoints under `/api/v1/garden/storage/{name}/fs`. Shared
+// between Moss (server) and clients (Pavilion's Cloud Filter provider,
+// Rake) so the contract is enforced at the type level.
+
+/// Summary of a storage visible across the garden.
+///
+/// Returned by `GET /api/v1/garden/storage`. Aggregates local managed
+/// storages with remote registry beacons, grouped by storage name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GardenStorageSummary {
+    pub name: String,
+    pub replica_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_stone: Option<String>,
+    #[serde(default)]
+    pub roles: Vec<String>,
+}
+
+/// Directory listing response from the garden user-content endpoint.
+///
+/// Returned by `GET /api/v1/garden/storage/{name}/fs[?path=&depth=N]`
+/// and by `GET /api/v1/garden/storage/{name}/fs/{*path}` when `path`
+/// resolves to a directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectoryListResponse {
+    pub path: String,
+    pub entries: Vec<DirectoryEntry>,
+    pub truncated: bool,
+}
+
+/// Single entry in a garden directory listing.
+///
+/// `entry_type` is `"file"` or `"dir"`; `size` and `modified` are
+/// present only for file entries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectoryEntry {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub entry_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<String>,
+}
+
+impl DirectoryEntry {
+    /// Whether this entry is a directory (vs a file).
+    pub fn is_dir(&self) -> bool {
+        self.entry_type == "dir"
+    }
+}
+
+// ============================================================================
+// Filesystem Capabilities (STORAGE-0019)
+// ============================================================================
+//
+// Tier-based capability model so the data plane and election logic know
+// what each managed drive can guarantee. Three tiers map to "what kind of
+// filesystem is this in operational terms":
+//
+// - `Native` — ext4 / btrfs / xfs. Full POSIX semantics; Moss's primary
+//   target.
+// - `Foreign` — NTFS / exFAT / ReFS. Read-write supported via Linux
+//   drivers (ntfs3, exfat). Replication works; some POSIX-specific
+//   attributes flatten on cross-tier round-trips.
+// - `ForeignReadOnly` — APFS / HFS+ on Linux today. Adopt as a library;
+//   never as a write target.
+
+/// Operational tier of the managed filesystem.
+///
+/// Used by election (Native preferred for Primary), capability gating
+/// (`ForeignReadOnly` excluded from write paths), and CLI rendering
+/// (`<family> (<filesystem>)` labels).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FsTier {
+    /// ext4 / btrfs / xfs — full Moss semantics.
+    Native,
+    /// NTFS / exFAT / ReFS — read-write with attribute caveats.
+    Foreign,
+    /// APFS / HFS+ — read-only on Linux.
+    ForeignReadOnly,
+}
+
+impl FsTier {
+    /// Whether the tier is read-only at the filesystem level.
+    pub fn is_read_only(&self) -> bool {
+        matches!(self, FsTier::ForeignReadOnly)
+    }
+
+    /// Whether this tier can take the Primary role in a replica set.
+    /// `ForeignReadOnly` cannot accept writes, so it cannot be Primary.
+    pub fn can_be_primary(&self) -> bool {
+        !self.is_read_only()
+    }
+}
+
+impl std::fmt::Display for FsTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FsTier::Native => write!(f, "native"),
+            FsTier::Foreign => write!(f, "foreign"),
+            FsTier::ForeignReadOnly => write!(f, "foreign-readonly"),
+        }
+    }
+}
+
+/// What a managed filesystem can guarantee, declared at mount time.
+///
+/// Consumers (replication, election, classifier) read these bits to
+/// decide what behaviors are safe on this drive. New fields can be
+/// added without breaking older clients — every consumer matches on the
+/// fields it cares about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsCapabilities {
+    pub tier: FsTier,
+    /// Filesystem distinguishes `Photo.JPG` from `photo.jpg`. NTFS
+    /// case-folds by default; ext4/btrfs are case-sensitive.
+    pub case_sensitive: bool,
+    /// Filesystem honors POSIX permission bits (`0644`, `0700`, …).
+    /// NTFS via ntfs3 simulates uid/gid but cannot enforce mode bits.
+    pub posix_permissions: bool,
+    /// Filesystem supports Linux extended attributes (xattrs).
+    pub xattrs: bool,
+    /// `rename(2)` is atomic with respect to readers and crash recovery.
+    /// All major filesystems support this; carried explicitly so a
+    /// future tier (e.g. raw FAT12) can opt out.
+    pub atomic_rename: bool,
+    /// Filesystem supports sparse files (holes that don't allocate
+    /// blocks). Useful for replication of pre-allocated containers.
+    pub sparse_files: bool,
+    /// Maximum filename length in bytes. NTFS: 255. ext4: 255.
+    /// FAT32: 255 in long-filename mode, 11 (8.3) in short.
+    pub max_filename_bytes: u32,
+}
+
+impl FsCapabilities {
+    /// Capabilities for ext4 / btrfs / xfs — full Moss semantics.
+    pub const fn native() -> Self {
+        Self {
+            tier: FsTier::Native,
+            case_sensitive: true,
+            posix_permissions: true,
+            xattrs: true,
+            atomic_rename: true,
+            sparse_files: true,
+            max_filename_bytes: 255,
+        }
+    }
+
+    /// Capabilities for NTFS via the Linux ntfs3 driver.
+    pub const fn ntfs() -> Self {
+        Self {
+            tier: FsTier::Foreign,
+            case_sensitive: false,
+            posix_permissions: false,
+            xattrs: false,
+            atomic_rename: true,
+            sparse_files: true,
+            max_filename_bytes: 255,
+        }
+    }
+
+    /// Capabilities for exFAT.
+    pub const fn exfat() -> Self {
+        Self {
+            tier: FsTier::Foreign,
+            case_sensitive: false,
+            posix_permissions: false,
+            xattrs: false,
+            atomic_rename: true,
+            sparse_files: false,
+            max_filename_bytes: 255,
+        }
+    }
+
+    /// Capabilities for FAT32 (long-filename mode).
+    pub const fn fat32() -> Self {
+        Self {
+            tier: FsTier::Foreign,
+            case_sensitive: false,
+            posix_permissions: false,
+            xattrs: false,
+            atomic_rename: true,
+            sparse_files: false,
+            max_filename_bytes: 255,
+        }
+    }
+
+    /// Capabilities for APFS / HFS+ via apfs-fuse — read-only.
+    pub const fn apfs_readonly() -> Self {
+        Self {
+            tier: FsTier::ForeignReadOnly,
+            case_sensitive: true,
+            posix_permissions: true,
+            xattrs: true,
+            atomic_rename: true,
+            sparse_files: true,
+            max_filename_bytes: 255,
+        }
+    }
+
+    /// Look up canonical capabilities by lowercase filesystem token.
+    /// Returns `None` for unrecognized filesystems — callers may
+    /// fall back to a conservative default or refuse adoption.
+    pub fn for_filesystem(fs: &str) -> Option<Self> {
+        match fs.to_ascii_lowercase().as_str() {
+            "ext2" | "ext3" | "ext4" | "btrfs" | "xfs" | "f2fs" | "zfs" => {
+                Some(Self::native())
+            }
+            "ntfs" | "ntfs3" | "refs" => Some(Self::ntfs()),
+            "exfat" => Some(Self::exfat()),
+            "fat" | "fat16" | "fat32" | "vfat" => Some(Self::fat32()),
+            "apfs" | "hfs+" | "hfsplus" => Some(Self::apfs_readonly()),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
+// Connectivity Status (STORAGE-0019)
+// ============================================================================
+//
+// The connectivity-recovery stage that sits between the storage listener
+// and the classifier produces a status companion for every event it
+// processes. The status records what was attempted and what residual
+// concerns remain, even on success — useful telemetry for "this drive
+// is flaky, watch it" without blocking adoption.
+
+/// Action the connectivity helper took to recover a degraded device.
+///
+/// Recorded for tracing, telemetry, and the SSE
+/// `storage.connectivity.recovered` event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryAction {
+    /// `echo 1 > /sys/block/sdX/device/rescan` — re-issue INQUIRY +
+    /// READ CAPACITY without disturbing the USB endpoint.
+    ScsiRescan,
+    /// `echo 0 > /sys/bus/usb/devices/<port>/authorized; …; echo 1 > …`
+    /// — soft replug; kernel re-enumerates the USB device.
+    UsbReauth,
+}
+
+impl std::fmt::Display for RecoveryAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecoveryAction::ScsiRescan => write!(f, "scsi_rescan"),
+            RecoveryAction::UsbReauth => write!(f, "usb_reauth"),
+        }
+    }
+}
+
+/// Residual concern carried alongside a recovered or healthy device.
+///
+/// Even when a device enumerates cleanly, the helper may surface a
+/// non-fatal concern (e.g. one I/O error in the lifetime counter) for
+/// downstream consumers to render or act on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConnectivityWarning {
+    /// One or more I/O errors observed on the device since boot,
+    /// even though it currently enumerates correctly. May indicate
+    /// a flaky bridge, cable, or marginal drive.
+    PriorIoErrors { count: u64 },
+    /// Device has been re-enumerated more than once in the recent
+    /// past (cable wiggle, intermittent power, etc.).
+    RecentReauth { count: u32, window_seconds: u64 },
+    /// Device is on a USB port that has historically required
+    /// recovery to enumerate cleanly.
+    PortHistoricallyTroubled { port: String },
+}
+
+/// Outcome of the connectivity-recovery stage for a single device.
+///
+/// Rides alongside the `PhysicalStorageEvent` into the classifier.
+/// Even on the happy path (`recoveries_attempted == 0`) the status is
+/// emitted so consumers always have a uniform shape to render.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectivityStatus {
+    /// How many recovery actions were attempted on this device.
+    /// Zero on the happy path.
+    pub recoveries_attempted: u32,
+    /// The action that ultimately succeeded, if any. `None` means
+    /// either no recovery was needed (`recoveries_attempted == 0`)
+    /// or every attempted action failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovered_via: Option<RecoveryAction>,
+    /// Wall-time spent on recovery, in milliseconds. Zero on the
+    /// happy path.
+    #[serde(default)]
+    pub duration_ms: u64,
+    /// Residual concerns that didn't block adoption but consumers
+    /// may surface or log.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub residual_warnings: Vec<ConnectivityWarning>,
+}
+
+impl ConnectivityStatus {
+    /// The "device enumerated cleanly, no recovery needed" status.
+    /// Carried on every healthy event so consumers don't need to
+    /// `Option::unwrap_or_default` everywhere.
+    pub fn healthy() -> Self {
+        Self {
+            recoveries_attempted: 0,
+            recovered_via: None,
+            duration_ms: 0,
+            residual_warnings: Vec::new(),
+        }
+    }
+
+    /// True when the helper attempted at least one recovery action.
+    pub fn required_recovery(&self) -> bool {
+        self.recoveries_attempted > 0
+    }
+
+    /// True when the helper attempted recovery and one of the actions
+    /// succeeded. Used to decide whether to fire the
+    /// `storage.connectivity.recovered` SSE event.
+    pub fn was_recovered(&self) -> bool {
+        self.recovered_via.is_some()
+    }
+}
+
+impl Default for ConnectivityStatus {
+    fn default() -> Self {
+        Self::healthy()
+    }
+}
+
+// ============================================================================
+// Filesystem Label Rendering (STORAGE-0019)
+// ============================================================================
+
+/// Render a lowercase filesystem token as a user-facing label of the
+/// form `<family> (<filesystem>)`.
+///
+/// Designed so casual users read the family ("oh, that's the format
+/// Windows uses") and technical users read the filesystem name in
+/// parentheses. Both audiences served by one column.
+///
+/// Examples:
+///
+/// | Input    | Output             |
+/// |----------|--------------------|
+/// | `"ext4"` | `"Linux (ext4)"`   |
+/// | `"btrfs"`| `"Linux (btrfs)"`  |
+/// | `"ntfs"` | `"Windows (NTFS)"` |
+/// | `"exfat"`| `"Windows (exFAT)"`|
+/// | `"apfs"` | `"Mac (APFS)"`    |
+/// | `"zfs"`  | `"(zfs)"`          |
+///
+/// Unknown filesystems render as `(<token>)` without a family — the
+/// blank is the honest signal that Moss recognizes the filesystem but
+/// doesn't have an opinion about which OS family it belongs to.
+pub fn render_fs_label(fs: &str) -> String {
+    let lower = fs.to_ascii_lowercase();
+    let family = fs_family(&lower);
+    let pretty = fs_pretty_name(&lower).unwrap_or(fs);
+    match family {
+        Some(f) => format!("{f} ({pretty})"),
+        None => format!("({pretty})"),
+    }
+}
+
+/// OS-family classification for a lowercase filesystem token.
+fn fs_family(lower: &str) -> Option<&'static str> {
+    match lower {
+        "ext2" | "ext3" | "ext4" | "btrfs" | "xfs" | "f2fs" | "jfs" | "reiserfs" => {
+            Some("Linux")
+        }
+        "ntfs" | "ntfs3" | "fat" | "fat12" | "fat16" | "fat32" | "vfat" | "exfat" | "refs" => {
+            Some("Windows")
+        }
+        "apfs" | "hfs+" | "hfsplus" | "hfs" => Some("Mac"),
+        "iso9660" | "udf" => Some("Optical"),
+        _ => None,
+    }
+}
+
+/// Canonical user-facing spelling for a lowercase filesystem token.
+fn fs_pretty_name(lower: &str) -> Option<&'static str> {
+    match lower {
+        "ext2" => Some("ext2"),
+        "ext3" => Some("ext3"),
+        "ext4" => Some("ext4"),
+        "btrfs" => Some("btrfs"),
+        "xfs" => Some("XFS"),
+        "f2fs" => Some("F2FS"),
+        "jfs" => Some("JFS"),
+        "reiserfs" => Some("ReiserFS"),
+        "ntfs" | "ntfs3" => Some("NTFS"),
+        "exfat" => Some("exFAT"),
+        "fat12" => Some("FAT12"),
+        "fat16" => Some("FAT16"),
+        "fat32" | "vfat" | "fat" => Some("FAT32"),
+        "refs" => Some("ReFS"),
+        "apfs" => Some("APFS"),
+        "hfs+" | "hfsplus" => Some("HFS+"),
+        "hfs" => Some("HFS"),
+        "iso9660" => Some("ISO 9660"),
+        "udf" => Some("UDF"),
+        _ => None,
+    }
+}
+
+// ============================================================================
 // Hydration Metadata
 // ============================================================================
 
@@ -1505,5 +1916,398 @@ mod tests {
         for e in &events {
             let _ = format!("{:?}", e);
         }
+    }
+
+    // ====================================================================
+    // Garden Storage Wire Type round-trips
+    // (DirectoryEntry, DirectoryListResponse, GardenStorageSummary)
+    //
+    // These tests pin the on-the-wire JSON shape that Moss serves and
+    // Pavilion's Cloud Filter provider consumes. Each scenario exercises
+    // a real serialize → deserialize round trip so any rename, default,
+    // or rename_all attribute drift fails immediately.
+    // ====================================================================
+
+    #[test]
+    fn directory_entry_file_roundtrips_through_json() {
+        let original = DirectoryEntry {
+            name: "vacation.jpg".to_string(),
+            entry_type: "file".to_string(),
+            size: Some(1_500_000),
+            modified: Some("2026-01-01T00:00:00Z".to_string()),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        // Wire field is `type`, not `entry_type`.
+        assert!(json.contains("\"type\":\"file\""));
+        assert!(json.contains("\"size\":1500000"));
+        let parsed: DirectoryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, original.name);
+        assert_eq!(parsed.entry_type, original.entry_type);
+        assert_eq!(parsed.size, original.size);
+        assert_eq!(parsed.modified, original.modified);
+        assert!(!parsed.is_dir());
+    }
+
+    #[test]
+    fn directory_entry_dir_omits_optional_fields() {
+        let original = DirectoryEntry {
+            name: "photos".to_string(),
+            entry_type: "dir".to_string(),
+            size: None,
+            modified: None,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        // `size` and `modified` are skip_serializing_if Option::is_none.
+        assert!(!json.contains("\"size\""));
+        assert!(!json.contains("\"modified\""));
+        let parsed: DirectoryEntry = serde_json::from_str(&json).unwrap();
+        assert!(parsed.is_dir());
+        assert_eq!(parsed.size, None);
+        assert_eq!(parsed.modified, None);
+    }
+
+    #[test]
+    fn directory_entry_tolerates_unknown_future_fields() {
+        // Forward compatibility: Moss may grow the wire shape in future
+        // versions. Pavilion (older client) must keep parsing it.
+        let json = r#"{
+            "name": "newfile.txt",
+            "type": "file",
+            "size": 100,
+            "owner": "alice",
+            "permissions": "0644"
+        }"#;
+        let parsed: DirectoryEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.name, "newfile.txt");
+        assert_eq!(parsed.size, Some(100));
+    }
+
+    #[test]
+    fn directory_list_response_roundtrip() {
+        let original = DirectoryListResponse {
+            path: "/photos".to_string(),
+            entries: vec![
+                DirectoryEntry {
+                    name: "a.jpg".into(),
+                    entry_type: "file".into(),
+                    size: Some(42),
+                    modified: None,
+                },
+                DirectoryEntry {
+                    name: "subdir".into(),
+                    entry_type: "dir".into(),
+                    size: None,
+                    modified: None,
+                },
+            ],
+            truncated: false,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: DirectoryListResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.path, original.path);
+        assert_eq!(parsed.entries.len(), 2);
+        assert_eq!(parsed.entries[0].name, "a.jpg");
+        assert!(parsed.entries[1].is_dir());
+        assert!(!parsed.truncated);
+    }
+
+    #[test]
+    fn directory_list_response_empty_directory() {
+        let json = r#"{
+            "path": "/",
+            "entries": [],
+            "truncated": false
+        }"#;
+        let parsed: DirectoryListResponse = serde_json::from_str(json).unwrap();
+        assert!(parsed.entries.is_empty());
+        assert_eq!(parsed.path, "/");
+    }
+
+    #[test]
+    fn directory_list_response_truncated_flag_round_trips() {
+        let original = DirectoryListResponse {
+            path: "/big-dir".into(),
+            entries: vec![],
+            truncated: true,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        assert!(json.contains("\"truncated\":true"));
+        let parsed: DirectoryListResponse = serde_json::from_str(&json).unwrap();
+        assert!(parsed.truncated);
+    }
+
+    #[test]
+    fn garden_storage_summary_with_primary_stone() {
+        let original = GardenStorageSummary {
+            name: "storage".into(),
+            replica_count: 2,
+            primary_stone: Some("stone-alpha".into()),
+            roles: vec!["seed-bank".into()],
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        assert!(json.contains("\"primary_stone\":\"stone-alpha\""));
+        let parsed: GardenStorageSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "storage");
+        assert_eq!(parsed.replica_count, 2);
+        assert_eq!(parsed.primary_stone.as_deref(), Some("stone-alpha"));
+        assert_eq!(parsed.roles, vec!["seed-bank".to_string()]);
+    }
+
+    #[test]
+    fn garden_storage_summary_without_primary_stone() {
+        let original = GardenStorageSummary {
+            name: "personal".into(),
+            replica_count: 0,
+            primary_stone: None,
+            roles: vec![],
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        // primary_stone is skip_serializing_if Option::is_none.
+        assert!(!json.contains("\"primary_stone\""));
+        let parsed: GardenStorageSummary = serde_json::from_str(&json).unwrap();
+        assert!(parsed.primary_stone.is_none());
+        assert!(parsed.roles.is_empty());
+    }
+
+    #[test]
+    fn garden_storage_summary_accepts_explicit_null_primary_stone() {
+        // Some servers may emit `primary_stone: null` rather than omitting
+        // the field. Both shapes must parse — parity with how Moss's
+        // current handler emits the value.
+        let json = r#"{
+            "name": "personal",
+            "replica_count": 1,
+            "primary_stone": null,
+            "roles": []
+        }"#;
+        let parsed: GardenStorageSummary = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.name, "personal");
+        assert!(parsed.primary_stone.is_none());
+    }
+
+    #[test]
+    fn garden_storage_summary_defaults_roles_when_omitted() {
+        // `roles` is `#[serde(default)]` so older Moss versions that
+        // didn't emit the field still parse correctly.
+        let json = r#"{
+            "name": "legacy",
+            "replica_count": 1
+        }"#;
+        let parsed: GardenStorageSummary = serde_json::from_str(json).unwrap();
+        assert!(parsed.roles.is_empty());
+        assert!(parsed.primary_stone.is_none());
+    }
+
+    // ====================================================================
+    // STORAGE-0019: FsTier, FsCapabilities round-trips
+    // ====================================================================
+
+    #[test]
+    fn fs_tier_serializes_as_snake_case() {
+        assert_eq!(serde_json::to_string(&FsTier::Native).unwrap(), "\"native\"");
+        assert_eq!(serde_json::to_string(&FsTier::Foreign).unwrap(), "\"foreign\"");
+        assert_eq!(
+            serde_json::to_string(&FsTier::ForeignReadOnly).unwrap(),
+            "\"foreign_read_only\""
+        );
+    }
+
+    #[test]
+    fn fs_tier_round_trips_through_json() {
+        for tier in [FsTier::Native, FsTier::Foreign, FsTier::ForeignReadOnly] {
+            let json = serde_json::to_string(&tier).unwrap();
+            let parsed: FsTier = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, tier);
+        }
+    }
+
+    #[test]
+    fn fs_tier_capability_predicates() {
+        assert!(FsTier::Native.can_be_primary());
+        assert!(FsTier::Foreign.can_be_primary());
+        assert!(!FsTier::ForeignReadOnly.can_be_primary());
+        assert!(FsTier::ForeignReadOnly.is_read_only());
+        assert!(!FsTier::Native.is_read_only());
+    }
+
+    #[test]
+    fn fs_capabilities_native_round_trips() {
+        let caps = FsCapabilities::native();
+        assert_eq!(caps.tier, FsTier::Native);
+        assert!(caps.case_sensitive);
+        assert!(caps.posix_permissions);
+        assert!(caps.xattrs);
+        let json = serde_json::to_string(&caps).unwrap();
+        let parsed: FsCapabilities = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, caps);
+    }
+
+    #[test]
+    fn fs_capabilities_ntfs_correctly_models_foreign_tier() {
+        let caps = FsCapabilities::ntfs();
+        assert_eq!(caps.tier, FsTier::Foreign);
+        assert!(!caps.case_sensitive, "NTFS is case-insensitive by default");
+        assert!(!caps.posix_permissions, "NTFS via ntfs3 cannot enforce POSIX modes");
+        assert!(!caps.xattrs);
+        assert!(caps.atomic_rename);
+        assert!(caps.sparse_files);
+    }
+
+    #[test]
+    fn fs_capabilities_apfs_is_read_only() {
+        let caps = FsCapabilities::apfs_readonly();
+        assert!(caps.tier.is_read_only());
+        assert!(!caps.tier.can_be_primary());
+    }
+
+    #[test]
+    fn fs_capabilities_for_filesystem_token_lookup() {
+        // Linux family
+        assert_eq!(
+            FsCapabilities::for_filesystem("ext4").map(|c| c.tier),
+            Some(FsTier::Native)
+        );
+        assert_eq!(
+            FsCapabilities::for_filesystem("BTRFS").map(|c| c.tier),
+            Some(FsTier::Native),
+            "lookup is case-insensitive"
+        );
+        // Windows family
+        assert_eq!(
+            FsCapabilities::for_filesystem("ntfs").map(|c| c.tier),
+            Some(FsTier::Foreign)
+        );
+        assert_eq!(
+            FsCapabilities::for_filesystem("exfat").map(|c| c.tier),
+            Some(FsTier::Foreign)
+        );
+        // Mac family
+        assert_eq!(
+            FsCapabilities::for_filesystem("apfs").map(|c| c.tier),
+            Some(FsTier::ForeignReadOnly)
+        );
+        // Unknown
+        assert!(FsCapabilities::for_filesystem("zfs-encrypted").is_none());
+    }
+
+    // ====================================================================
+    // STORAGE-0019: ConnectivityStatus round-trips
+    // ====================================================================
+
+    #[test]
+    fn connectivity_status_healthy_omits_optional_fields() {
+        let status = ConnectivityStatus::healthy();
+        assert!(!status.required_recovery());
+        assert!(!status.was_recovered());
+        let json = serde_json::to_string(&status).unwrap();
+        // recovered_via is None → skip_serializing_if applies.
+        assert!(!json.contains("recovered_via"), "got: {json}");
+        // residual_warnings is empty → skip_serializing_if applies.
+        assert!(!json.contains("residual_warnings"), "got: {json}");
+    }
+
+    #[test]
+    fn connectivity_status_recovered_round_trip() {
+        let status = ConnectivityStatus {
+            recoveries_attempted: 2,
+            recovered_via: Some(RecoveryAction::UsbReauth),
+            duration_ms: 4380,
+            residual_warnings: vec![ConnectivityWarning::PriorIoErrors { count: 1 }],
+        };
+        assert!(status.required_recovery());
+        assert!(status.was_recovered());
+        let json = serde_json::to_string(&status).unwrap();
+        let parsed: ConnectivityStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, status);
+    }
+
+    #[test]
+    fn connectivity_status_default_is_healthy() {
+        let s: ConnectivityStatus = Default::default();
+        assert_eq!(s, ConnectivityStatus::healthy());
+    }
+
+    #[test]
+    fn connectivity_warning_tagged_serialization() {
+        // `kind` is the discriminator, so `PriorIoErrors` → `{"kind":"prior_io_errors", …}`.
+        let w = ConnectivityWarning::PriorIoErrors { count: 3 };
+        let json = serde_json::to_string(&w).unwrap();
+        assert!(
+            json.contains("\"kind\":\"prior_io_errors\""),
+            "got: {json}"
+        );
+        let parsed: ConnectivityWarning = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, w);
+    }
+
+    #[test]
+    fn connectivity_warning_recent_reauth_round_trips() {
+        let w = ConnectivityWarning::RecentReauth {
+            count: 4,
+            window_seconds: 60,
+        };
+        let json = serde_json::to_string(&w).unwrap();
+        let parsed: ConnectivityWarning = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, w);
+    }
+
+    #[test]
+    fn recovery_action_serializes_as_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&RecoveryAction::ScsiRescan).unwrap(),
+            "\"scsi_rescan\""
+        );
+        assert_eq!(
+            serde_json::to_string(&RecoveryAction::UsbReauth).unwrap(),
+            "\"usb_reauth\""
+        );
+    }
+
+    // ====================================================================
+    // STORAGE-0019: render_fs_label
+    // ====================================================================
+
+    #[test]
+    fn render_fs_label_linux_family() {
+        assert_eq!(render_fs_label("ext4"), "Linux (ext4)");
+        assert_eq!(render_fs_label("btrfs"), "Linux (btrfs)");
+        assert_eq!(render_fs_label("xfs"), "Linux (XFS)");
+    }
+
+    #[test]
+    fn render_fs_label_windows_family() {
+        assert_eq!(render_fs_label("ntfs"), "Windows (NTFS)");
+        assert_eq!(render_fs_label("exfat"), "Windows (exFAT)");
+        assert_eq!(render_fs_label("fat32"), "Windows (FAT32)");
+        assert_eq!(render_fs_label("vfat"), "Windows (FAT32)");
+        assert_eq!(render_fs_label("refs"), "Windows (ReFS)");
+    }
+
+    #[test]
+    fn render_fs_label_mac_family() {
+        assert_eq!(render_fs_label("apfs"), "Mac (APFS)");
+        assert_eq!(render_fs_label("hfsplus"), "Mac (HFS+)");
+        assert_eq!(render_fs_label("hfs+"), "Mac (HFS+)");
+    }
+
+    #[test]
+    fn render_fs_label_optical_family() {
+        assert_eq!(render_fs_label("iso9660"), "Optical (ISO 9660)");
+        assert_eq!(render_fs_label("udf"), "Optical (UDF)");
+    }
+
+    #[test]
+    fn render_fs_label_unknown_drops_family_keeps_token() {
+        // Honest signal: Moss recognizes the filesystem name but doesn't
+        // claim a family. Renders as `(token)` with the original casing.
+        assert_eq!(render_fs_label("zfs"), "(zfs)");
+        assert_eq!(render_fs_label("future-fs"), "(future-fs)");
+    }
+
+    #[test]
+    fn render_fs_label_is_case_insensitive_on_input() {
+        assert_eq!(render_fs_label("NTFS"), "Windows (NTFS)");
+        assert_eq!(render_fs_label("Ext4"), "Linux (ext4)");
+        assert_eq!(render_fs_label("APFS"), "Mac (APFS)");
     }
 }

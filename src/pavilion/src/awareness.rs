@@ -22,7 +22,7 @@ use garden_common::infra::communications::{announcement_types, p2p};
 use garden_common::{DiscoveryRequest, DiscoveryResponse, TopologyEntry};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::RwLock;
+use tokio::sync::{watch, RwLock};
 
 use crate::announce::{Announcer, GardenEvent};
 
@@ -57,6 +57,11 @@ pub struct AwareStone {
 
 pub struct Awareness {
     stones: Arc<RwLock<HashMap<String, CacheEntry>>>,
+    /// Watch channel mirroring the latest `snapshot()` result so
+    /// Rust-side subscribers (the multi-stone storage-observer
+    /// reconciler) can react to topology changes without polling
+    /// or roundtripping through the Tauri event bus.
+    tx: watch::Sender<Vec<AwareStone>>,
     app: AppHandle,
     announcer: Announcer,
 }
@@ -80,11 +85,21 @@ struct CacheEntry {
 
 impl Awareness {
     pub fn new(app: AppHandle, announcer: Announcer) -> Self {
+        let (tx, _) = watch::channel(Vec::new());
         Self {
             stones: Arc::new(RwLock::new(HashMap::new())),
+            tx,
             app,
             announcer,
         }
+    }
+
+    /// Subscribe to topology snapshots from Rust code. Yields the
+    /// full `Vec<AwareStone>` after every emit (post-chirp,
+    /// post-discovery-response, and post-eviction), so a reconciler
+    /// can diff against its current set without polling.
+    pub fn subscribe(&self) -> watch::Receiver<Vec<AwareStone>> {
+        self.tx.subscribe()
     }
 
     /// Current topology snapshot for the UI, sorted by first-seen
@@ -307,6 +322,9 @@ impl Awareness {
 
     async fn emit_topology(&self) {
         let snap = self.snapshot().await;
+        // Rust-side fanout — the multi-stone observer reconciler
+        // and any other crate-internal consumer.
+        let _ = self.tx.send(snap.clone());
         if let Err(e) = self.app.emit(EVENT_TOPOLOGY_CHANGED, &snap) {
             tracing::warn!(error = %e, "awareness: failed to emit topology-changed");
         }

@@ -44,11 +44,23 @@ pub fn api_for(tended: &TendedStone) -> StoneApi {
 /// SSE keep-alive every 15 s by default, so 60 s of silence is a
 /// strong signal the connection is dead and the observer should
 /// reconnect.
+///
+/// Kept around as a convenience for callers that hold a
+/// [`TendedStone`] (the original single-tended-stone observer
+/// shape, before M2's multi-stone reconciler).
+#[allow(dead_code)]
 pub fn streaming_api_for(tended: &TendedStone) -> StoneApi {
+    streaming_api_for_endpoint(&tended.endpoint)
+}
+
+/// Endpoint-only variant for callers that observe arbitrary
+/// stones (e.g. the multi-stone storage observer reconciler) and
+/// don't have a `TendedStone` in hand.
+pub fn streaming_api_for_endpoint(endpoint: &str) -> StoneApi {
     let client = reqwest::Client::builder()
         .read_timeout(Duration::from_secs(60))
         .danger_accept_invalid_certs(true)
         .build()
         .expect("building reqwest client should not fail");
-    StoneApi::new(client, tended.endpoint.clone())
+    StoneApi::new(client, endpoint.to_string())
 }

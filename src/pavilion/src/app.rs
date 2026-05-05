@@ -14,7 +14,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::announce::{observer, policy, ActivityStore, Announcer};
+use crate::announce::{policy, ActivityStore, Announcer};
 use crate::awareness::Awareness;
 use crate::commands;
 use crate::facilitators::{self, FacilitatorEngine};
@@ -161,9 +161,14 @@ pub fn run() {
                     .clone()
                     .spawn_auto_tend(awareness.clone(), supervisor_settings.clone());
 
-                // Storage observer supervisor — rebinds the SSE
-                // observer task to the currently tended stone.
-                spawn_observer_supervisor(supervisor_announcer, tending.clone());
+                // Multi-stone storage observer reconciler —
+                // PAVILION-0002 §M2 garden-wide aggregation. One
+                // SSE observer per stone in awareness; reconciles
+                // on every awareness topology change.
+                spawn_multi_stone_observer_supervisor(
+                    supervisor_announcer,
+                    awareness.clone(),
+                );
 
                 // FacilitatorEngine — sibling pipeline of the
                 // Announcer that watches awareness + tending +
@@ -274,38 +279,86 @@ fn apply_autostart(app: &AppHandle, desired: bool) {
     }
 }
 
-/// Watch the tending channel and rebind the storage SSE observer to
-/// the currently tended stone. Cancels the previous observer's token
-/// before spawning a new one so streams don't overlap.
-fn spawn_observer_supervisor(announcer: Announcer, tending: Arc<Tending>) {
-    tauri::async_runtime::spawn(async move {
-        let mut rx = tending.subscribe();
-        let mut current_token: Option<tokio_util::sync::CancellationToken> = None;
+/// Multi-stone storage-observer reconciler (PAVILION-0002 §M2).
+///
+/// Watches the awareness channel and keeps an active SSE observer
+/// per known stone. On every topology snapshot:
+///
+/// - For each stone newly present: spawn an observer.
+/// - For each stone newly absent (TTL evicted): cancel its
+///   observer.
+/// - For stones that stayed: leave their observer alone.
+///
+/// The announcer's existing per-key cooldown / coalesce policy
+/// already handles the merged event firehose, so events from
+/// every stone land in the same Activity feed without further
+/// fan-in plumbing.
+fn spawn_multi_stone_observer_supervisor(
+    announcer: Announcer,
+    awareness: Arc<crate::awareness::Awareness>,
+) {
+    use std::collections::HashMap;
+    use tokio_util::sync::CancellationToken;
 
-        // Prime with the current value (`watch::Receiver` yields the
-        // initial state on the first `borrow_and_update`).
+    tauri::async_runtime::spawn(async move {
+        let mut active: HashMap<String, CancellationToken> = HashMap::new();
+        let mut rx = awareness.subscribe();
+
+        // Prime against whatever's already in awareness — discovery
+        // probe responses arrive within ms of startup.
         let initial = rx.borrow_and_update().clone();
-        if let Some(stone) = initial {
-            tracing::info!(stone = %stone.stone_name, "observer supervisor: starting initial observer");
-            current_token = Some(observer::spawn_storage_observer(announcer.clone(), stone));
-        }
+        reconcile(&announcer, &mut active, &initial);
 
         loop {
             if rx.changed().await.is_err() {
-                tracing::warn!("observer supervisor: tending channel closed");
+                tracing::warn!("multi-stone observer: awareness channel closed");
                 break;
             }
-            let next = rx.borrow_and_update().clone();
-            if let Some(token) = current_token.take() {
-                token.cancel();
-            }
-            if let Some(stone) = next {
-                tracing::info!(stone = %stone.stone_name, "observer supervisor: rebinding to new tending");
-                current_token = Some(observer::spawn_storage_observer(announcer.clone(), stone));
-            } else {
-                tracing::info!("observer supervisor: tending cleared");
-            }
+            let snapshot = rx.borrow_and_update().clone();
+            reconcile(&announcer, &mut active, &snapshot);
         }
     });
+
+    fn reconcile(
+        announcer: &Announcer,
+        active: &mut std::collections::HashMap<String, tokio_util::sync::CancellationToken>,
+        snapshot: &[crate::awareness::AwareStone],
+    ) {
+        use crate::announce::observer::{spawn_storage_observer, ObserverTarget};
+
+        let known: std::collections::HashSet<String> =
+            snapshot.iter().map(|s| s.stone_id.clone()).collect();
+
+        // Cancel observers for stones no longer in awareness.
+        let stale: Vec<String> = active
+            .keys()
+            .filter(|id| !known.contains(*id))
+            .cloned()
+            .collect();
+        for id in stale {
+            if let Some(token) = active.remove(&id) {
+                tracing::info!(stone_id = %id, "multi-stone observer: stone evicted, cancelling");
+                token.cancel();
+            }
+        }
+
+        // Spawn observers for newly-known stones.
+        for stone in snapshot {
+            if active.contains_key(&stone.stone_id) {
+                continue;
+            }
+            tracing::info!(
+                stone = %stone.stone_name,
+                stone_id = %stone.stone_id,
+                "multi-stone observer: stone joined, spawning observer"
+            );
+            let target = ObserverTarget {
+                stone_name: stone.stone_name.clone(),
+                endpoint: stone.endpoint.clone(),
+            };
+            let token = spawn_storage_observer(announcer.clone(), target);
+            active.insert(stone.stone_id.clone(), token);
+        }
+    }
 }
 

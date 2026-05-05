@@ -1,9 +1,10 @@
 //! SSE observers — translate protocol streams into [`GardenEvent`]s.
 //!
-//! One task per (stream × tended-stone). The task survives transient
-//! disconnects with a brief backoff. When tending changes, the
-//! supervisor cancels the old task and spawns a fresh one against
-//! the new endpoint.
+//! One task per observed stone. Each task survives transient
+//! disconnects with a brief backoff. The supervisor in
+//! [`crate::app`] reconciles the active observer set against
+//! awareness so a fresh task spawns when a new stone joins and a
+//! cancellation fires when one is evicted.
 //!
 //! ## Wire format
 //!
@@ -19,30 +20,41 @@ use garden_common::storage::StorageTick;
 use tokio_util::sync::CancellationToken;
 
 use super::policy::Announcer;
-use crate::tending::TendedStone;
 
 /// Cooldown between reconnect attempts after an error or EOF.
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
 
-/// Spawn a storage-stream observer against `tended`. Returns a
-/// cancellation token; drop or cancel it to stop the observer.
-pub fn spawn_storage_observer(announcer: Announcer, tended: TendedStone) -> CancellationToken {
+/// Identity of a stone the observer is watching. Carries the
+/// minimum the SSE loop needs (endpoint to dial, name for log
+/// lines + event payloads).
+#[derive(Debug, Clone)]
+pub struct ObserverTarget {
+    pub stone_name: String,
+    pub endpoint: String,
+}
+
+/// Spawn a storage-stream observer against `target`. Returns a
+/// cancellation token; cancel it to stop the observer.
+pub fn spawn_storage_observer(
+    announcer: Announcer,
+    target: ObserverTarget,
+) -> CancellationToken {
     let token = CancellationToken::new();
     let token_inner = token.clone();
     tauri::async_runtime::spawn(async move {
-        run_storage_loop(announcer, tended, token_inner).await;
+        run_storage_loop(announcer, target, token_inner).await;
     });
     token
 }
 
 async fn run_storage_loop(
     announcer: Announcer,
-    tended: TendedStone,
+    target: ObserverTarget,
     token: CancellationToken,
 ) {
     tracing::info!(
-        stone = %tended.stone_name,
-        endpoint = %tended.endpoint,
+        stone = %target.stone_name,
+        endpoint = %target.endpoint,
         "storage observer: starting"
     );
 
@@ -51,16 +63,16 @@ async fn run_storage_loop(
             break;
         }
 
-        match connect_and_read(&announcer, &tended, &token).await {
+        match connect_and_read(&announcer, &target, &token).await {
             Ok(()) => {
                 tracing::debug!(
-                    stone = %tended.stone_name,
+                    stone = %target.stone_name,
                     "storage observer: stream closed cleanly"
                 );
             }
             Err(e) => {
                 tracing::warn!(
-                    stone = %tended.stone_name,
+                    stone = %target.stone_name,
                     error = %e,
                     "storage observer: stream error"
                 );
@@ -78,20 +90,20 @@ async fn run_storage_loop(
     }
 
     tracing::info!(
-        stone = %tended.stone_name,
+        stone = %target.stone_name,
         "storage observer: stopped"
     );
 }
 
 async fn connect_and_read(
     announcer: &Announcer,
-    tended: &TendedStone,
+    target: &ObserverTarget,
     token: &CancellationToken,
 ) -> anyhow::Result<()> {
     // Streaming-tuned client (no overall timeout, longer per-read).
     // The default `api_for` 8 s timeout would abort the SSE stream
     // every 8 s regardless of whether keep-alive comments arrived.
-    let api = crate::connection::streaming_api_for(tended);
+    let api = crate::connection::streaming_api_for_endpoint(&target.endpoint);
     let response = api.storage().stream().await.map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut byte_stream = response.bytes_stream();
     let mut buffer = String::new();
@@ -109,14 +121,14 @@ async fn connect_and_read(
                 while let Some(idx) = buffer.find("\n\n") {
                     let frame = buffer[..idx].to_string();
                     buffer.drain(..idx + 2);
-                    handle_frame(&frame, announcer, tended).await;
+                    handle_frame(&frame, announcer, target).await;
                 }
             }
         }
     }
 }
 
-async fn handle_frame(frame: &str, announcer: &Announcer, tended: &TendedStone) {
+async fn handle_frame(frame: &str, announcer: &Announcer, target: &ObserverTarget) {
     // Concatenate every `data:` line in the frame — SSE allows split
     // payloads, though Moss's storage stream emits one line per event.
     let payload: String = frame
@@ -131,7 +143,12 @@ async fn handle_frame(frame: &str, announcer: &Announcer, tended: &TendedStone) 
     let tick: StorageTick = match serde_json::from_str(&payload) {
         Ok(t) => t,
         Err(e) => {
-            tracing::warn!(error = %e, payload = %payload.trim(), "storage observer: malformed tick");
+            tracing::warn!(
+                stone = %target.stone_name,
+                error = %e,
+                payload = %payload.trim(),
+                "storage observer: malformed tick"
+            );
             return;
         }
     };
@@ -143,7 +160,7 @@ async fn handle_frame(frame: &str, announcer: &Announcer, tended: &TendedStone) 
 
     announcer
         .observe(super::event::GardenEvent::StorageActivity {
-            stone_name: tended.stone_name.clone(),
+            stone_name: target.stone_name.clone(),
             bank_name: tick.storage,
             creates: tick.creates,
             modifies: tick.modifies,

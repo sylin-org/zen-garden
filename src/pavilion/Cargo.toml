@@ -35,6 +35,12 @@ uuid = { workspace = true, features = ["v7"] }
 reqwest = { workspace = true, features = ["json", "rustls", "webpki-roots", "stream"] }
 futures-util.workspace = true
 
+# Filesystem watcher for the Cloud Filter uploader (PAVILION-0002
+# §"Add Cloud Filter upload to M1 critical path"). cloud-filter's
+# own state_changed only fires on FILE_NOTIFY_CHANGE_ATTRIBUTES,
+# so we need a wider watcher to detect newly-created files / dirs.
+notify = "8"
+
 # Filesystem / paths
 dirs = "5"
 

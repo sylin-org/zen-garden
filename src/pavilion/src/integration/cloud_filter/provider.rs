@@ -25,9 +25,10 @@
 //! | `delete`              | Active   | Files and directories via `delete_file`               |
 //! | `rename`              | Active   | Intra-storage moves via `move_file` (server creates   |
 //! |                       |          | the target's parent dir if it only exists locally)    |
-//! | `state_changed`       | Active   | Pushes new local files / dirs to the server via the   |
-//! |                       |          | [`Uploader`][super::uploader::Uploader] (skips        |
-//! |                       |          | placeholders, skips already-known paths)              |
+//! | `state_changed`       | Logging  | cloud-filter only watches FILE_NOTIFY_CHANGE_         |
+//! |                       |          | ATTRIBUTES, so this fires on pin/unpin only. New      |
+//! |                       |          | files / dirs use [`super::uploader::Uploader`]'s      |
+//! |                       |          | own notify-crate watcher.                             |
 //! | `dehydrate`           | Approve  | Free local cache; data is recoverable                 |
 //! | `opened` / `closed`   | Logging  | Diagnose corrupt/unsupported placeholders             |
 //! | `deleted` / `renamed` | Logging  | Post-completion confirmation                          |
@@ -45,7 +46,6 @@ use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
 use super::placeholders::{StorageAvailability, build_placeholder, build_storage_dir_placeholder};
-use super::uploader::Uploader;
 
 /// Cloud Filter provider that delegates all I/O to a tended stone.
 ///
@@ -58,7 +58,6 @@ pub struct PavilionProvider {
     api: Arc<StoneApi>,
     sync_root_path: PathBuf,
     rt: Handle,
-    uploader: Uploader,
 }
 
 impl PavilionProvider {
@@ -66,13 +65,10 @@ impl PavilionProvider {
     /// tokio runtime active (so `Handle::current()` succeeds) — typically
     /// inside a `tauri::async_runtime::spawn` task.
     pub fn new(api: Arc<StoneApi>, sync_root_path: PathBuf) -> Self {
-        let rt = Handle::current();
-        let uploader = Uploader::new(api.clone(), sync_root_path.clone(), rt.clone());
         Self {
             api,
             sync_root_path,
-            rt,
-            uploader,
+            rt: Handle::current(),
         }
     }
 
@@ -483,15 +479,16 @@ impl SyncFilter for PavilionProvider {
     // ---- State changes (attribute monitoring) ----
 
     fn state_changed(&self, changes: Vec<PathBuf>) {
+        // cloud-filter calls ReadDirectoryChangesW with
+        // FILE_NOTIFY_CHANGE_ATTRIBUTES only — pin/unpin and
+        // dehydrate transitions, NOT file create/modify/delete.
+        // The newly-created-files path uses its own `notify`
+        // watcher (see `super::uploader::Uploader`); this callback
+        // is logging-only.
         debug!(
             count = changes.len(),
-            "state_changed: filesystem changes detected"
+            "state_changed: attribute changes (pin/unpin/dehydrate)"
         );
-        // Cloud Filter implements state_changed via
-        // ReadDirectoryChangesW, so this fires for new files and
-        // directories the user dropped in — exactly what the
-        // uploader needs to push them to the server.
-        self.uploader.handle_changes(changes);
     }
 }
 

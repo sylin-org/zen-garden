@@ -42,6 +42,11 @@ use self::provider::PavilionProvider;
 static CONNECTION: std::sync::Mutex<Option<Connection<PavilionProvider>>> =
     std::sync::Mutex::new(None);
 
+/// Holds the upload-side filesystem watcher alive. Same lifetime
+/// pattern as `CONNECTION` — dropping the [`Uploader`] stops the
+/// notify watcher worker thread.
+static UPLOADER: std::sync::Mutex<Option<uploader::Uploader>> = std::sync::Mutex::new(None);
+
 /// Wait-for-initial-tend poll cadence. Cheap — just reads the in-memory
 /// `RwLock<Option<TendingState>>` Tending already maintains.
 const TEND_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -97,7 +102,7 @@ pub async fn start(tending: Arc<Tending>) -> Result<()> {
     // keeps the static type concrete; the alternative `connect_async`
     // wraps the provider in an `AsyncBridge<P, F>` whose closure type
     // can't be named in a `static`.
-    let provider = PavilionProvider::new(api, sync_root_path.clone());
+    let provider = PavilionProvider::new(api.clone(), sync_root_path.clone());
     let connection = Session::new()
         .connect(&sync_root_path, provider)
         .context("failed to connect Cloud Filter provider")?;
@@ -105,6 +110,21 @@ pub async fn start(tending: Arc<Tending>) -> Result<()> {
     {
         let mut slot = CONNECTION.lock().expect("CONNECTION mutex poisoned");
         *slot = Some(connection);
+    }
+
+    // Upload-side watcher — picks up new files / dirs the user
+    // drops into the sync root and pushes them to the server.
+    // Non-fatal on failure (the read/manipulate paths still work
+    // without it).
+    match uploader::Uploader::start(api, sync_root_path.clone(), tokio::runtime::Handle::current())
+    {
+        Ok(up) => {
+            let mut slot = UPLOADER.lock().expect("UPLOADER mutex poisoned");
+            *slot = Some(up);
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Cloud Filter uploader failed to start (uploads disabled)");
+        }
     }
 
     tracing::info!(
@@ -118,6 +138,12 @@ pub async fn start(tending: Arc<Tending>) -> Result<()> {
 /// registered* so the next Pavilion launch can reuse it — full
 /// teardown is the uninstaller's job (call [`uninstall`]).
 pub fn stop() {
+    {
+        let mut slot = UPLOADER.lock().expect("UPLOADER mutex poisoned");
+        if slot.take().is_some() {
+            tracing::info!("Cloud Filter uploader stopped");
+        }
+    }
     let mut slot = CONNECTION.lock().expect("CONNECTION mutex poisoned");
     if slot.take().is_some() {
         tracing::info!("Cloud Filter provider disconnected");

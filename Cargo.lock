@@ -2367,6 +2367,7 @@ dependencies = [
  "futures-util",
  "garden-common",
  "garden-discovery",
+ "notify 8.2.0",
  "nt-time",
  "reqwest 0.13.1",
  "serde",

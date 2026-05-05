@@ -1,12 +1,16 @@
 //! Filesystem-watcher-driven upload (PAVILION-0002 §"Add Cloud
 //! Filter upload to M1 critical path").
 //!
-//! Cloud Filter's [`SyncFilter::state_changed`][trait] callback
-//! is implemented internally via `ReadDirectoryChangesW` and fires
-//! for every change under the sync root — including newly-created
-//! files and directories the user dropped in from outside. We use
-//! that signal to push new content to the server without adding a
-//! second filesystem watcher.
+//! ## Why our own watcher
+//!
+//! Cloud Filter's [`SyncFilter::state_changed`][trait] looks
+//! tempting at first glance — it's already wired and it does
+//! receive paths via `ReadDirectoryChangesW`. But the cloud-filter
+//! crate calls `ReadDirectoryChangesW` with
+//! `FILE_NOTIFY_CHANGE_ATTRIBUTES` as the filter mask, which
+//! reports pin/unpin / dehydrate transitions only — never
+//! file or directory creation. We need a wider mask, so we run
+//! our own [`notify`] watcher in parallel.
 //!
 //! ## What gets uploaded
 //!
@@ -18,17 +22,16 @@
 //!
 //! ## Loop guards
 //!
-//! Two ways for our own writes to come back through state_changed:
+//! Two ways for our own writes to come back through the watcher:
 //!
 //! 1. **Hydrated placeholders.** When [`SyncFilter::fetch_data`]
 //!    populates a placeholder, the local file is briefly written.
 //!    Cloud Filter placeholders are NTFS reparse points
 //!    ([FILE_ATTRIBUTE_REPARSE_POINT]) — we filter them out so we
 //!    never re-upload content we just hydrated.
-//! 2. **Server already knows.** Even for non-placeholder files, a
-//!    second state_changed event for the same path (e.g. metadata
-//!    change) would otherwise trigger a re-upload. The HEAD probe
-//!    short-circuits.
+//! 2. **Server already knows.** A second event for the same path
+//!    (e.g. attribute change after our upload) would otherwise
+//!    trigger a re-upload. The HEAD probe short-circuits.
 //!
 //! [trait]: cloud_filter::filter::SyncFilter::state_changed
 //! [FILE_ATTRIBUTE_REPARSE_POINT]: https://learn.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
@@ -37,43 +40,91 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
 use garden_common::client::StoneApi;
+use notify::{EventKind, RecursiveMode, Watcher};
 use tokio::runtime::Handle;
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-/// Brief debounce before processing a state_changed entry. Coalesces
-/// the spurious duplicate events `ReadDirectoryChangesW` produces
-/// during file create-and-write sequences (Explorer first creates
-/// the empty file, then writes the bytes — two events, ms apart).
+/// Brief debounce before processing a watcher event. Coalesces the
+/// duplicate events filesystem APIs produce during create-and-write
+/// sequences (Explorer first creates the empty file, then writes
+/// the bytes — two events, ms apart).
 const PROCESS_DELAY: Duration = Duration::from_millis(500);
 
+/// Channel buffer for the watcher → processor handoff. Modest
+/// capacity keeps memory bounded; the watcher's own try_send drops
+/// events when full (the debounce / HEAD-probe pipeline catches up
+/// on the next event for the same path).
+const WATCHER_CHANNEL_CAPACITY: usize = 256;
+
+/// Owns the filesystem watcher and a handle the provider can drop
+/// to stop it. Constructed once per Cloud Filter session and held
+/// alive for the process lifetime — when [`Uploader`] drops, the
+/// watcher's worker thread exits.
 pub struct Uploader {
-    api: Arc<StoneApi>,
-    sync_root: PathBuf,
-    rt: Handle,
+    // Holding the watcher here keeps it alive. notify's
+    // RecommendedWatcher stops watching when dropped.
+    _watcher: notify::RecommendedWatcher,
 }
 
 impl Uploader {
-    pub fn new(api: Arc<StoneApi>, sync_root: PathBuf, rt: Handle) -> Self {
-        Self {
-            api,
-            sync_root,
-            rt,
-        }
-    }
+    /// Build the watcher and spawn the processor task. Returns
+    /// `Err` only when the OS-level watcher refuses to start —
+    /// the worker task itself can't fail in a way that surfaces
+    /// here.
+    pub fn start(api: Arc<StoneApi>, sync_root: PathBuf, rt: Handle) -> anyhow::Result<Self> {
+        let (tx, rx) = mpsc::channel::<notify::Event>(WATCHER_CHANNEL_CAPACITY);
 
-    /// Process a batch of changed paths from `state_changed`. Spawns
-    /// one task per path so the callback (running on a Cloud Filter
-    /// threadpool thread) returns immediately.
-    pub fn handle_changes(&self, paths: Vec<PathBuf>) {
-        if paths.is_empty() {
-            return;
+        let mut watcher = notify::recommended_watcher(
+            move |res: Result<notify::Event, notify::Error>| match res {
+                Ok(event) => {
+                    let _ = tx.try_send(event);
+                }
+                Err(e) => {
+                    warn!(error = %e, "uploader: watcher error");
+                }
+            },
+        )
+        .context("uploader: failed to create filesystem watcher")?;
+
+        watcher
+            .watch(&sync_root, RecursiveMode::Recursive)
+            .with_context(|| {
+                format!(
+                    "uploader: failed to watch sync root {}",
+                    sync_root.display()
+                )
+            })?;
+
+        info!(sync_root = %sync_root.display(), "uploader: watcher started");
+
+        // Processor task — consumes the watcher channel and drives
+        // each candidate path through `process_one`.
+        rt.spawn(run_processor(api, sync_root, rx));
+
+        Ok(Self { _watcher: watcher })
+    }
+}
+
+async fn run_processor(
+    api: Arc<StoneApi>,
+    sync_root: PathBuf,
+    mut rx: mpsc::Receiver<notify::Event>,
+) {
+    while let Some(event) = rx.recv().await {
+        // Only Create events are interesting for the M0.5 upload
+        // path. Modify and Remove are deferred (would need
+        // placeholder conversion / propagation).
+        if !matches!(event.kind, EventKind::Create(_)) {
+            continue;
         }
-        debug!(count = paths.len(), "uploader: processing state_changed batch");
-        for path in paths {
-            let api = self.api.clone();
-            let sync_root = self.sync_root.clone();
-            self.rt.spawn(async move {
+
+        for path in event.paths {
+            let api = api.clone();
+            let sync_root = sync_root.clone();
+            tokio::spawn(async move {
                 if let Err(e) = process_one(&api, &sync_root, &path).await {
                     warn!(
                         path = %path.display(),
@@ -84,6 +135,7 @@ impl Uploader {
             });
         }
     }
+    debug!("uploader: processor channel closed, exiting");
 }
 
 async fn process_one(api: &StoneApi, sync_root: &Path, path: &Path) -> anyhow::Result<()> {
@@ -92,9 +144,9 @@ async fn process_one(api: &StoneApi, sync_root: &Path, path: &Path) -> anyhow::R
     // before we read it.
     tokio::time::sleep(PROCESS_DELAY).await;
 
-    // Skip if path no longer exists — state_changed fires for
-    // deletes too, and the user might have moved/removed before
-    // we got around to processing.
+    // Skip if path no longer exists — `notify` events are reported
+    // out of order in some cases, and the user might have moved /
+    // removed before we got around to processing.
     let metadata = match tokio::fs::metadata(path).await {
         Ok(m) => m,
         Err(_) => {
@@ -164,11 +216,10 @@ async fn process_one(api: &StoneApi, sync_root: &Path, path: &Path) -> anyhow::R
     Ok(())
 }
 
-/// Decompose a Cloud Filter request path into `(storage, relative)`.
-/// Mirrors [`super::provider::PavilionProvider::resolve_path`] but
-/// is duplicated rather than shared because the upload side may
-/// evolve different filtering (e.g., dotfile suppression) than the
-/// hydration side.
+/// Decompose a path into `(storage, relative)` against the sync
+/// root. Mirrors `provider::resolve_path` but is duplicated so the
+/// upload side can evolve different filtering than the hydration
+/// side without coupling them.
 fn resolve_path(sync_root: &Path, target: &Path) -> Option<(String, String)> {
     let rel = target.strip_prefix(sync_root).ok()?;
     let mut components = rel.components();

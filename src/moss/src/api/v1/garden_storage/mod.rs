@@ -255,19 +255,36 @@ pub(crate) async fn proxy_request(
 /// List all storages visible across the garden.
 ///
 /// Aggregates local managed storages with remote registry beacons.
-/// Groups by storage name — each name may have multiple replicas.
+/// Groups by **display name** — the user-facing identity used by every
+/// other garden-tier endpoint (`/garden/storage/{name}/fs`, etc.).
+/// Banks of the same replica set collapse into one entry; an unnamed
+/// replica set surfaces as `DEFAULT_REPLICA_SET_DISPLAY` (`"storage"`).
+/// Keying on the bank's individual `name` instead would expose two
+/// disagreeing identities — list says `seed-soft-cliff`, read says
+/// `storage` — and 404 every read.
 pub async fn list_storages_v1(
     State(state): State<Moss>,
 ) -> crate::api::ApiResult<Vec<GardenStorageSummary>> {
+    use garden_common::storage::DEFAULT_REPLICA_SET_DISPLAY;
+
+    let display_name_for = |replica_set_name: &str| -> String {
+        if replica_set_name.is_empty() {
+            DEFAULT_REPLICA_SET_DISPLAY.to_string()
+        } else {
+            replica_set_name.to_string()
+        }
+    };
+
     let mut by_name: std::collections::HashMap<String, GardenStorageSummary> =
         std::collections::HashMap::new();
 
     // Local storages
     for local in StorageRoute::list_local(&state.current.storage.volumes).await {
+        let key = display_name_for(&local.replica_set_name);
         let entry = by_name
-            .entry(local.name.clone())
+            .entry(key.clone())
             .or_insert_with(|| GardenStorageSummary {
-                name: local.name.clone(),
+                name: key.clone(),
                 replica_count: 0,
                 primary_stone: None,
                 roles: local.roles.clone(),

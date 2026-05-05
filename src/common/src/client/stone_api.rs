@@ -1169,9 +1169,12 @@ impl GardenApi<'_> {
         self.api.post("/api/v1/garden/updates/execute", body).await
     }
 
-    /// Garden-wide storage.
-    pub async fn storage(&self) -> Result<serde_json::Value, StoneApiError> {
-        self.api.get("/api/v1/garden/storage").await
+    /// Garden-wide storage operations (listing, file content, metadata).
+    ///
+    /// Returns a builder that exposes typed methods over the
+    /// `/api/v1/garden/storage` namespace.
+    pub fn storage(&self) -> GardenStorageApi<'_> {
+        GardenStorageApi { api: self.api }
     }
 
     /// Raw topology (all stones with full detail).
@@ -1193,6 +1196,109 @@ impl GardenApi<'_> {
     ) -> Result<crate::types::hardware_topology::GardenInspection, StoneApiError> {
         self.api.get("/api/v1/garden/inspect").await
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Garden Storage API
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Garden-scoped storage operations under `/api/v1/garden/storage`.
+///
+/// Used by Pavilion's Cloud Filter provider and by Rake commands that
+/// reach into user content on a remote Primary replica. The Moss this
+/// client targets transparently proxies to the Primary when needed.
+pub struct GardenStorageApi<'a> {
+    api: &'a StoneApi,
+}
+
+impl GardenStorageApi<'_> {
+    /// List all storages visible across the garden.
+    ///
+    /// Each entry aggregates replicas of one logical storage name.
+    pub async fn list(&self) -> Result<Vec<crate::storage::GardenStorageSummary>, StoneApiError> {
+        self.api.get("/api/v1/garden/storage").await
+    }
+
+    /// List a directory under `{storage}/fs/`.
+    ///
+    /// `path` is the directory path relative to the storage root
+    /// (empty string lists the root). `depth` of `Some(n)` requests
+    /// `n`-level recursion; `None` falls back to the server default
+    /// (one level).
+    pub async fn list_directory(
+        &self,
+        storage: &str,
+        path: &str,
+        depth: Option<usize>,
+    ) -> Result<crate::storage::DirectoryListResponse, StoneApiError> {
+        let url_path = format!("/api/v1/garden/storage/{}/fs", urlencoding::encode(storage));
+        let depth_str;
+        let mut query: Vec<(&str, &str)> = Vec::new();
+        if !path.is_empty() {
+            query.push(("path", path));
+        }
+        if let Some(d) = depth {
+            depth_str = d.to_string();
+            query.push(("depth", &depth_str));
+        }
+        self.api.get_query(&url_path, &query).await
+    }
+
+    /// Read a byte range from a user file under `{storage}/fs/{path}`.
+    ///
+    /// The server honors `Range: bytes=start-end` and replies with
+    /// 206 Partial Content. `length` of zero is treated as the full
+    /// remainder from `start`.
+    pub async fn read_file_range(
+        &self,
+        storage: &str,
+        path: &str,
+        start: u64,
+        length: u64,
+    ) -> Result<Vec<u8>, StoneApiError> {
+        let url_path = build_garden_fs_path(storage, path);
+        let url = self.api.url(&url_path);
+        let mut request = self.api.client.get(&url);
+        let range_header = if length == 0 {
+            format!("bytes={}-", start)
+        } else {
+            format!("bytes={}-{}", start, start + length - 1)
+        };
+        request = request.header(reqwest::header::RANGE, range_header);
+        let response = request.send().await?;
+        let response = self.api.check_status(response, &url).await?;
+        let bytes = response.bytes().await.map_err(StoneApiError::Parse)?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Delete a user file under `{storage}/fs/{path}`.
+    pub async fn delete_file(&self, storage: &str, path: &str) -> Result<(), StoneApiError> {
+        let url_path = build_garden_fs_path(storage, path);
+        self.api.delete_raw(&url_path).await?;
+        Ok(())
+    }
+}
+
+/// Build a properly percent-encoded `/api/v1/garden/storage/{name}/fs/{*path}` URL.
+///
+/// The storage name is encoded as a single segment; the path is split
+/// on `/` and each segment encoded individually so directory separators
+/// remain literal.
+fn build_garden_fs_path(storage: &str, path: &str) -> String {
+    let trimmed = path.trim_start_matches('/');
+    if trimmed.is_empty() {
+        return format!("/api/v1/garden/storage/{}/fs", urlencoding::encode(storage));
+    }
+    let encoded_path: String = trimmed
+        .split('/')
+        .map(|seg| urlencoding::encode(seg).into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    format!(
+        "/api/v1/garden/storage/{}/fs/{}",
+        urlencoding::encode(storage),
+        encoded_path
+    )
 }
 
 // ────────────────────────────────────────────────────────────────────────────

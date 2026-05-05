@@ -36,6 +36,18 @@ windows = { version = "0.52", features = ["Win32_Foundation", "Win32_Graphics_Dx
 [dev-dependencies]
 tempfile.workspace = true
 proptest = "1"
+# axum + tokio test runtime: spin up a real HTTP fixture for the
+# StoneApi integration tests (`tests/garden_storage_api.rs`). Real
+# axum, real reqwest, real wire format — no mocks per the project's
+# integration-test rule.
+axum.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# garden-discovery in dev-deps so the live-garden tests
+# (`tests/garden_storage_live.rs`) can auto-discover running Moss
+# instances without requiring `ZG_TEST_STONE` to be set. Dev-only
+# dep avoids inverting the discovery → common dependency direction
+# in non-test builds.
+garden-discovery = { path = "../discovery" }
 
 [lints]
 workspace = true

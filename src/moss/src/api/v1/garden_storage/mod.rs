@@ -131,14 +131,11 @@ pub struct StorageDiscovery {
     pub s3: Option<S3Connection>,
 }
 
-/// Summary of a storage visible across the garden.
-#[derive(Debug, Serialize)]
-pub struct GardenStorageSummary {
-    pub name: String,
-    pub replica_count: usize,
-    pub primary_stone: Option<String>,
-    pub roles: Vec<String>,
-}
+// `GardenStorageSummary`, `DirectoryListResponse`, and `DirectoryEntry`
+// are wire types shared with clients (Pavilion's Cloud Filter provider,
+// Rake) — they live in `garden_common::storage` so both ends of the
+// API boundary use the same definition.
+pub use garden_common::storage::{DirectoryEntry, DirectoryListResponse, GardenStorageSummary};
 
 /// Object metadata response.
 #[derive(Debug, Serialize, Deserialize)]
@@ -148,26 +145,6 @@ pub struct ObjectMeta {
     pub content_type: String,
     pub etag: String,
     pub last_modified: String,
-}
-
-/// Directory listing response.
-#[derive(Debug, Serialize)]
-pub struct DirectoryListResponse {
-    pub path: String,
-    pub entries: Vec<DirectoryEntry>,
-    pub truncated: bool,
-}
-
-/// Single entry in a directory listing.
-#[derive(Debug, Serialize)]
-pub struct DirectoryEntry {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub entry_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub modified: Option<String>,
 }
 
 // ============================================================================

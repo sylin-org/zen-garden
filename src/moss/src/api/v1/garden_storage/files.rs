@@ -539,6 +539,75 @@ pub async fn delete_file_v1(
 }
 
 // ============================================================================
+// POST /api/v1/garden/storage/{name}/fs/{*path}
+// ============================================================================
+
+/// Create an empty directory at `path`.
+///
+/// Idempotent — returns 204 whether the directory already existed
+/// or had to be created. Auto-creates parent directories the same
+/// way the move endpoint does, so nested `mkdir foo/bar/baz` works
+/// in one call.
+///
+/// Used by Pavilion's filesystem-watcher upload path: when the user
+/// creates a folder under the sync root, Pavilion calls this so the
+/// folder exists server-side before the next placeholder
+/// enumeration walks past the spot.
+pub async fn create_directory_v1(
+    State(state): State<Moss>,
+    Path((name, path)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
+    let path = path.trim_start_matches('/');
+    if path.is_empty() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PATH",
+            "Directory path is required",
+        ));
+    }
+    if let Err((status, msg)) = validate_file_path(path) {
+        return Err(err(status, "INVALID_PATH", msg));
+    }
+
+    if is_proxied(&headers)
+        && let Some(local) = StorageRoute::find_local(&name, &state.current.storage.volumes).await
+        && local.role != StorageRole::Primary
+    {
+        return Err(err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "PROXY_LOOP",
+            "Proxied request reached a non-primary stone",
+        ));
+    }
+
+    let resolver = StorageResolver {
+        volumes: &state.current.storage.volumes,
+        registry: &state.tool.registry,
+        stone_id: &state.current.stone.id,
+        tick: Some(state.current.storage.coordination.tick.raw.clone()),
+    };
+    let handle = resolver.for_write(&name).await.map_err(|e| {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NO_STORAGE",
+            &e.to_string(),
+        )
+    })?;
+
+    handle.create_dir(path).await.map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "MKDIR_FAILED",
+            &e.to_string(),
+        )
+    })?;
+
+    debug!(storage = %name, path = %path, "garden POST mkdir");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ============================================================================
 // PATCH /api/v1/garden/storage/{name}/fs/{*path}
 // ============================================================================
 

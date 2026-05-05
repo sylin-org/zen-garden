@@ -25,6 +25,7 @@
 mod placeholders;
 mod provider;
 pub(crate) mod registration;
+mod uploader;
 
 use std::sync::Arc;
 use std::time::Duration;

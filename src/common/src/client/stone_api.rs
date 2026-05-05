@@ -1321,6 +1321,74 @@ impl GardenStorageApi<'_> {
         self.api.patch_raw_with_body(&url_path, &body).await?;
         Ok(())
     }
+
+    /// Upload a user file under `{storage}/fs/{path}`. Used by
+    /// Pavilion's filesystem-watcher upload path: when the user
+    /// drops a new file under the sync root, Pavilion reads it
+    /// locally and PUTs the bytes here.
+    pub async fn write_file(
+        &self,
+        storage: &str,
+        path: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(), StoneApiError> {
+        let url_path = build_garden_fs_path(storage, path);
+        let url = self.api.url(&url_path);
+        let response = self
+            .api
+            .client
+            .put(&url)
+            .body(bytes)
+            .send()
+            .await?;
+        self.api.check_status(response, &url).await?;
+        Ok(())
+    }
+
+    /// Create an empty directory under `{storage}/fs/{path}`.
+    /// Idempotent — server returns 204 whether the directory
+    /// already existed or had to be created. Auto-creates parents.
+    pub async fn create_directory(
+        &self,
+        storage: &str,
+        path: &str,
+    ) -> Result<(), StoneApiError> {
+        let url_path = build_garden_fs_path(storage, path);
+        let url = self.api.url(&url_path);
+        let response = self
+            .api
+            .client
+            .post(&url)
+            .send()
+            .await?;
+        self.api.check_status(response, &url).await?;
+        Ok(())
+    }
+
+    /// Check whether a path exists under `{storage}/fs/{path}` via
+    /// an HTTP HEAD probe. Returns:
+    /// - `Ok(true)` for 2xx responses
+    /// - `Ok(false)` for 404
+    /// - `Err(...)` for connection failures or other status codes
+    pub async fn path_exists(
+        &self,
+        storage: &str,
+        path: &str,
+    ) -> Result<bool, StoneApiError> {
+        let url_path = build_garden_fs_path(storage, path);
+        let url = self.api.url(&url_path);
+        let response = self
+            .api
+            .client
+            .head(&url)
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        self.api.check_status(response, &url).await?;
+        Ok(true)
+    }
 }
 
 /// Build a properly percent-encoded `/api/v1/garden/storage/{name}/fs/{*path}` URL.

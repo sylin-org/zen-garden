@@ -702,6 +702,7 @@ pub fn configure(state: Moss) -> Router {
             "/api/v1/garden/storage/{name}/fs/{*path}",
             get(api::v1::garden_storage::get_file_v1)
                 .put(api::v1::garden_storage::put_file_v1)
+                .post(api::v1::garden_storage::create_directory_v1)
                 .patch(api::v1::garden_storage::move_file_v1)
                 .delete(api::v1::garden_storage::delete_file_v1)
                 .head(api::v1::garden_storage::head_file_v1),

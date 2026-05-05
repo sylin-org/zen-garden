@@ -540,6 +540,37 @@ impl StorageHandle {
         }
     }
 
+    /// Create an empty directory at `path`. Idempotent — succeeds
+    /// whether the directory already existed or had to be created.
+    /// Auto-creates parent directories.
+    ///
+    /// Local: `tokio::fs::create_dir_all` against the mount root.
+    /// Remote: `POST /fs/{*path}` to forward to the Primary.
+    pub async fn create_dir(&self, path: &str) -> Result<()> {
+        match &self.inner {
+            HandleInner::Local(local) => {
+                let target = local.mount_path.join(path);
+                tokio::fs::create_dir_all(&target)
+                    .await
+                    .with_context(|| format!("create_dir_all {}", target.display()))?;
+                Ok(())
+            }
+            HandleInner::Remote(target) => {
+                let url = self.file_url(target, path);
+                let resp = http_client()
+                    .post(&url)
+                    .timeout(METADATA_TIMEOUT)
+                    .send()
+                    .await
+                    .with_context(|| format!("POST {url}"))?;
+                if !resp.status().is_success() {
+                    bail!("POST {url} returned {}", resp.status());
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// List entries in a directory.
     pub async fn list(&self, path: &str) -> Result<Vec<FileEntry>> {
         match &self.inner {

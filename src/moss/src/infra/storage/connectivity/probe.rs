@@ -246,7 +246,7 @@ fn read_trimmed(path: &Path) -> Option<String> {
 /// `/sys/bus/usb/devices/<port>/authorized` accepts for re-auth.
 ///
 /// Returns `None` for non-USB devices.
-fn resolve_usb_port(sysfs_root: &Path, device_basename: &str) -> Option<String> {
+pub fn resolve_usb_port(sysfs_root: &Path, device_basename: &str) -> Option<String> {
     let block_link = sysfs_root.join("block").join(device_basename);
     let resolved = std::fs::canonicalize(&block_link).ok()?;
 

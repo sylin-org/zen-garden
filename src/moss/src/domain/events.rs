@@ -375,6 +375,22 @@ pub enum StorageEvent {
         success: bool,
         timestamp: DateTime<Utc>,
     },
+    /// Connectivity helper recovered a degraded candidate (STORAGE-0019).
+    /// Fires once per device per coalescing window when SCSI rescan or
+    /// USB re-authorization brought a 0-byte / offline device back to
+    /// reachable. Carries the recovery summary so consumers can render
+    /// "Recovered Realtek RTL9210C on USB port 2-3.4 in 4.4s" without
+    /// re-querying.
+    ConnectivityRecovered {
+        device_id: String,
+        model: Option<String>,
+        size_bytes: u64,
+        usb_port: Option<String>,
+        recovered_via: String,
+        attempts: u32,
+        duration_ms: u64,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 impl StorageEvent {
@@ -391,6 +407,7 @@ impl StorageEvent {
             Self::StorageReclassified { .. } => event_types::STORAGE_RECLASSIFIED,
             Self::SyncStarted { .. } => event_types::STORAGE_SYNC_STARTED,
             Self::SyncCompleted { .. } => event_types::STORAGE_SYNC_COMPLETED,
+            Self::ConnectivityRecovered { .. } => event_types::STORAGE_CONNECTIVITY_RECOVERED,
         }
     }
 
@@ -435,10 +452,47 @@ impl StorageEvent {
                     format!("Storage '{}' sync failed", name)
                 }
             }
+            Self::ConnectivityRecovered {
+                model,
+                usb_port,
+                duration_ms,
+                ..
+            } => {
+                let model = model.as_deref().unwrap_or("device");
+                let port = usb_port
+                    .as_deref()
+                    .map(|p| format!(" on USB port {p}"))
+                    .unwrap_or_default();
+                let secs = (*duration_ms as f64) / 1000.0;
+                format!("Recovered {model}{port} in {secs:.1}s")
+            }
         }
     }
 
     // Builder helpers
+
+    /// Build a `ConnectivityRecovered` event from the connectivity
+    /// helper's outcome (STORAGE-0019).
+    pub fn connectivity_recovered(
+        device_id: impl Into<String>,
+        model: Option<String>,
+        size_bytes: u64,
+        usb_port: Option<String>,
+        recovered_via: impl Into<String>,
+        attempts: u32,
+        duration_ms: u64,
+    ) -> Self {
+        Self::ConnectivityRecovered {
+            device_id: device_id.into(),
+            model,
+            size_bytes,
+            usb_port,
+            recovered_via: recovered_via.into(),
+            attempts,
+            duration_ms,
+            timestamp: Utc::now(),
+        }
+    }
 
     pub fn storage_connected(
         name: impl Into<String>,

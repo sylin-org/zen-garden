@@ -60,6 +60,60 @@ pub fn shared_budget() -> &'static RecoveryBudget {
     SHARED_BUDGET.get_or_init(|| RecoveryBudget::new(RecoveryConfig::default()))
 }
 
+/// Per-device coalescing tracker for the `storage.connectivity.recovered`
+/// SSE event (STORAGE-0019 §"Notification surface").
+///
+/// The same device flapping repeatedly (recover → fail → recover within
+/// a minute) emits one user-facing event the first time and suppresses
+/// subsequent emissions until the window elapses. tracing logs always
+/// fire so the audit trail stays intact.
+#[derive(Debug)]
+pub struct EmitTracker {
+    window: std::time::Duration,
+    history: std::sync::Mutex<
+        std::collections::HashMap<String, std::time::Instant>,
+    >,
+}
+
+impl EmitTracker {
+    pub fn new(window: std::time::Duration) -> Self {
+        Self {
+            window,
+            history: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Returns `true` if the caller should emit the user-facing event
+    /// for this device, and records the emission. Returns `false`
+    /// (silently suppressing the user-facing emission) when the device
+    /// has emitted within the configured window.
+    pub fn should_emit(&self, device_key: &str) -> bool {
+        let mut history = self.history.lock().expect("emit tracker mutex poisoned");
+        let now = std::time::Instant::now();
+        match history.get(device_key) {
+            Some(&last) if now.duration_since(last) < self.window => false,
+            _ => {
+                history.insert(device_key.to_string(), now);
+                true
+            }
+        }
+    }
+}
+
+impl Default for EmitTracker {
+    fn default() -> Self {
+        Self::new(std::time::Duration::from_secs(60))
+    }
+}
+
+/// Process-wide coalescing tracker for connectivity-recovered events.
+static EMIT_TRACKER: OnceLock<EmitTracker> = OnceLock::new();
+
+/// Get the shared connectivity emission tracker.
+pub fn shared_emit_tracker() -> &'static EmitTracker {
+    EMIT_TRACKER.get_or_init(EmitTracker::default)
+}
+
 /// A medium snapshot enriched with the connectivity stage's verdict.
 ///
 /// The classifier consumes this to decide what to surface to the

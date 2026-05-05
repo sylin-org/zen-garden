@@ -233,10 +233,14 @@ impl ConsolePrinter {
         }
 
         // Storage availability changes (managed storage plug/unplug)
+        // and connectivity recovery (STORAGE-0019): the user sees on
+        // tty1 when Moss self-heals a degraded candidate device.
         if matches!(event.category, EventCategory::Storage)
             && matches!(
                 event.status,
-                EventStatus::Connected | EventStatus::Disconnected
+                EventStatus::Connected
+                    | EventStatus::Disconnected
+                    | EventStatus::ConnectivityRecovered
             )
         {
             return true;

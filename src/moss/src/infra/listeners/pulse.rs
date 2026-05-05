@@ -183,6 +183,24 @@ impl DomainPulse {
             StorageEvent::SyncCompleted { name, success, .. } => {
                 Some(serde_json::json!({ "name": name, "success": success }))
             }
+            StorageEvent::ConnectivityRecovered {
+                device_id,
+                model,
+                size_bytes,
+                usb_port,
+                recovered_via,
+                attempts,
+                duration_ms,
+                ..
+            } => Some(serde_json::json!({
+                "device_id": device_id,
+                "model": model,
+                "size_bytes": size_bytes,
+                "usb_port": usb_port,
+                "recovered_via": recovered_via,
+                "attempts": attempts,
+                "duration_ms": duration_ms,
+            })),
         };
 
         Self {

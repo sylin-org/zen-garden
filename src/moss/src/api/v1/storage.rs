@@ -645,6 +645,87 @@ pub async fn list_candidates_v1(
                         &cancel,
                     )
                     .await;
+
+                    // STORAGE-0019: when recovery succeeded, emit
+                    // `storage.connectivity.recovered` on the pulse
+                    // stream — coalesced per device so a flapping
+                    // bridge doesn't spam the message center.
+                    if enriched.status.was_recovered() {
+                        let device_key = enriched
+                            .snapshot
+                            .device_id
+                            .clone();
+                        if crate::infra::storage::connectivity::shared_emit_tracker()
+                            .should_emit(&device_key)
+                        {
+                            let recovered_via = enriched
+                                .status
+                                .recovered_via
+                                .as_ref()
+                                .map(|a| a.to_string())
+                                .unwrap_or_else(|| "unknown".into());
+                            // Re-resolve the USB port from sysfs so
+                            // the SSE payload can render
+                            // "Recovered ... on USB port 2-3.4 ...".
+                            // Cheap: just walks the canonicalized
+                            // /sys/block/<dev> symlink.
+                            #[cfg(target_os = "linux")]
+                            let usb_port =
+                                crate::infra::storage::connectivity::probe::resolve_usb_port(
+                                    std::path::Path::new(
+                                        crate::infra::storage::connectivity::probe::SYSFS_ROOT,
+                                    ),
+                                    &basename,
+                                );
+                            #[cfg(not(target_os = "linux"))]
+                            let usb_port: Option<String> = None;
+
+                            let event = crate::domain::events::StorageEvent::connectivity_recovered(
+                                enriched.snapshot.device_id.clone(),
+                                enriched.snapshot.model.clone(),
+                                enriched.snapshot.size_bytes,
+                                usb_port.clone(),
+                                recovered_via.clone(),
+                                enriched.status.recoveries_attempted,
+                                enriched.status.duration_ms,
+                            );
+                            state.event_bus.emit(event);
+
+                            // Mirror to the local console / tty1 so
+                            // the user physically at the stone sees
+                            // the recovery happen too.
+                            let model_label = enriched
+                                .snapshot
+                                .model
+                                .clone()
+                                .unwrap_or_else(|| "device".to_string());
+                            let port_suffix = usb_port
+                                .as_deref()
+                                .map(|p| format!(" on USB port {p}"))
+                                .unwrap_or_default();
+                            let secs = (enriched.status.duration_ms as f64) / 1000.0;
+                            let message = format!(
+                                "Recovered {model_label}{port_suffix} via {recovered_via} in {secs:.1}s"
+                            );
+                            state.console.emit(garden_common::console::ConsoleEvent::new(
+                                garden_common::console::EventCategory::Storage,
+                                garden_common::console::EventStatus::ConnectivityRecovered,
+                                message,
+                            ));
+
+                            tracing::info!(
+                                device = %device_key,
+                                duration_ms = enriched.status.duration_ms,
+                                "connectivity recovered (event emitted)"
+                            );
+                        } else {
+                            tracing::debug!(
+                                device = %device_key,
+                                "connectivity recovered (event suppressed by coalescing window)"
+                            );
+                        }
+                    }
+
                     (enriched.snapshot, Some(enriched.status))
                 } else {
                     // Non-Linux device id format — connectivity helper

@@ -74,6 +74,11 @@ pub const STORAGE_SYNC_STARTED: &str = "storage.sync_started";
 pub const STORAGE_SYNC_COMPLETED: &str = "storage.sync_completed";
 /// Storage beacon received from another stone (STORAGE-0003)
 pub const STORAGE_BEACON_RECEIVED: &str = "storage.beacon.received";
+/// Connectivity helper recovered a degraded candidate (STORAGE-0019).
+/// Fires once per device per coalescing window after the helper
+/// successfully ran SCSI rescan or USB re-authorization and a
+/// re-probe confirmed the device is now reachable.
+pub const STORAGE_CONNECTIVITY_RECOVERED: &str = "storage.connectivity.recovered";
 
 // Orchestration events (ORCH-0001)
 /// Offering election started for primary selection

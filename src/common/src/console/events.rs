@@ -164,6 +164,11 @@ pub enum EventStatus {
     MkdirError,
     ChmodError,
     MoveError,
+    /// Connectivity helper successfully recovered a degraded
+    /// candidate device (STORAGE-0019). Surfaces on tty1 once per
+    /// device per coalescing window so the user sees the system did
+    /// the work for them.
+    ConnectivityRecovered,
 
     // Network
     Listening,
@@ -354,6 +359,7 @@ impl EventStatus {
             Self::MkdirError => "MKDIR_ERROR   ",
             Self::ChmodError => "CHMOD_ERROR   ",
             Self::MoveError => "MOVE_ERROR    ",
+            Self::ConnectivityRecovered => "CONN_RECOVERED",
 
             // Network
             Self::Listening => "LISTENING     ",

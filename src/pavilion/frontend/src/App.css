@@ -948,3 +948,136 @@
   cursor: not-allowed;
   opacity: 0.6;
 }
+
+/* ─── Activity destination ────────────────────────────────── */
+
+.activity-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  max-width: 720px;
+}
+
+.activity-filter {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.activity-filter-label {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--s5);
+}
+
+.activity-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.activity-filter-chip {
+  background: var(--bg2);
+  border: 1px solid var(--vb);
+  color: var(--s7);
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background-color 200ms var(--ease), color 200ms var(--ease);
+}
+
+.activity-filter-chip:hover {
+  background: var(--vh);
+  color: var(--s9);
+}
+
+.activity-filter-chip-on {
+  background: var(--gold);
+  color: var(--bg);
+  border-color: var(--gold);
+}
+
+.activity-filter-chip-on:hover {
+  background: var(--gold);
+  color: var(--bg);
+  filter: brightness(1.08);
+}
+
+.activity-feed {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.activity-group-heading {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--s5);
+  margin-bottom: 0.4rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--vb);
+}
+
+.activity-entry {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.55rem 0.4rem;
+  border-bottom: 1px solid var(--vb);
+}
+
+.activity-entry:last-child {
+  border-bottom: none;
+}
+
+.activity-entry-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.activity-entry-primary {
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--s9);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.activity-entry-secondary {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--s5);
+  letter-spacing: 0.02em;
+}
+
+.activity-entry-promoted {
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--gold);
+  border: 1px solid var(--gold);
+  border-radius: 3px;
+  padding: 0.05rem 0.35rem;
+}
+
+.activity-entry-time {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--s5);
+  font-feature-settings: "tnum";
+  margin-top: 0.1rem;
+}

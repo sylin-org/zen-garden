@@ -36,7 +36,7 @@ interface TendedStone {
   endpoint: string
 }
 
-export type PaletteView = "home" | "services" | "pond" | "settings"
+export type PaletteView = "home" | "services" | "pond" | "activity" | "settings"
 
 type Action =
   | { id: string; label: string; hint: string; kind: "navigate"; view: PaletteView }
@@ -125,6 +125,13 @@ export function CommandPalette({ onClose, onNavigate }: CommandPaletteProps): JS
         view: "services",
       },
       { id: "nav:pond", label: "Open Pond", hint: "destination", kind: "navigate", view: "pond" },
+      {
+        id: "nav:activity",
+        label: "Open Activity",
+        hint: "destination",
+        kind: "navigate",
+        view: "activity",
+      },
       {
         id: "nav:settings",
         label: "Open Settings",

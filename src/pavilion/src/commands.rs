@@ -221,6 +221,69 @@ pub async fn set_settings(
     Ok(settings.apply_patch(patch).await)
 }
 
+// ── Service lifecycle actions ───────────────────────────────────────
+//
+// These thin wrappers turn the typed StoneApi service-control
+// methods into Tauri commands. Each maps to a POST on the tended
+// stone (`/api/v1/stone/services/{name}/{wake,rest,restart}`) and
+// returns `Ok(())` on a 2xx, surfacing the body as `Err(String)`
+// otherwise so the frontend can show a meaningful failure.
+
+async fn run_service_action(
+    tending: &Tending,
+    name: &str,
+    op: ServiceOp,
+) -> Result<(), String> {
+    let Some(tended) = tending.current().await else {
+        return Err("no stone tended".to_string());
+    };
+    let api = connection::api_for(&tended);
+    let services = api.services();
+    let resp = match op {
+        ServiceOp::Wake => services.wake(name).await,
+        ServiceOp::Rest => services.rest(name).await,
+        ServiceOp::Restart => services.restart(name).await,
+    };
+    let resp = resp.map_err(|e| format!("{op:?} {name} on {}: {e}", tended.endpoint))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("{op:?} {name}: HTTP {status} {body}"));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ServiceOp {
+    Wake,
+    Rest,
+    Restart,
+}
+
+#[tauri::command]
+pub async fn restart_service(
+    name: String,
+    tending: State<'_, Arc<Tending>>,
+) -> Result<(), String> {
+    run_service_action(&tending, &name, ServiceOp::Restart).await
+}
+
+#[tauri::command]
+pub async fn rest_service(
+    name: String,
+    tending: State<'_, Arc<Tending>>,
+) -> Result<(), String> {
+    run_service_action(&tending, &name, ServiceOp::Rest).await
+}
+
+#[tauri::command]
+pub async fn wake_service(
+    name: String,
+    tending: State<'_, Arc<Tending>>,
+) -> Result<(), String> {
+    run_service_action(&tending, &name, ServiceOp::Wake).await
+}
+
 /// Fetch the garden-wide storage summary from the currently-tended
 /// stone. Tended Moss aggregates local volumes with registry beacons,
 /// so a single call surfaces every bank visible to this garden.

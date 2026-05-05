@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type JSX } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import { HomeView } from "./views/Home"
+import { ServicesView } from "./views/Services"
 import { SettingsView } from "./views/Settings"
 
 interface AwareStone {
@@ -26,7 +27,7 @@ interface Settings {
   autostart_enabled: boolean
 }
 
-type View = "home" | "settings"
+type View = "home" | "services" | "settings"
 
 function App(): JSX.Element {
   const [view, setView] = useState<View>("home")
@@ -116,7 +117,12 @@ function App(): JSX.Element {
           </a>
           <a className="nav-item disabled">Garden</a>
           <a className="nav-item disabled">Storage</a>
-          <a className="nav-item disabled">Services</a>
+          <a
+            className={`nav-item ${view === "services" ? "active" : ""}`}
+            onClick={() => setView("services")}
+          >
+            Services
+          </a>
           <a className="nav-item disabled">Companions</a>
           <a className="nav-item disabled">Pond</a>
           <a className="nav-item disabled">Activity</a>
@@ -131,6 +137,7 @@ function App(): JSX.Element {
       </aside>
 
       {view === "home" && <HomeView />}
+      {view === "services" && <ServicesView onClose={goHome} />}
       {view === "settings" && <SettingsView onClose={goHome} />}
 
       <footer className="statusbar">

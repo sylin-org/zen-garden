@@ -33,6 +33,9 @@ pub fn run() {
             commands::get_activity,
             commands::get_settings,
             commands::set_settings,
+            commands::restart_service,
+            commands::rest_service,
+            commands::wake_service,
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // Another invocation tried to start; focus the existing window.

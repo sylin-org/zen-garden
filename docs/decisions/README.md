@@ -75,7 +75,8 @@ canonical: true
 - **[DISC-0001](DISC-0001-discovery-as-first-class-crate.md)**: Discovery as a First-Class Crate (`garden-discovery`) — Accepted (2026-05-04)
 
 ### Orchestration
-- **[ORCH-0001](ORCH-0001-replant-ceremony.md)**: Replant Ceremony — Offering State Transfer Between Stones — Proposed (2026-02-16)
+- **[ORCH-0001](ORCH-0001-replant-ceremony.md)**: Replant Ceremony — Offering State Transfer Between Stones — Proposed (2026-02-16) — _data plane reused; user-facing surface superseded by ORCH-0039_
+- **[ORCH-0039](ORCH-0039-seed-based-offering-replication.md)**: Seed-Based Offering Replication (per-offering event log + drag-canvas surface) — Proposed (2026-05-05)
 - **[ORCH-0002](ORCH-0002-routing-safety-net.md)**: Routing Safety Net — Never Refuse an Installed Model — Accepted (2026-02-18)
 - **[ORCH-0003](ORCH-0003-fitness-profiler.md)**: Fitness Profiler — Model Benchmark System — Accepted (2026-02-18)
 - **[ORCH-0004](ORCH-0004-gateway-announcement.md)**: Gateway Announcement — Accepted (2026-02-21)

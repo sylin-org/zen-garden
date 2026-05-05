@@ -80,24 +80,36 @@ impl std::fmt::Display for BusType {
     }
 }
 
-/// Condition of a physical medium.
+/// Candidate-stage condition of a physical medium (STORAGE-0019).
+///
+/// Mirrors `garden_common::storage::MediumCondition`. See that type's
+/// doc comment for the per-variant semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MediumCondition {
-    /// No partition table. Brand new or wiped disk.
+    /// Has partitions with user files. Adopt or reformat.
+    #[serde(alias = "partitioned")]
+    Adoptable,
+    /// Has a filesystem but no user content.
+    Empty,
+    /// No partition table or no filesystem.
     Raw,
-    /// Has a partition table with 1+ partitions.
-    Partitioned,
-    /// Device is offline or reporting I/O errors.
-    Unreadable,
+    /// Bridge enumerated, 0 bytes, no I/O errors — empty enclosure.
+    NoMedia,
+    /// Bridge enumerated, 0 bytes, with I/O errors — recoverable
+    /// degraded state. Renamed from legacy `Unreadable`.
+    #[serde(alias = "unreadable")]
+    Unreachable,
 }
 
 impl std::fmt::Display for MediumCondition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Adoptable => write!(f, "adoptable"),
+            Self::Empty => write!(f, "empty"),
             Self::Raw => write!(f, "raw"),
-            Self::Partitioned => write!(f, "partitioned"),
-            Self::Unreadable => write!(f, "unreadable"),
+            Self::NoMedia => write!(f, "no_media"),
+            Self::Unreachable => write!(f, "unreachable"),
         }
     }
 }
@@ -119,9 +131,11 @@ impl From<BusType> for garden_common::storage::BusType {
 impl From<MediumCondition> for garden_common::storage::MediumCondition {
     fn from(c: MediumCondition) -> Self {
         match c {
+            MediumCondition::Adoptable => Self::Adoptable,
+            MediumCondition::Empty => Self::Empty,
             MediumCondition::Raw => Self::Raw,
-            MediumCondition::Partitioned => Self::Partitioned,
-            MediumCondition::Unreadable => Self::Unreadable,
+            MediumCondition::NoMedia => Self::NoMedia,
+            MediumCondition::Unreachable => Self::Unreachable,
         }
     }
 }

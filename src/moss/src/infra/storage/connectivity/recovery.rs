@@ -39,7 +39,7 @@ use tracing::{debug, info, warn};
 
 use garden_common::storage::{ConnectivityStatus, ConnectivityWarning, RecoveryAction};
 
-use super::probe::{probe, ProbeData, ProbeOutcome, ProbeVerdict, SYSFS_ROOT};
+use super::probe::{probe, ProbeOutcome, ProbeVerdict, SYSFS_ROOT};
 
 // ============================================================================
 // Configuration
@@ -502,6 +502,7 @@ pub async fn run_recovery_production(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::probe::ProbeData;
     use std::fs;
     use std::path::PathBuf;
     use tempfile::TempDir;

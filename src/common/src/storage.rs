@@ -124,24 +124,59 @@ impl std::fmt::Display for BusType {
     }
 }
 
-/// Condition of a physical medium (matches infra::storage::platform::MediumCondition).
+/// Candidate-stage condition of a physical medium (STORAGE-0019).
+///
+/// The five-state taxonomy from STORAGE-0019 §"Candidate state taxonomy".
+/// Each variant maps cleanly to a single user-facing action in
+/// `garden-rake storage add`:
+///
+/// | Variant | Signals | Action offered |
+/// |---|---|---|
+/// | `Adoptable` | Has partitions and existing user files | `adopt` (preserves) or `format` (wipes) |
+/// | `Empty` | Filesystem present, zero user files | `adopt` (use as-is) or `format` (reformat) |
+/// | `Raw` | No partition table or no filesystem | `format` (single full-size storage) |
+/// | `NoMedia` | Bridge enumerated, 0 bytes, no I/O errors | "Insert a drive into the enclosure" |
+/// | `Unreachable` | Bridge enumerated, 0 bytes, I/O errors present | Auto-heal; on failure, friendly replug hint |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MediumCondition {
-    /// No partition table — brand new or wiped disk.
+    /// Has partitions with existing user files. Adoption preserves
+    /// the data; formatting wipes it.
+    ///
+    /// Subsumes the legacy `Partitioned` value when serializing —
+    /// older Moss versions emitted `partitioned` for any device with
+    /// a partition table; the deserializer accepts that token via
+    /// `#[serde(alias)]` and maps it here.
+    #[serde(alias = "partitioned")]
+    Adoptable,
+    /// Has a filesystem but no user content. The user can adopt
+    /// it as-is (and Moss will catalog the empty volume) or reformat.
+    Empty,
+    /// No partition table or no filesystem. The whole device is
+    /// available for a fresh-format adoption.
     Raw,
-    /// Has a partition table with 1+ partitions.
-    Partitioned,
-    /// Device is offline or reporting I/O errors.
-    Unreadable,
+    /// USB bridge or controller enumerated the device but reports
+    /// zero bytes with no I/O errors — almost always an empty
+    /// enclosure (no drive inserted). No software recovery helps.
+    NoMedia,
+    /// Bridge enumerated with zero bytes AND I/O errors observed.
+    /// A bridge-firmware glitch the connectivity stage may be able
+    /// to recover via SCSI rescan or USB re-authorization. Renamed
+    /// from the legacy `Unreadable` for vocabulary consistency
+    /// (the device is reachable on the bus but unresponsive — not
+    /// unreadable per se).
+    #[serde(alias = "unreadable")]
+    Unreachable,
 }
 
 impl std::fmt::Display for MediumCondition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Adoptable => write!(f, "adoptable"),
+            Self::Empty => write!(f, "empty"),
             Self::Raw => write!(f, "raw"),
-            Self::Partitioned => write!(f, "partitioned"),
-            Self::Unreadable => write!(f, "unreadable"),
+            Self::NoMedia => write!(f, "no_media"),
+            Self::Unreachable => write!(f, "unreachable"),
         }
     }
 }

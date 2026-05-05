@@ -1052,7 +1052,13 @@ mod linux {
                                 .map(|s| s.to_string()),
                         })
                         .collect();
-                    (MediumCondition::Partitioned, parts_vec)
+                    // STORAGE-0019: legacy `Partitioned` semantics
+                    // (has at least one partition) become `Adoptable`
+                    // by default. Distinguishing `Empty` (filesystem
+                    // present but no user files) requires a read-only
+                    // preview mount + file count, deferred to a
+                    // follow-up unit.
+                    (MediumCondition::Adoptable, parts_vec)
                 }
             };
 
@@ -1601,12 +1607,17 @@ $disks | ConvertTo-Json -Depth 3 -Compress
 
             let removable = bus_type == BusType::Usb || bus_type == BusType::Mmc;
 
+            // STORAGE-0019: legacy taxonomy (Raw / Partitioned /
+            // Unreadable) maps to the canonical 5-state taxonomy.
+            // Empty / NoMedia distinctions require deeper inspection
+            // (filesystem mount-and-count, sysfs ioerr_cnt) deferred
+            // to follow-up units.
             let condition = if status != "Online" {
-                MediumCondition::Unreadable
+                MediumCondition::Unreachable
             } else if style == "RAW" {
                 MediumCondition::Raw
             } else {
-                MediumCondition::Partitioned
+                MediumCondition::Adoptable
             };
 
             // Parse partitions

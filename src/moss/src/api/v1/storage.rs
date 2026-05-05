@@ -565,14 +565,28 @@ pub async fn list_candidates_v1(
             .filter(|m| m.removable)
             .map(|m| {
                 let managed = m.has_managed_space(&volumes_map);
+                // STORAGE-0019: the new five-state MediumCondition
+                // taxonomy maps to the existing MediumAction surface
+                // until unit 6 lands the full `adopt` / `format` verb
+                // split in Rake.
+                //
+                // Adoptable subsumes the legacy `Partitioned` value;
+                // when a managed `.zen-garden/` is present it's
+                // already adopted; when a mounted filesystem is
+                // present it's ready to add as-is; otherwise the user
+                // sees a "needs format" hint that resolves to
+                // `garden-rake storage adopt` or `storage format` in
+                // the new CLI.
                 let suggested_action = match m.condition {
-                    crate::infra::storage::platform::MediumCondition::Unreadable => {
+                    crate::infra::storage::platform::MediumCondition::Unreachable
+                    | crate::infra::storage::platform::MediumCondition::NoMedia => {
                         MediumAction::Unreadable
                     }
                     crate::infra::storage::platform::MediumCondition::Raw => {
                         MediumAction::NeedsPartition
                     }
-                    crate::infra::storage::platform::MediumCondition::Partitioned => {
+                    crate::infra::storage::platform::MediumCondition::Adoptable
+                    | crate::infra::storage::platform::MediumCondition::Empty => {
                         if managed {
                             MediumAction::AlreadyManaged
                         } else if m.has_mounted_space() {

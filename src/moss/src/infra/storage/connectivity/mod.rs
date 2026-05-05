@@ -34,15 +34,12 @@
 pub mod probe;
 pub mod recovery;
 
-use std::path::Path;
-
 use garden_common::storage::ConnectivityStatus;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::storage::platform_types::MediumSnapshot;
 
-use self::probe::{probe, SYSFS_ROOT};
-use self::recovery::{run_recovery, RecoveryBudget};
+use self::recovery::RecoveryBudget;
 
 /// A medium snapshot enriched with the connectivity stage's verdict.
 ///
@@ -99,6 +96,9 @@ async fn evaluate_linux(
     budget: &RecoveryBudget,
     cancel: &CancellationToken,
 ) -> EnrichedMedium {
+    use std::path::Path;
+    use self::probe::{probe, SYSFS_ROOT};
+    use self::recovery::run_recovery;
     let sysfs_root = Path::new(SYSFS_ROOT);
     let initial = probe(sysfs_root, device_basename);
 

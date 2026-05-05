@@ -177,6 +177,212 @@ pub(crate) fn has_path_traversal(value: &str) -> bool {
     garden_common::constants::storage::share::has_path_traversal(value)
 }
 
+// ============================================================================
+// HTTP Range header parsing
+// ============================================================================
+
+/// Outcome of parsing the `Range` request header against a known body size.
+///
+/// Only the single-range form (`bytes=start-end`, `bytes=start-`,
+/// `bytes=-N`) is supported. RFC 7233 also allows multi-range
+/// responses — current clients (Pavilion's Cloud Filter, S3 SDKs)
+/// never ask for them, so we reject.
+pub(crate) enum RangeOutcome {
+    /// No Range header — serve the full body at 200 OK.
+    Full,
+    /// Valid single range; serve as 206 Partial Content.
+    Partial { start: u64, length: u64 },
+    /// Range header present but cannot be satisfied (start beyond EOF,
+    /// or end < start). RFC 7233 §4.4 — return 416.
+    Unsatisfiable,
+    /// Range header present but syntactically invalid.
+    Malformed,
+}
+
+pub(crate) fn parse_range_header(
+    headers: &axum::http::HeaderMap,
+    body_size: u64,
+) -> RangeOutcome {
+    let raw = match headers
+        .get(axum::http::header::RANGE)
+        .and_then(|v| v.to_str().ok())
+    {
+        Some(s) => s.trim(),
+        None => return RangeOutcome::Full,
+    };
+
+    let Some(spec) = raw.strip_prefix("bytes=") else {
+        return RangeOutcome::Malformed;
+    };
+
+    if spec.contains(',') {
+        // Multi-range — not supported.
+        return RangeOutcome::Malformed;
+    }
+
+    let Some((start_s, end_s)) = spec.split_once('-') else {
+        return RangeOutcome::Malformed;
+    };
+    let start_s = start_s.trim();
+    let end_s = end_s.trim();
+
+    // Suffix range `bytes=-N` (last N bytes) — supported.
+    if start_s.is_empty() {
+        if end_s.is_empty() {
+            return RangeOutcome::Malformed;
+        }
+        let n: u64 = match end_s.parse() {
+            Ok(n) if n > 0 => n,
+            _ => return RangeOutcome::Malformed,
+        };
+        if body_size == 0 {
+            return RangeOutcome::Unsatisfiable;
+        }
+        let length = n.min(body_size);
+        let start = body_size - length;
+        return RangeOutcome::Partial { start, length };
+    }
+
+    let start: u64 = match start_s.parse() {
+        Ok(n) => n,
+        Err(_) => return RangeOutcome::Malformed,
+    };
+
+    if start >= body_size {
+        return RangeOutcome::Unsatisfiable;
+    }
+
+    let end_inclusive: u64 = if end_s.is_empty() {
+        // Open-ended: bytes=start-  → start through EOF.
+        body_size - 1
+    } else {
+        match end_s.parse::<u64>() {
+            Ok(n) if n >= start => n.min(body_size - 1),
+            Ok(_) => return RangeOutcome::Unsatisfiable,
+            Err(_) => return RangeOutcome::Malformed,
+        }
+    };
+
+    let length = end_inclusive - start + 1;
+    RangeOutcome::Partial { start, length }
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::*;
+    use axum::http::{HeaderMap, header};
+
+    fn header_with(value: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::RANGE, value.parse().unwrap());
+        h
+    }
+
+    fn assert_partial(out: RangeOutcome, expected_start: u64, expected_length: u64) {
+        match out {
+            RangeOutcome::Partial { start, length } => {
+                assert_eq!(start, expected_start);
+                assert_eq!(length, expected_length);
+            }
+            _ => panic!("expected Partial"),
+        }
+    }
+
+    #[test]
+    fn missing_header_serves_full_body() {
+        assert!(matches!(
+            parse_range_header(&HeaderMap::new(), 1000),
+            RangeOutcome::Full
+        ));
+    }
+
+    #[test]
+    fn closed_range_resolves() {
+        assert_partial(parse_range_header(&header_with("bytes=0-15"), 1000), 0, 16);
+        assert_partial(
+            parse_range_header(&header_with("bytes=100-199"), 1000),
+            100,
+            100,
+        );
+    }
+
+    #[test]
+    fn open_ended_range_runs_to_eof() {
+        assert_partial(parse_range_header(&header_with("bytes=512-"), 1024), 512, 512);
+    }
+
+    #[test]
+    fn suffix_range_returns_last_n_bytes() {
+        assert_partial(parse_range_header(&header_with("bytes=-128"), 1024), 896, 128);
+    }
+
+    #[test]
+    fn suffix_range_clamps_to_body_size() {
+        assert_partial(parse_range_header(&header_with("bytes=-9999"), 1000), 0, 1000);
+    }
+
+    #[test]
+    fn end_past_eof_clamps_to_eof() {
+        assert_partial(
+            parse_range_header(&header_with("bytes=900-9999"), 1000),
+            900,
+            100,
+        );
+    }
+
+    #[test]
+    fn start_at_or_past_eof_is_unsatisfiable() {
+        assert!(matches!(
+            parse_range_header(&header_with("bytes=1000-1100"), 1000),
+            RangeOutcome::Unsatisfiable
+        ));
+        assert!(matches!(
+            parse_range_header(&header_with("bytes=2000-"), 1000),
+            RangeOutcome::Unsatisfiable
+        ));
+    }
+
+    #[test]
+    fn end_before_start_is_unsatisfiable() {
+        assert!(matches!(
+            parse_range_header(&header_with("bytes=500-100"), 1000),
+            RangeOutcome::Unsatisfiable
+        ));
+    }
+
+    #[test]
+    fn suffix_range_on_empty_body_is_unsatisfiable() {
+        assert!(matches!(
+            parse_range_header(&header_with("bytes=-10"), 0),
+            RangeOutcome::Unsatisfiable
+        ));
+    }
+
+    #[test]
+    fn malformed_headers_are_rejected() {
+        assert!(matches!(
+            parse_range_header(&header_with("kilometers=0-100"), 1000),
+            RangeOutcome::Malformed
+        ));
+        assert!(matches!(
+            parse_range_header(&header_with("bytes=100"), 1000),
+            RangeOutcome::Malformed
+        ));
+        assert!(matches!(
+            parse_range_header(&header_with("bytes=0-99,200-299"), 1000),
+            RangeOutcome::Malformed
+        ));
+        assert!(matches!(
+            parse_range_header(&header_with("bytes=-"), 1000),
+            RangeOutcome::Malformed
+        ));
+        assert!(matches!(
+            parse_range_header(&header_with("bytes=abc-def"), 1000),
+            RangeOutcome::Malformed
+        ));
+    }
+}
+
 /// Check if the incoming request was already proxied (loop guard).
 pub(crate) fn is_proxied(headers: &HeaderMap) -> bool {
     headers

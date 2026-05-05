@@ -22,7 +22,8 @@ use crate::domain::storage_service::StorageRoute;
 use crate::infra::storage::handle::{FileEntry, RouterError, StorageHandle, StorageResolver};
 
 use super::{
-    DirectoryEntry, DirectoryListResponse, err, error_response_raw, has_path_traversal, is_proxied,
+    DirectoryEntry, DirectoryListResponse, RangeOutcome, err, error_response_raw,
+    has_path_traversal, is_proxied, parse_range_header,
 };
 
 // ============================================================================
@@ -316,6 +317,63 @@ async fn get_file_v1_inner(
         }
     };
 
+    let content_type = mime_guess::from_path(path)
+        .first_or_octet_stream()
+        .to_string();
+
+    // RFC 7233 Range support — Cloud Filter (Pavilion) hydrates files
+    // by byte range, so honoring `Range: bytes=start-end` is what makes
+    // partial hydration actually partial. Whole-file requests fall
+    // through to the streaming path unchanged.
+    match parse_range_header(headers, size) {
+        RangeOutcome::Full => {}
+        RangeOutcome::Partial { start, length } => {
+            let end_inclusive = start + length - 1;
+            return match handle.read_range(path, start, length).await {
+                Ok(bytes) => {
+                    debug!(
+                        storage = %name, path = %path,
+                        start, length, total = size,
+                        "garden GET file (range)"
+                    );
+                    Response::builder()
+                        .status(StatusCode::PARTIAL_CONTENT)
+                        .header(header::CONTENT_TYPE, content_type)
+                        .header(header::CONTENT_LENGTH, length)
+                        .header(
+                            header::CONTENT_RANGE,
+                            format!("bytes {}-{}/{}", start, end_inclusive, size),
+                        )
+                        .header(header::ACCEPT_RANGES, "bytes")
+                        .body(axum::body::Body::from(bytes))
+                        .unwrap()
+                }
+                Err(RouterError::NotFound(_)) => {
+                    error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "File not found")
+                }
+                Err(e) => error_response_raw(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "READ_FAILED",
+                    &e.to_string(),
+                ),
+            };
+        }
+        RangeOutcome::Unsatisfiable => {
+            return Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(header::CONTENT_RANGE, format!("bytes */{}", size))
+                .body(axum::body::Body::empty())
+                .unwrap();
+        }
+        RangeOutcome::Malformed => {
+            return error_response_raw(
+                StatusCode::BAD_REQUEST,
+                "INVALID_RANGE",
+                "Range header could not be parsed",
+            );
+        }
+    }
+
     let reader = match handle.open_read(path).await {
         Ok(r) => r,
         Err(RouterError::NotFound(_)) => {
@@ -330,9 +388,6 @@ async fn get_file_v1_inner(
         }
     };
 
-    let content_type = mime_guess::from_path(path)
-        .first_or_octet_stream()
-        .to_string();
     debug!(storage = %name, path = %path, size, "garden GET file (streaming)");
 
     let stream = tokio_util::io::ReaderStream::new(reader);
@@ -340,9 +395,11 @@ async fn get_file_v1_inner(
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CONTENT_LENGTH, size)
+        .header(header::ACCEPT_RANGES, "bytes")
         .body(axum::body::Body::from_stream(stream))
         .unwrap()
 }
+
 
 // ============================================================================
 // PUT /api/v1/garden/storage/{name}/fs/{*path}
@@ -541,3 +598,4 @@ pub async fn head_file_v1(
         ),
     }
 }
+

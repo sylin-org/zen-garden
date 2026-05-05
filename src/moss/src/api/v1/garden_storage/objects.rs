@@ -19,8 +19,8 @@ use crate::domain::storage_service::StorageRoute;
 use crate::infra::storage::handle::StorageResolver;
 
 use super::{
-    DirectoryEntry, DirectoryListResponse, ListQueryParams, ObjectMeta, err, error_response_raw,
-    has_path_traversal, is_proxied, proxy_request,
+    DirectoryEntry, DirectoryListResponse, ListQueryParams, ObjectMeta, RangeOutcome, err,
+    error_response_raw, has_path_traversal, is_proxied, parse_range_header, proxy_request,
 };
 
 // ============================================================================
@@ -108,14 +108,46 @@ pub async fn get_object_v1(
         // Object retrieval
         match store.get_object(&bucket, &key).await {
             Ok(Some((data, meta))) => {
-                debug!(storage = %handle.storage_name(), key = %key, size = data.len(), "garden GET object");
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, &meta.content_type)
-                    .header(header::CONTENT_LENGTH, data.len())
-                    .header(header::ETAG, &meta.etag)
-                    .body(data.into())
-                    .unwrap()
+                let total = data.len() as u64;
+                debug!(storage = %handle.storage_name(), key = %key, size = total, "garden GET object");
+
+                match parse_range_header(&headers, total) {
+                    RangeOutcome::Full => Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, &meta.content_type)
+                        .header(header::CONTENT_LENGTH, total)
+                        .header(header::ETAG, &meta.etag)
+                        .header(header::ACCEPT_RANGES, "bytes")
+                        .body(data.into())
+                        .unwrap(),
+                    RangeOutcome::Partial { start, length } => {
+                        let start_idx = start as usize;
+                        let end_idx = start_idx + length as usize;
+                        let slice = data[start_idx..end_idx].to_vec();
+                        Response::builder()
+                            .status(StatusCode::PARTIAL_CONTENT)
+                            .header(header::CONTENT_TYPE, &meta.content_type)
+                            .header(header::CONTENT_LENGTH, length)
+                            .header(
+                                header::CONTENT_RANGE,
+                                format!("bytes {}-{}/{}", start, start + length - 1, total),
+                            )
+                            .header(header::ETAG, &meta.etag)
+                            .header(header::ACCEPT_RANGES, "bytes")
+                            .body(slice.into())
+                            .unwrap()
+                    }
+                    RangeOutcome::Unsatisfiable => Response::builder()
+                        .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                        .header(header::CONTENT_RANGE, format!("bytes */{}", total))
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                    RangeOutcome::Malformed => error_response_raw(
+                        StatusCode::BAD_REQUEST,
+                        "INVALID_RANGE",
+                        "Range header could not be parsed",
+                    ),
+                }
             }
             Ok(None) => error_response_raw(StatusCode::NOT_FOUND, "NOT_FOUND", "Object not found"),
             Err(e) => error_response_raw(

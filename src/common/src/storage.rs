@@ -1006,6 +1006,11 @@ fn fs_family(lower: &str) -> Option<&'static str> {
         }
         "apfs" | "hfs+" | "hfsplus" | "hfs" => Some("Mac"),
         "iso9660" | "udf" => Some("Optical"),
+        // `fuseblk` is the kernel's umbrella name for FUSE-based
+        // filesystems; ntfs-3g is the most common one Moss sees.
+        // When blkid disambiguation fails or hasn't run yet, render
+        // the umbrella as "FUSE" instead of leaving the family blank.
+        "fuseblk" | "fuse" => Some("FUSE"),
         _ => None,
     }
 }
@@ -1032,6 +1037,7 @@ fn fs_pretty_name(lower: &str) -> Option<&'static str> {
         "hfs" => Some("HFS"),
         "iso9660" => Some("ISO 9660"),
         "udf" => Some("UDF"),
+        "fuseblk" | "fuse" => Some("FUSE"),
         _ => None,
     }
 }

@@ -391,21 +391,55 @@ mod linux {
             let capacity = capacity_from_sysfs(device).unwrap_or(0);
             let label = label_from_lsblk(device);
 
+            // STORAGE-0019: /proc/mounts reports `fuseblk` for any
+            // FUSE-based filesystem, including ntfs-3g (the most
+            // common Linux NTFS mount driver). Resolve to the real
+            // filesystem token via blkid when fuseblk is observed
+            // so callers see "ntfs"/"exfat"/etc. instead of the
+            // FUSE umbrella name.
+            let filesystem = resolve_real_fstype(fs_type, device);
+
             results.push(VolumeSnapshot {
                 path: device.to_string(),
                 mount_path: mount_path.to_string(),
                 label,
                 capacity_bytes: capacity,
                 removable,
-                // STORAGE-0019: filesystem token from /proc/mounts
-                // (already in `fs_type`). Normalize to lowercase so
-                // `FsCapabilities::for_filesystem` can match it.
-                filesystem: Some(fs_type.to_ascii_lowercase()),
+                filesystem,
             });
         }
 
         debug!(count = results.len(), "Linux volume scan complete");
         results
+    }
+
+    /// Map the kernel's `/proc/mounts` fstype to the actual on-disk
+    /// filesystem token. Pass-through for native types; for `fuseblk`
+    /// (FUSE umbrella), shell out to `blkid` to find the underlying
+    /// type (ntfs / exfat / ...). Returns `None` only when blkid
+    /// fails or the device has no recognizable filesystem.
+    pub fn resolve_real_fstype(fs_type: &str, device: &str) -> Option<String> {
+        let lower = fs_type.to_ascii_lowercase();
+        if lower != "fuseblk" {
+            return Some(lower);
+        }
+        // FUSE umbrella — ask blkid for the real type. This is a
+        // single fork+exec per fuseblk volume, run once at scan time.
+        let output = std::process::Command::new("blkid")
+            .args(["-s", "TYPE", "-o", "value", device])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return Some("fuseblk".to_string());
+        }
+        let real = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_ascii_lowercase();
+        if real.is_empty() {
+            Some("fuseblk".to_string())
+        } else {
+            Some(real)
+        }
     }
 
     pub fn is_removable(device_path: &str) -> bool {

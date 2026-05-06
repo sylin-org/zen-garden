@@ -56,12 +56,18 @@ pub async fn get_job_status(
                 Json(ApiResponse::with_suggestions(
                     Job {
                         id: job_id.clone(),
+                        operation: String::new(),
                         status: JobStatus::Failed,
                         targets: vec![],
                         completed: vec![],
                         failed: HashMap::new(),
                         started_at: std::time::SystemTime::now(),
                         completed_at: Some(std::time::SystemTime::now()),
+                        current_step: None,
+                        total_steps: None,
+                        last_message: None,
+                        result: None,
+                        error: Some(format!("Job {job_id} not found")),
                     },
                     vec!["Check job ID is correct".to_string()],
                 )),

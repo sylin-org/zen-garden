@@ -122,12 +122,18 @@ impl Jobs {
         let target_count = targets.len();
         let job = Job {
             id: id.clone(),
+            operation: operation.to_string(),
             targets,
             status: JobStatus::Pending,
             completed: Vec::new(),
             failed: HashMap::new(),
             started_at: SystemTime::now(),
             completed_at: None,
+            current_step: None,
+            total_steps: None,
+            last_message: None,
+            result: None,
+            error: None,
         };
         self.state.write().await.insert(id.clone(), job.clone());
         self.metrics
@@ -236,11 +242,83 @@ impl Jobs {
         .await;
     }
 
+    /// Record a per-step progress tick on a single-operation job.
+    ///
+    /// Updates `current_step` / `total_steps` / `last_message` on the
+    /// job, emits a wire `JobEvent::Progress` so SSE consumers see it,
+    /// and emits the corresponding `JobsChanged::ItemCompleted`-style
+    /// internal change. The wire `level` is `"info"`.
+    ///
+    /// `step` is 1-indexed; `total` is the expected count when known,
+    /// or 0 if not yet computed (consumers render the message without
+    /// a percent until `total > 0`). `message` is human-readable —
+    /// drives the chip label / tooltip.
+    ///
+    /// No-op with a warn if the id is unknown.
+    #[tracing::instrument(level = "trace", skip(self, message), fields(jobs.id = %id, jobs.step = step, jobs.total = total))]
+    pub async fn record_step(&self, id: &str, offering: &str, step: u32, total: u32, message: &str) {
+        let started = Instant::now();
+        let mutated = {
+            let mut guard = self.state.write().await;
+            if let Some(job) = guard.get_mut(id) {
+                job.current_step = Some(step);
+                job.total_steps = if total > 0 { Some(total) } else { job.total_steps };
+                job.last_message = Some(message.to_string());
+                true
+            } else {
+                false
+            }
+        };
+        if !mutated {
+            tracing::warn!(jobs.id = id, "Jobs::record_step called on unknown job id");
+            return;
+        }
+        self.metrics
+            .record_mutation_latency(Self::NAME, started.elapsed())
+            .await;
+        self.event_bus
+            .emit(JobEvent::progress(id, offering, message, "info"));
+        self.emit(JobsChanged::ItemCompleted {
+            id: id.to_string(),
+            item: format!("step-{step}"),
+            completed_total: step as usize,
+        })
+        .await;
+    }
+
     /// Finalize a job as `Completed`. Sets `completed_at = now`, emits
     /// `JobsChanged::Completed` + wire `JobEvent::Completed`. No-op on
     /// unknown id.
     #[tracing::instrument(level = "debug", skip(self), fields(jobs.id = %id, jobs.offering = %offering))]
     pub async fn complete(&self, id: &str, offering: &str) {
+        self.complete_inner(id, offering, None).await;
+    }
+
+    /// Finalize a job as `Completed` and attach a result payload.
+    ///
+    /// Used by single-operation jobs whose final result is more than
+    /// "done" — capture returns the `CapturedSnapshot` shape, plant
+    /// returns `PlantedSnapshot`, etc. The result is stored on the
+    /// `Job`'s `result` field as opaque JSON so the GET /jobs/:id
+    /// endpoint and the SSE snapshot frame both surface it. Consumers
+    /// dispatch on `operation` to decode the shape.
+    ///
+    /// Atomic: result is set in the same write-guard as the status
+    /// transition. A reader cannot observe a Completed job without a
+    /// result, or a result without a Completed status.
+    #[tracing::instrument(level = "debug", skip(self, result), fields(jobs.id = %id, jobs.offering = %offering))]
+    pub async fn complete_with_result(
+        &self,
+        id: &str,
+        offering: &str,
+        result: serde_json::Value,
+    ) {
+        self.complete_inner(id, offering, Some(result)).await;
+    }
+
+    /// Shared completion implementation for both `complete` and
+    /// `complete_with_result`.
+    async fn complete_inner(&self, id: &str, offering: &str, result: Option<serde_json::Value>) {
         let started = Instant::now();
         let duration_ms = {
             let mut guard = self.state.write().await;
@@ -248,6 +326,9 @@ impl Jobs {
                 job.status = JobStatus::Completed;
                 let completed_at = SystemTime::now();
                 job.completed_at = Some(completed_at);
+                if let Some(result) = result {
+                    job.result = Some(result);
+                }
                 completed_at
                     .duration_since(job.started_at)
                     .map(|d| d.as_millis() as u64)
@@ -286,6 +367,11 @@ impl Jobs {
             };
             if let Some((key, error)) = last_error.as_ref() {
                 job.failed.insert(key.clone(), error.clone());
+                // Surface the same string at the top-level so single-op
+                // jobs (capture, plant) read cleanly without consumers
+                // having to know the failed-map key. Batch jobs that
+                // call `fail` for an aggregate failure also benefit.
+                job.error = Some(error.clone());
             }
             job.status = JobStatus::Failed;
             let completed_at = SystemTime::now();

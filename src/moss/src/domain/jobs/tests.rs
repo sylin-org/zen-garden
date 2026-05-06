@@ -420,12 +420,18 @@ async fn legacy_raw_map_mutations_visible_through_aggregate_queries() {
         "legacy".to_string(),
         Job {
             id: "legacy".to_string(),
+            operation: String::new(),
             targets: vec![],
             status: JobStatus::Running,
             completed: vec![],
             failed: HashMap::new(),
             started_at: SystemTime::now(),
             completed_at: None,
+            current_step: None,
+            total_steps: None,
+            last_message: None,
+            result: None,
+            error: None,
         },
     );
 
@@ -433,4 +439,123 @@ async fn legacy_raw_map_mutations_visible_through_aggregate_queries() {
     let via_aggregate = jobs.get("legacy").await.expect("legacy entry visible");
     assert_eq!(via_aggregate.id, "legacy");
     assert_eq!(jobs.active_count().await, 1);
+}
+
+// ─── record_step + complete_with_result ────────────────────────────────
+
+#[tokio::test]
+async fn submit_records_operation_field() {
+    let jobs = fresh().await;
+    jobs.submit("j1".into(), "capture_snapshot", vec!["mongodb::prd".into()])
+        .await;
+    let job = jobs.get("j1").await.unwrap();
+    assert_eq!(job.operation, "capture_snapshot");
+}
+
+#[tokio::test]
+async fn record_step_updates_progress_fields() {
+    let jobs = fresh().await;
+    jobs.submit("j1".into(), "capture_snapshot", vec!["mongodb::prd".into()])
+        .await;
+    jobs.start("j1", "capture_snapshot", "mongodb::prd").await;
+    jobs.record_step("j1", "mongodb::prd", 1, 7, "committing container")
+        .await;
+    let job = jobs.get("j1").await.unwrap();
+    assert_eq!(job.current_step, Some(1));
+    assert_eq!(job.total_steps, Some(7));
+    assert_eq!(job.last_message.as_deref(), Some("committing container"));
+}
+
+#[tokio::test]
+async fn record_step_with_zero_total_keeps_existing_total() {
+    // Pre-flight steps may emit before the operation has computed a
+    // step total (e.g. capture knows step 1 = "commit container" but
+    // doesn't know total until volumes are listed). Passing total=0
+    // must preserve any prior known total rather than zeroing it.
+    let jobs = fresh().await;
+    jobs.submit("j1".into(), "capture_snapshot", vec!["x".into()])
+        .await;
+    jobs.start("j1", "capture_snapshot", "x").await;
+    jobs.record_step("j1", "x", 1, 0, "starting").await;
+    assert!(jobs.get("j1").await.unwrap().total_steps.is_none());
+    jobs.record_step("j1", "x", 2, 5, "step 2").await;
+    assert_eq!(jobs.get("j1").await.unwrap().total_steps, Some(5));
+    // Subsequent steps with total=0 must NOT clobber the known 5.
+    jobs.record_step("j1", "x", 3, 0, "step 3").await;
+    assert_eq!(jobs.get("j1").await.unwrap().total_steps, Some(5));
+}
+
+#[tokio::test]
+async fn complete_with_result_stores_payload_atomically() {
+    let jobs = fresh().await;
+    jobs.submit("j1".into(), "capture_snapshot", vec!["mongodb::prd".into()])
+        .await;
+    jobs.start("j1", "capture_snapshot", "mongodb::prd").await;
+    let payload = serde_json::json!({
+        "snapshot_id": "snap-0193",
+        "size_bytes": 12345,
+    });
+    jobs.complete_with_result("j1", "mongodb::prd", payload.clone())
+        .await;
+    let job = jobs.get("j1").await.unwrap();
+    assert!(matches!(job.status, JobStatus::Completed));
+    assert_eq!(job.result.as_ref().unwrap()["snapshot_id"], "snap-0193");
+    assert!(job.completed_at.is_some());
+}
+
+#[tokio::test]
+async fn complete_without_result_leaves_result_none() {
+    // Existing complete() callers (install jobs etc.) must keep
+    // working — no result is set, the field stays None, the wire
+    // shape skips serialising it.
+    let jobs = fresh().await;
+    jobs.submit("j1".into(), "install", vec!["redis".into()])
+        .await;
+    jobs.start("j1", "install", "redis").await;
+    jobs.complete("j1", "redis").await;
+    let job = jobs.get("j1").await.unwrap();
+    assert!(matches!(job.status, JobStatus::Completed));
+    assert!(job.result.is_none());
+}
+
+#[tokio::test]
+async fn fail_records_top_level_error() {
+    let jobs = fresh().await;
+    jobs.submit("j1".into(), "capture_snapshot", vec!["mongodb::prd".into()])
+        .await;
+    jobs.start("j1", "capture_snapshot", "mongodb::prd").await;
+    jobs.fail(
+        "j1",
+        "mongodb::prd",
+        Some(("mongodb::prd".to_string(), "Docker daemon unreachable".to_string())),
+    )
+    .await;
+    let job = jobs.get("j1").await.unwrap();
+    assert!(matches!(job.status, JobStatus::Failed));
+    assert_eq!(job.error.as_deref(), Some("Docker daemon unreachable"));
+    // Plus the legacy failed-map slot is still populated.
+    assert_eq!(
+        job.failed.get("mongodb::prd").map(|s| s.as_str()),
+        Some("Docker daemon unreachable")
+    );
+}
+
+#[tokio::test]
+async fn fail_without_last_error_leaves_top_level_error_none() {
+    let jobs = fresh().await;
+    jobs.submit("j1".into(), "install", vec!["redis".into()])
+        .await;
+    jobs.start("j1", "install", "redis").await;
+    jobs.fail("j1", "redis", None).await;
+    let job = jobs.get("j1").await.unwrap();
+    assert!(matches!(job.status, JobStatus::Failed));
+    assert!(job.error.is_none());
+}
+
+#[tokio::test]
+async fn record_step_on_unknown_id_is_noop() {
+    let jobs = fresh().await;
+    // Pre-flight: no submit, no exists.
+    jobs.record_step("nope", "x", 1, 5, "ignored").await;
+    assert!(jobs.get("nope").await.is_none());
 }

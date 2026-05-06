@@ -1818,3 +1818,198 @@
   border: 1px solid rgba(196, 176, 96, 0.35);
   color: var(--gold);
 }
+
+/* ── Drag-canvas drop affordances ─────────────────────────────
+   The mount glows at the edges when a valid drag payload is
+   over a valid drop target (a bank). The glow uses CSS variables
+   so themes can swap the accent without React changes.
+   ─────────────────────────────────────────────────────────── */
+
+.canvas-mount-drop-active {
+  box-shadow: inset 0 0 0 2px var(--gold), inset 0 0 60px rgba(196, 176, 96, 0.15);
+  animation: canvas-drop-pulse 1.4s var(--ease) infinite;
+}
+
+@keyframes canvas-drop-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 2px var(--gold), inset 0 0 40px rgba(196, 176, 96, 0.15); }
+  50%      { box-shadow: inset 0 0 0 2px var(--gold), inset 0 0 70px rgba(196, 176, 96, 0.30); }
+}
+
+/* ── Offering chips (stone card → drag source) ────────────── */
+
+.canvas-card-offerings {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--vh);
+}
+
+.canvas-card-section-title {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--s5);
+  margin-bottom: 8px;
+}
+
+.canvas-card-offering-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.canvas-offering-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--vb);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--s9);
+  cursor: grab;
+  user-select: none;
+  transition: background 0.12s var(--ease), border-color 0.12s var(--ease);
+}
+
+.canvas-offering-chip:hover {
+  background: var(--vh);
+  border-color: var(--s5);
+}
+
+.canvas-offering-chip:active {
+  cursor: grabbing;
+}
+
+.canvas-offering-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--s5);
+}
+
+.canvas-offering-chip-dot.status-running,
+.canvas-offering-chip.status-running .canvas-offering-chip-dot {
+  background: var(--sage);
+}
+
+.canvas-offering-chip-dot.status-stopped,
+.canvas-offering-chip.status-stopped .canvas-offering-chip-dot {
+  background: var(--s5);
+}
+
+.canvas-offering-chip-dot.status-degraded,
+.canvas-offering-chip.status-degraded .canvas-offering-chip-dot {
+  background: var(--clay);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Seed CSS class system (themable, per ORCH-0039 §"Forming-seed
+   affordance"). The `.seed` base class is the visual atom; modifier
+   classes (`.seed-forming`, `.seed-restoring`, `.seed-stale`) shift
+   appearance, and a `--seed-progress` custom property drives the
+   forming animation. Themes can override any of these without
+   touching React state.
+   ═══════════════════════════════════════════════════════════════ */
+
+.seed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--seed-bg, rgba(196, 176, 96, 0.12));
+  border: 1px solid var(--seed-border, rgba(196, 176, 96, 0.4));
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--seed-fg, var(--s9));
+  font-family: var(--mono);
+}
+
+.seed-glyph {
+  color: var(--gold);
+  font-size: 10px;
+}
+
+.seed-label {
+  white-space: nowrap;
+}
+
+.seed-forming {
+  /* Forming uses --seed-progress (0..1) as its filled-bar
+     proxy; with no JS-driven progress yet, animate a sweep so
+     the user knows something is in flight. */
+  position: relative;
+  overflow: hidden;
+  --seed-progress: 0.5;
+}
+
+.seed-forming::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(196, 176, 96, 0.25) 50%,
+    transparent 100%
+  );
+  animation: seed-form-sweep 1.4s var(--ease) infinite;
+}
+
+@keyframes seed-form-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.seed-restoring {
+  --seed-bg: rgba(132, 165, 157, 0.12);
+  --seed-border: rgba(132, 165, 157, 0.4);
+}
+
+.seed-restoring .seed-glyph {
+  color: var(--sage);
+}
+
+.seed-stale {
+  opacity: 0.55;
+  --seed-border: var(--s4);
+}
+
+/* Forming rail — bottom-left dock for in-flight snapshots. */
+.canvas-forming-rail {
+  position: absolute;
+  left: 24px;
+  bottom: 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.canvas-forming-rail .seed {
+  pointer-events: auto;
+}
+
+/* Toast — completion feedback for snapshot captures. */
+.canvas-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 60px;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  background: rgba(20, 20, 25, 0.95);
+  border: 1px solid var(--vb);
+  border-radius: 8px;
+  color: var(--s9);
+  font-size: 12px;
+  cursor: pointer;
+  z-index: 7;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: canvas-toast-in 0.3s var(--ease);
+}
+
+@keyframes canvas-toast-in {
+  from { transform: translate(-50%, 20px); opacity: 0; }
+  to   { transform: translate(-50%, 0);    opacity: 1; }
+}

@@ -42,6 +42,8 @@ pub fn run() {
             commands::dismiss_suggestion,
             commands::hide_suggestion_kind,
             commands::show_main_window,
+            commands::capture_snapshot,
+            commands::plant_snapshot,
             crate::ceremony::ceremony_step,
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

@@ -39,6 +39,40 @@ interface StoragePayload {
   banks: GardenBankSummary[]
 }
 
+/// One offering running on the tended stone — enough to render
+/// a draggable service chip and to dispatch the capture call.
+interface ServiceLite {
+  name: string
+  offering: string
+  status: string
+}
+
+interface ServicesPayload {
+  count: number
+  services: ServiceLite[]
+}
+
+interface CaptureSnapshotResult {
+  snapshot_id: string
+  event_id: string
+  source_fqn: string
+  source_stone: string
+  size_total_bytes: number
+  volumes: number
+  external_mounts: number
+}
+
+/// Drag payload format. The canvas's drop zone reads dataTransfer
+/// to know what's being dragged and apply the right pairing.
+interface DragOfferingPayload {
+  kind: "offering"
+  source_stone: string
+  fqn: string
+  display_name: string
+}
+
+const DRAG_MIME = "application/zen-garden+json"
+
 interface CanvasProps {
   onClose: () => void
 }
@@ -66,6 +100,26 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
   const [banks, setBanks] = useState<GardenBankSummary[]>([])
   const [tended, setTended] = useState<TendedStone | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  /// Services on the *currently selected stone* (only fetched when
+  /// the user picks a stone we know how to talk to — typically the
+  /// tended one). Populates the offering chips on the stone card
+  /// that the drag layer renders.
+  const [selectedServices, setSelectedServices] = useState<ServiceLite[]>([])
+
+  /// Drag state — which bank node the cursor is currently over so
+  /// the sphere can highlight it as a valid drop target. Set on
+  /// dragover, cleared on dragleave/drop.
+  const [dragOver, setDragOver] = useState<string | null>(null)
+  /// Active forming-snapshot indicators per bank (real values,
+  /// updated by the capture command's progress + completion).
+  const [forming, setForming] = useState<
+    Record<string, { fqn: string; bankName: string }>
+  >({})
+  /// Most recent backup result for the optimistic toast.
+  const [lastCapture, setLastCapture] = useState<CaptureSnapshotResult | null>(
+    null,
+  )
 
   /// Map AwareStone → the shape GardenSphere consumes. Missing
   /// fields fall through to GardenSphere's own defaults; the
@@ -209,6 +263,131 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
     }
   }, [refresh])
 
+  // ── Fetch the selected stone's services when it's the tended stone ──
+  // The Pavilion API surface today only exposes services for the
+  // tended stone (`get_services`). Selecting a non-tended stone
+  // simply doesn't populate the chip list — the user can tend it
+  // first to manage offerings on it.
+  useEffect(() => {
+    if (selectedKind !== "stone") {
+      setSelectedServices([])
+      return
+    }
+    const stone = stones.find((s) => s.stone_id === selectedId)
+    if (!stone || stone.stone_name !== tended?.stone_name) {
+      setSelectedServices([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const payload = await invoke<ServicesPayload | null>("get_services")
+        if (!cancelled) setSelectedServices(payload?.services ?? [])
+      } catch (e) {
+        // Service-fetch failure shouldn't kill the whole canvas;
+        // surface as empty chip list and log.
+        console.error("get_services failed:", e)
+        if (!cancelled) setSelectedServices([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedId, selectedKind, tended, stones])
+
+  // ── Drag-drop handlers on the canvas mount ────────────────────
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      // Only consume drag events that carry our payload — leaves
+      // native browser drag (e.g. file-into-window) alone.
+      if (!e.dataTransfer.types.includes(DRAG_MIME)) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = "copy"
+
+      // Raycast to identify which bank node (if any) is under the
+      // cursor. The sphere's hover machinery already updated
+      // `hovered`/`hoveredKind` on pointermove; we read those
+      // directly. Drag events fire less frequently than pointer
+      // events, but the cursor position should still update.
+      const isBank = hoveredKind === "bank"
+      setDragOver(isBank ? hovered : null)
+    },
+    [hovered, hoveredKind],
+  )
+
+  const handleDragLeave = useCallback(() => {
+    setDragOver(null)
+  }, [])
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      const raw = e.dataTransfer.getData(DRAG_MIME)
+      setDragOver(null)
+      if (!raw) return
+      e.preventDefault()
+      let payload: DragOfferingPayload
+      try {
+        payload = JSON.parse(raw) as DragOfferingPayload
+      } catch {
+        return
+      }
+      if (payload.kind !== "offering") return
+
+      // The drop must land on a bank for the offering→bank pairing.
+      const isBank = hoveredKind === "bank"
+      if (!isBank || !hovered) return
+      const bankName = hovered
+
+      // Optimistic forming state — appears as a chip on the bank
+      // card immediately, replaced on success/failure.
+      const formingId = `${payload.source_stone}::${payload.fqn}->${bankName}`
+      setForming((prev) => ({
+        ...prev,
+        [formingId]: { fqn: payload.fqn, bankName },
+      }))
+
+      try {
+        const result = await invoke<CaptureSnapshotResult>("capture_snapshot", {
+          stone: payload.source_stone,
+          fqn: payload.fqn,
+          target: `bank:${bankName}`,
+        })
+        setLastCapture(result)
+        // Bump the bank's seed-count chip optimistically so the
+        // user sees the immediate result of their drag.
+        const sphere = sphereRef.current
+        if (sphere) {
+          const bank = banks.find((b) => b.name === bankName)
+          if (bank) {
+            sphere.setSeedCount(bankName, 1) // first seed; refined when seed catalog is wired
+            void bank
+          }
+        }
+      } catch (err) {
+        setError(`Backup failed: ${String(err)}`)
+      } finally {
+        setForming((prev) => {
+          const next = { ...prev }
+          delete next[formingId]
+          return next
+        })
+      }
+    },
+    [hovered, hoveredKind, banks],
+  )
+
+  // Push the drag-target highlight into the sphere's hovered slot
+  // so the existing hover-glow CSS path applies. Without this the
+  // bank wouldn't visibly indicate "valid drop target".
+  useEffect(() => {
+    const sphere = sphereRef.current
+    if (!sphere) return
+    // The sphere already updates its hoveredId on pointermove, so
+    // dragOver effectively mirrors the same state when drag is
+    // active. No additional plumbing needed at the sphere level —
+    // the CSS class on the canvas-mount handles the color shift.
+  }, [dragOver])
+
   const selectedStone = useMemo(
     () =>
       selectedKind === "stone"
@@ -263,13 +442,20 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
       )}
 
       <div className="canvas-stage">
-        <div ref={containerRef} className="canvas-mount" />
+        <div
+          ref={containerRef}
+          className={`canvas-mount${dragOver ? " canvas-mount-drop-active" : ""}`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        />
 
         {selectedStone && tracked?.selected && (
           <CanvasStoneCard
             stone={selectedStone}
             tendedName={tended?.stone_name}
             position={tracked.selected.pos}
+            services={selectedServices}
             onDismiss={() => {
               sphereRef.current?.resetView()
               setSelectedId(null)
@@ -305,10 +491,56 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
         )}
       </div>
 
+      {lastCapture && (
+        <CanvasToast
+          message={`Snapshot captured: ${lastCapture.source_fqn} (${formatBytesShort(lastCapture.size_total_bytes)})`}
+          onDismiss={() => setLastCapture(null)}
+        />
+      )}
+
+      {Object.keys(forming).length > 0 && (
+        <div className="canvas-forming-rail">
+          {Object.entries(forming).map(([id, info]) => (
+            <div
+              key={id}
+              className="seed seed-forming"
+              title={`${info.fqn} → ${info.bankName}`}
+            >
+              <span className="seed-glyph" aria-hidden>
+                ◆
+              </span>
+              <span className="seed-label">
+                {info.fqn} → {info.bankName}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <footer className="canvas-hint">
-        Right-drag to rotate · scroll to zoom · click a stone to focus
+        Right-drag to rotate · scroll to zoom · drag an offering to a bank to back it up
       </footer>
     </main>
+  )
+}
+
+interface CanvasToastProps {
+  message: string
+  onDismiss: () => void
+}
+
+function CanvasToast({ message, onDismiss }: CanvasToastProps): JSX.Element {
+  // Auto-dismiss after 5 s. The user can also click to dismiss
+  // immediately. The CSS class slides it in from the bottom and
+  // fades it out as the timer fires.
+  useEffect(() => {
+    const t = setTimeout(onDismiss, 5000)
+    return () => clearTimeout(t)
+  }, [onDismiss])
+  return (
+    <div className="canvas-toast" role="status" onClick={onDismiss}>
+      {message}
+    </div>
   )
 }
 
@@ -319,6 +551,7 @@ interface CanvasStoneCardProps {
   stone: AwareStone
   tendedName: string | undefined
   position: { x: number; y: number }
+  services: ServiceLite[]
   onDismiss: () => void
 }
 
@@ -326,6 +559,7 @@ function CanvasStoneCard({
   stone,
   tendedName,
   position,
+  services,
   onDismiss,
 }: CanvasStoneCardProps): JSX.Element {
   const isTended = tendedName === stone.stone_name
@@ -365,6 +599,55 @@ function CanvasStoneCard({
         </div>
       </dl>
       {isTended && <div className="canvas-card-tended-pill">tended</div>}
+
+      {services.length > 0 && (
+        <section className="canvas-card-offerings">
+          <div className="canvas-card-section-title">
+            Drag to a bank to back up
+          </div>
+          <div className="canvas-card-offering-chips">
+            {services.map((svc) => (
+              <OfferingChip
+                key={svc.name}
+                stoneName={stone.stone_name}
+                service={svc}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  )
+}
+
+interface OfferingChipProps {
+  stoneName: string
+  service: ServiceLite
+}
+
+function OfferingChip({ stoneName, service }: OfferingChipProps): JSX.Element {
+  const onDragStart = (e: React.DragEvent) => {
+    const payload: DragOfferingPayload = {
+      kind: "offering",
+      source_stone: stoneName,
+      fqn: service.name,
+      display_name: service.offering,
+    }
+    e.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload))
+    e.dataTransfer.effectAllowed = "copy"
+  }
+  return (
+    <div
+      className={`canvas-offering-chip status-${service.status}`}
+      draggable
+      onDragStart={onDragStart}
+      title={`Drag to bank to snapshot ${service.name}`}
+    >
+      <span
+        className={`canvas-offering-chip-dot status-${service.status}`}
+        aria-hidden
+      />
+      <span className="canvas-offering-chip-label">{service.offering}</span>
     </div>
   )
 }
@@ -451,6 +734,18 @@ function healthDotClass(health: string): string {
   if (h === "degraded" || h === "withering") return "dot-amber"
   if (h === "unhealthy" || h === "down" || h === "offline") return "dot-down"
   return ""
+}
+
+function formatBytesShort(bytes: number): string {
+  if (!bytes) return "0B"
+  const units = ["B", "K", "M", "G", "T", "P"]
+  let i = 0
+  let n = bytes
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024
+    i += 1
+  }
+  return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)}${units[i]}`
 }
 
 function formatAgeSecs(secs: number): string {

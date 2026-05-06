@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use garden_common::storage::GardenStorageSummary;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::announce::{ActivityEntry, ActivityStore};
@@ -370,4 +370,182 @@ pub async fn get_storage(
         count: banks.len(),
         banks,
     }))
+}
+
+// ── Snapshots / Plant (ORCH-0039) ──────────────────────────────
+
+/// Result of `capture_snapshot` — the snapshot id the user can
+/// reference later, the event_id that recorded the BackupTaken,
+/// and totals for toast feedback.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureSnapshotResult {
+    pub snapshot_id: String,
+    pub event_id: String,
+    pub source_fqn: String,
+    pub source_stone: String,
+    pub size_total_bytes: u64,
+    pub volumes: usize,
+    pub external_mounts: usize,
+}
+
+/// Trigger a snapshot capture for `fqn` on the named `stone`.
+/// `target` follows the wire form: `local` (default) or
+/// `bank:<bank_name>`. Resolves the stone's endpoint via the
+/// awareness cache so the canvas can drag-from-stone-to-bank
+/// without first tending the source.
+#[tauri::command]
+pub async fn capture_snapshot(
+    stone: String,
+    fqn: String,
+    target: Option<String>,
+    awareness: State<'_, Arc<Awareness>>,
+    tending: State<'_, Arc<Tending>>,
+) -> Result<CaptureSnapshotResult, String> {
+    let endpoint = resolve_endpoint(&stone, &awareness, &tending)
+        .await
+        .ok_or_else(|| format!("stone '{stone}' not in awareness or tending"))?;
+
+    let client = connection::raw_client_for_capture();
+    let url = format!(
+        "{}/api/v1/stone/offerings/{}/snapshots",
+        endpoint.trim_end_matches('/'),
+        encode_uri_segment(&fqn)
+    );
+    let body = serde_json::json!({
+        "target": target.unwrap_or_else(|| "local".to_string()),
+    });
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("capture POST {url}: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("capture {status}: {text}"));
+    }
+    let parsed: ApiEnvelope<CaptureSnapshotResult> =
+        resp.json().await.map_err(|e| format!("capture parse: {e}"))?;
+    Ok(parsed.data)
+}
+
+/// Trigger a plant from a snapshot. `from_stone` is required —
+/// the canvas drags a seed from a bank node onto a stone, and
+/// the drop target stone tells us where to plant; we need the
+/// snapshot's source stone to fetch from (which is `from_stone`).
+/// `target_stone` is where the plant lands.
+#[tauri::command]
+pub async fn plant_snapshot(
+    target_stone: String,
+    target_fqn: String,
+    from_snapshot: String,
+    from_stone: Option<String>,
+    from_fqn: Option<String>,
+    as_fqn: Option<String>,
+    awareness: State<'_, Arc<Awareness>>,
+    tending: State<'_, Arc<Tending>>,
+) -> Result<PlantSnapshotResult, String> {
+    let endpoint = resolve_endpoint(&target_stone, &awareness, &tending)
+        .await
+        .ok_or_else(|| format!("target stone '{target_stone}' not in awareness or tending"))?;
+
+    let client = connection::raw_client_for_capture();
+    let url = format!(
+        "{}/api/v1/stone/offerings/{}/plant",
+        endpoint.trim_end_matches('/'),
+        encode_uri_segment(&target_fqn)
+    );
+    let mut body = serde_json::json!({
+        "from_snapshot": from_snapshot,
+    });
+    if let Some(s) = from_stone {
+        body["from_stone"] = serde_json::Value::String(s);
+    }
+    if let Some(f) = from_fqn {
+        body["from_fqn"] = serde_json::Value::String(f);
+    }
+    if let Some(a) = as_fqn {
+        body["as_fqn"] = serde_json::Value::String(a);
+    }
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("plant POST {url}: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("plant {status}: {text}"));
+    }
+    let parsed: ApiEnvelope<PlantSnapshotResult> =
+        resp.json().await.map_err(|e| format!("plant parse: {e}"))?;
+    Ok(parsed.data)
+}
+
+/// Plant response. Mirrors the server-side
+/// `PlantSnapshotResponse` shape so the typed Tauri call returns
+/// usable data without schema drift.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlantSnapshotResult {
+    pub snapshot_id: String,
+    pub event_id: String,
+    pub source_fqn: String,
+    pub target_fqn: String,
+    pub digest_drift: String,
+}
+
+/// Wire envelope used by every Moss API response: `{ data: T }`.
+/// We unwrap `.data` so callers see the inner payload directly.
+#[derive(Debug, Clone, Deserialize)]
+struct ApiEnvelope<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    #[serde(bound(deserialize = "T: serde::de::DeserializeOwned"))]
+    data: T,
+}
+
+/// Percent-encode the characters that matter inside a URL path
+/// segment for the FQN — `:`, `/`, space, etc. The full RFC 3986
+/// encoder lives in `urlencoding` but pavilion doesn't pull that
+/// in; the FQN alphabet is constrained enough that this small
+/// helper covers every value we'd produce.
+fn encode_uri_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => out.push(ch),
+            other => {
+                let mut buf = [0u8; 4];
+                let bytes = other.encode_utf8(&mut buf).as_bytes();
+                for b in bytes {
+                    out.push_str(&format!("%{:02X}", b));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Resolve a stone name to its HTTP endpoint. Checks awareness
+/// first (covers any peer chirping on the LAN); falls back to
+/// the tended stone for the local-self case where the user is
+/// dragging on the stone they're currently tending.
+async fn resolve_endpoint(
+    stone: &str,
+    awareness: &Arc<Awareness>,
+    tending: &Arc<Tending>,
+) -> Option<String> {
+    let snap = awareness.snapshot().await;
+    if let Some(s) = snap.iter().find(|s| s.stone_name == stone) {
+        return Some(s.endpoint.clone());
+    }
+    if let Some(t) = tending.current().await
+        && t.stone_name == stone
+    {
+        return Some(t.endpoint);
+    }
+    None
 }

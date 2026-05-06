@@ -64,3 +64,17 @@ pub fn streaming_api_for_endpoint(endpoint: &str) -> StoneApi {
         .expect("building reqwest client should not fail");
     StoneApi::new(client, endpoint.to_string())
 }
+
+/// Bare reqwest client for endpoints not yet covered by the
+/// typed StoneApi surface (snapshot capture / plant land
+/// post-StoneApi extension). Same TLS posture as `api_for` — a
+/// generous 60 s timeout because snapshot capture commits a
+/// container image and hashes volumes, both of which run for
+/// non-trivial wall-clock time on multi-GB offerings.
+pub fn raw_client_for_capture() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .expect("building reqwest client should not fail")
+}

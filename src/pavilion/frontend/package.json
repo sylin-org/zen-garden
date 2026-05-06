@@ -13,8 +13,10 @@
     "@fontsource/ibm-plex-sans": "^5.2.8",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.0.0",
+    "@types/three": "^0.184.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "three": "^0.184.0"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

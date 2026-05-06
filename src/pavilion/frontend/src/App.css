@@ -1629,3 +1629,173 @@
 .popover-footer {
   margin-top: auto;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Canvas — 3D garden topology (ORCH-0039 §"Canvas").
+   Hoisted from Lantern's GardenSphere; the canvas claims the
+   full content area and floats stone-detail cards over it
+   anchored to the projected screen position of each node.
+   ═══════════════════════════════════════════════════════════════ */
+
+.canvas-content {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.canvas-topbar {
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--vh);
+  flex: 0 0 auto;
+}
+
+.canvas-stone-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--s5);
+}
+
+.canvas-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.canvas-mount {
+  position: absolute;
+  inset: 0;
+  /* The Three.js canvas appends here. Cursor cues match the
+     interaction model: grab while dragging the sphere, default
+     otherwise (the inner canvas handles fine-grained pointer
+     events). */
+  cursor: grab;
+}
+
+.canvas-mount:active {
+  cursor: grabbing;
+}
+
+.canvas-mount canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.canvas-card {
+  position: absolute;
+  /* The card pins itself to the projected screen position of
+     the selected stone with a translate that lifts it just
+     above the sprite's centerline. */
+  transform: translate(20px, -50%);
+  min-width: 240px;
+  max-width: 320px;
+  background: rgba(20, 20, 25, 0.92);
+  border: 1px solid var(--vb);
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  z-index: 5;
+}
+
+.canvas-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.canvas-card-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--s9);
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-card-close {
+  background: transparent;
+  border: 0;
+  color: var(--s5);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  font-family: inherit;
+}
+
+.canvas-card-close:hover {
+  color: var(--s9);
+}
+
+.canvas-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.canvas-card-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.canvas-card-row dt {
+  color: var(--s5);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  align-self: center;
+}
+
+.canvas-card-row dd {
+  margin: 0;
+  color: var(--s9);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-card-tended-pill {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sage);
+  background: rgba(132, 165, 157, 0.12);
+  border-radius: 4px;
+}
+
+.canvas-hover-chip {
+  position: absolute;
+  transform: translate(20px, -50%);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--s7);
+  background: rgba(20, 20, 25, 0.85);
+  padding: 4px 10px;
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 4;
+  white-space: nowrap;
+}
+
+.canvas-hint {
+  flex: 0 0 auto;
+  padding: 8px 24px;
+  font-size: 11px;
+  color: var(--s5);
+  border-top: 1px solid var(--vh);
+  text-align: center;
+}

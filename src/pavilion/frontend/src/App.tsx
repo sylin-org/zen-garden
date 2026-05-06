@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type JSX } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import { ActivityView } from "./views/Activity"
+import { CanvasView } from "./views/Canvas"
 import { CommandPalette } from "./views/CommandPalette"
 import { HomeView } from "./views/Home"
 import { OnboardingView } from "./views/Onboarding"
@@ -32,7 +33,7 @@ interface Settings {
   onboarded: boolean
 }
 
-type View = "home" | "services" | "pond" | "activity" | "settings"
+type View = "home" | "garden" | "services" | "pond" | "activity" | "settings"
 
 function App(): JSX.Element {
   const [view, setView] = useState<View>("home")
@@ -155,7 +156,12 @@ function App(): JSX.Element {
           >
             Home
           </a>
-          <a className="nav-item disabled">Garden</a>
+          <a
+            className={`nav-item ${view === "garden" ? "active" : ""}`}
+            onClick={() => setView("garden")}
+          >
+            Garden
+          </a>
           <a className="nav-item disabled">Storage</a>
           <a
             className={`nav-item ${view === "services" ? "active" : ""}`}
@@ -189,12 +195,19 @@ function App(): JSX.Element {
       {view === "home" && (
         <HomeView
           onNavigate={(v) => {
-            if (v === "home" || v === "services" || v === "pond" || v === "settings") {
+            if (
+              v === "home" ||
+              v === "garden" ||
+              v === "services" ||
+              v === "pond" ||
+              v === "settings"
+            ) {
               setView(v)
             }
           }}
         />
       )}
+      {view === "garden" && <CanvasView onClose={goHome} />}
       {view === "services" && <ServicesView onClose={goHome} />}
       {view === "pond" && <PondView onClose={goHome} />}
       {view === "activity" && <ActivityView onClose={goHome} />}

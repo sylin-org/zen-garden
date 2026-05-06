@@ -47,15 +47,62 @@ use crate::infra::api_helpers::{internal, not_found};
 /// attribution.
 #[derive(Debug, Deserialize, Default)]
 pub struct CaptureSnapshotRequest {
-    /// Where to persist the snapshot. M2 supports `local`
-    /// (default — `<data_dir>/snapshots/<fqn-encoded>`).
-    /// Bank-backed targets (`bank:<name>`) ship in S5.
+    /// Where to persist the snapshot. Two forms:
+    ///
+    /// - `"local"` (or absent) — `<data_dir>/snapshots/<fqn-encoded>`
+    /// - `"bank:<bank_name>"` — under the named bank's mount,
+    ///   at `<mount>/snapshots/<fqn-encoded>`
+    ///
+    /// See [`SnapshotTarget::parse`] for the canonical parser.
     #[serde(default)]
     pub target: Option<String>,
     /// User identifier for the event log's actor field.
     /// Omitted means system-driven (periodic scheduler, etc).
     #[serde(default)]
     pub user: Option<String>,
+}
+
+/// Resolved target the capture handler writes to. Pulled out as
+/// an enum so the parser is testable in isolation and adding
+/// future targets (registry-backed image stores, off-LAN
+/// archives) is a single match arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SnapshotTarget {
+    /// Default — `<data_dir>/snapshots/<encoded_fqn>/`.
+    Local,
+    /// Under a named storage bank's local mount.
+    Bank(String),
+}
+
+impl SnapshotTarget {
+    /// Parse the wire form (`Option<&str>` from the request body)
+    /// into a typed target. `None` and `"local"` both produce
+    /// `Local`. `"bank:<name>"` produces `Bank(name)` after
+    /// stripping the prefix and rejecting empty names. Anything
+    /// else is an error so a typo can't silently fall back to
+    /// local disk.
+    pub fn parse(s: Option<&str>) -> Result<Self, String> {
+        match s {
+            None => Ok(SnapshotTarget::Local),
+            Some(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("local") {
+                    Ok(SnapshotTarget::Local)
+                } else if let Some(name) = trimmed.strip_prefix("bank:") {
+                    let name = name.trim();
+                    if name.is_empty() {
+                        Err("Snapshot target 'bank:' must include a bank name".to_string())
+                    } else {
+                        Ok(SnapshotTarget::Bank(name.to_string()))
+                    }
+                } else {
+                    Err(format!(
+                        "Snapshot target '{raw}' is not recognised; expected 'local' or 'bank:<name>'"
+                    ))
+                }
+            }
+        }
+    }
 }
 
 /// Successful capture response. Surfaces the snapshot's id and
@@ -94,27 +141,34 @@ pub async fn capture_offering_snapshot_v1(
     })?;
 
     let request = body.map(|Json(b)| b).unwrap_or_default();
+    let target = SnapshotTarget::parse(request.target.as_deref()).map_err(|e| {
+        bad_request("UNSUPPORTED_SNAPSHOT_TARGET", e.to_string())
+    })?;
 
-    // Target selection. M2: local disk only. The picker accepts
-    // an explicit `local` to make the choice visible at the
-    // wire level even though it's the default; future strings
-    // (`bank:<name>`) reject loud-and-clear here so a typo
-    // doesn't silently fall back to local.
-    match request.target.as_deref() {
-        None | Some("local") => {}
-        Some(other) => {
-            return Err(bad_request(
-                "UNSUPPORTED_SNAPSHOT_TARGET",
-                format!(
-                    "Snapshot target '{}' is not supported in M2; only 'local' is available. Bank-backed targets land in commit S5.",
-                    other
-                ),
-            ));
+    let snapshot_root = match &target {
+        SnapshotTarget::Local => local_snapshot_root(&fqn),
+        SnapshotTarget::Bank(bank_name) => {
+            let bank = crate::domain::storage::bank_aggregate::by_name(
+                bank_name,
+                &state.current.storage.volumes,
+            )
+            .await
+            .ok_or_else(|| {
+                not_found(
+                    "BANK_NOT_FOUND",
+                    format!("Bank '{bank_name}' has no managed online volume on this stone"),
+                )
+            })?;
+            let mount = bank.mount_path.clone().ok_or_else(|| {
+                internal(
+                    "BANK_NOT_MOUNTED",
+                    format!("Bank '{bank_name}' has no mount path"),
+                )
+            })?;
+            mount.join("snapshots").join(fqn.encoded_for_container())
         }
-    }
-
-    let snapshot_root = local_snapshot_root(&fqn);
-    let store = LocalSnapshotStore::new(snapshot_root.clone());
+    };
+    let store = LocalSnapshotStore::new(snapshot_root);
     let log_path = offering_event_log_path(&fqn);
     let log = EventLog::open(log_path);
 
@@ -131,7 +185,7 @@ pub async fn capture_offering_snapshot_v1(
                 error = %e,
                 "Snapshot capture failed"
             );
-            crate::infra::api_helpers::internal("SNAPSHOT_CAPTURE_FAILED", e.to_string())
+            internal("SNAPSHOT_CAPTURE_FAILED", e.to_string())
         })?;
 
     crate::api::ok(CaptureSnapshotResponse {
@@ -467,6 +521,60 @@ mod tests {
         assert!(!is_safe_artifact_name("foo/bar"));
         assert!(!is_safe_artifact_name("foo\\bar"));
         assert!(!is_safe_artifact_name("foo\0bar"));
+    }
+
+    #[test]
+    fn snapshot_target_default_and_local_are_equivalent() {
+        assert_eq!(SnapshotTarget::parse(None).unwrap(), SnapshotTarget::Local);
+        assert_eq!(
+            SnapshotTarget::parse(Some("local")).unwrap(),
+            SnapshotTarget::Local
+        );
+        assert_eq!(
+            SnapshotTarget::parse(Some("LOCAL")).unwrap(),
+            SnapshotTarget::Local,
+            "case-insensitive"
+        );
+        assert_eq!(
+            SnapshotTarget::parse(Some("  ")).unwrap(),
+            SnapshotTarget::Local,
+            "whitespace-only treated as default"
+        );
+    }
+
+    #[test]
+    fn snapshot_target_parses_bank_prefix() {
+        assert_eq!(
+            SnapshotTarget::parse(Some("bank:personal")).unwrap(),
+            SnapshotTarget::Bank("personal".into())
+        );
+        // Whitespace around the bank name is trimmed.
+        assert_eq!(
+            SnapshotTarget::parse(Some("bank: media ")).unwrap(),
+            SnapshotTarget::Bank("media".into())
+        );
+    }
+
+    #[test]
+    fn snapshot_target_rejects_empty_bank_name() {
+        let err = SnapshotTarget::parse(Some("bank:")).unwrap_err();
+        assert!(
+            err.contains("must include a bank name"),
+            "useful error message: {err}"
+        );
+        let err = SnapshotTarget::parse(Some("bank: ")).unwrap_err();
+        assert!(err.contains("must include a bank name"));
+    }
+
+    #[test]
+    fn snapshot_target_rejects_unknown_prefix() {
+        // Typo prevention — silent fallback to local would
+        // surprise users who explicitly tried to write to a
+        // storage system.
+        let err = SnapshotTarget::parse(Some("registry:some-where")).unwrap_err();
+        assert!(err.contains("not recognised"), "{err}");
+        let err = SnapshotTarget::parse(Some("garbage")).unwrap_err();
+        assert!(err.contains("not recognised"), "{err}");
     }
 
     #[test]

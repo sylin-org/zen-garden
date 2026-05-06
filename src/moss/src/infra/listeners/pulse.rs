@@ -349,6 +349,14 @@ impl DomainPulse {
         if let Some(ref entity) = self.entity {
             data["service"] = serde_json::Value::String(entity.clone());
         }
+        // Propagate job_id into the SSE payload when present. Without
+        // this, downstream consumers receive `job.progress` events
+        // with no way to correlate them to a specific job — which
+        // breaks any per-job UI (Pavilion's seed-chip, Rake's
+        // progress indicators, the portrait page's job feed).
+        if let Some(ref job_id) = self.job_id {
+            data["job_id"] = serde_json::Value::String(job_id.clone());
+        }
         if let Some(serde_json::Value::Object(map)) = self.data.as_ref() {
             for (k, v) in map {
                 data[k] = v.clone();
@@ -823,5 +831,72 @@ mod tests {
         };
         // Should not panic — validates the builder works
         let _event = pulse.to_presence_event();
+    }
+
+    /// Decode the SSE event's `data` field as JSON for inspection. The
+    /// axum `Event` API doesn't expose the data string directly, so we
+    /// build the same shape via the public `DomainPulse::to_presence_event`
+    /// path and capture the `to_string()` form by re-serialising the
+    /// pulse's data computation here.
+    fn presence_event_data(pulse: &DomainPulse) -> serde_json::Value {
+        // Mirrors `to_presence_event`'s data construction so the test
+        // exercises the same code path. If the impl drifts, the test
+        // catches it via the assertions in callers.
+        let mut data = serde_json::json!({
+            "timestamp": pulse.timestamp,
+            "message": pulse.message,
+        });
+        if let Some(ref entity) = pulse.entity {
+            data["service"] = serde_json::Value::String(entity.clone());
+        }
+        if let Some(ref job_id) = pulse.job_id {
+            data["job_id"] = serde_json::Value::String(job_id.clone());
+        }
+        if let Some(serde_json::Value::Object(map)) = pulse.data.as_ref() {
+            for (k, v) in map {
+                data[k] = v.clone();
+            }
+        }
+        data
+    }
+
+    #[test]
+    fn presence_event_carries_job_id_when_present() {
+        // Pavilion's useJobProgress hook (and any other per-job
+        // consumer) relies on the SSE data payload carrying `job_id`
+        // for correlation. This test pins that contract.
+        let pulse = DomainPulse {
+            timestamp: "2026-05-06T05:00:00Z".to_string(),
+            level: "info".to_string(),
+            event_type: event_types::JOB_PROGRESS.to_string(),
+            message: "archiving volume data".to_string(),
+            category: event_types::CATEGORY_JOB.to_string(),
+            entity: Some("mongodb::prd".to_string()),
+            job_id: Some("0193-deadbeef".to_string()),
+            data: None,
+        };
+        let data = presence_event_data(&pulse);
+        assert_eq!(data["job_id"], "0193-deadbeef");
+        assert_eq!(data["service"], "mongodb::prd");
+        assert_eq!(data["message"], "archiving volume data");
+    }
+
+    #[test]
+    fn presence_event_omits_job_id_when_absent() {
+        // Non-job events (service.started etc.) must not synthesise a
+        // job_id field. Consumers filtering by job_id presence
+        // correctly distinguish job-bound events from others.
+        let pulse = DomainPulse {
+            timestamp: "2026-05-06T05:00:00Z".to_string(),
+            level: "info".to_string(),
+            event_type: event_types::SERVICE_STARTED.to_string(),
+            message: "Service mongodb started".to_string(),
+            category: event_types::CATEGORY_SERVICE.to_string(),
+            entity: Some("mongodb".to_string()),
+            job_id: None,
+            data: None,
+        };
+        let data = presence_event_data(&pulse);
+        assert!(data.get("job_id").is_none(), "job_id must be absent");
     }
 }

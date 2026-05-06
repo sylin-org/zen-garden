@@ -28,6 +28,8 @@ mod facilitators;
 #[cfg(target_os = "windows")]
 mod integration;
 #[cfg(target_os = "windows")]
+mod jobs;
+#[cfg(target_os = "windows")]
 mod settings;
 #[cfg(target_os = "windows")]
 mod tending;

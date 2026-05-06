@@ -283,7 +283,34 @@ impl DomainPulse {
             JobEvent::Started { operation, .. } => Some(serde_json::json!({
                 "operation": operation,
             })),
-            JobEvent::Progress { .. } => None,
+            // For per-step progress, surface step/total in the SSE
+            // data so wire consumers (Pavilion's seed-chip,
+            // useJobProgress hook) render real progress without an
+            // out-of-band fetch of the Job state. Batch-job progress
+            // emits leave step/total None and rely on the
+            // {completed.len, targets.len} fields on the Job itself.
+            JobEvent::Progress {
+                step, total_steps, ..
+            } => {
+                let mut map = serde_json::Map::new();
+                if let Some(s) = step {
+                    map.insert(
+                        "step".into(),
+                        serde_json::Value::Number(serde_json::Number::from(*s)),
+                    );
+                }
+                if let Some(t) = total_steps {
+                    map.insert(
+                        "total_steps".into(),
+                        serde_json::Value::Number(serde_json::Number::from(*t)),
+                    );
+                }
+                if map.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::Value::Object(map))
+                }
+            }
             JobEvent::Completed { .. } => None,
             JobEvent::Failed { error, .. } => Some(serde_json::json!({
                 "error": error,

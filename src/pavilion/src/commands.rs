@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use garden_common::storage::GardenStorageSummary;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::announce::{ActivityEntry, ActivityStore};
 use crate::awareness::{AwareStone, Awareness};
@@ -376,9 +376,13 @@ pub async fn get_storage(
 
 /// Result of `capture_snapshot` — the snapshot id the user can
 /// reference later, the event_id that recorded the BackupTaken,
-/// and totals for toast feedback.
+/// and totals for toast feedback. Delivered to the React side as
+/// the `await invoke('capture_snapshot', ...)` resolution value
+/// after the spawned job reaches `Completed`. Per-step progress
+/// arrives separately on the `job:progress` Tauri event channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureSnapshotResult {
+    pub job_id: String,
     pub snapshot_id: String,
     pub event_id: String,
     pub source_fqn: String,
@@ -393,8 +397,30 @@ pub struct CaptureSnapshotResult {
 /// `bank:<bank_name>`. Resolves the stone's endpoint via the
 /// awareness cache so the canvas can drag-from-stone-to-bank
 /// without first tending the source.
+///
+/// # Async-via-jobs flow (Item 2)
+///
+/// Internally:
+/// 1. POST to the stone's `/offerings/{name}/snapshots` endpoint
+///    which submits the work as a tracked job and returns
+///    `{ job_id }` immediately.
+/// 2. Emit a `job:started` Tauri event so the React side can
+///    register a per-job progress watcher (`useJobProgress`).
+/// 3. Subscribe to the per-job SSE stream
+///    (`/api/v1/jobs/{id}/stream`), forwarding each frame to the
+///    React side as `job:snapshot` / `job:progress` /
+///    `job:completed` / `job:failed` Tauri events.
+/// 4. Resolve with the final `CapturedSnapshot` result once the
+///    job reaches `Completed`. The Tauri command's external
+///    contract — `await invoke('capture_snapshot', ...)` returns
+///    the result — is preserved.
+///
+/// The SSE consumer falls back to polling `GET /api/v1/jobs/{id}`
+/// if the stream drops mid-job, so transient network blips don't
+/// strand the operation.
 #[tauri::command]
 pub async fn capture_snapshot(
+    app: tauri::AppHandle,
     stone: String,
     fqn: String,
     target: Option<String>,
@@ -425,9 +451,89 @@ pub async fn capture_snapshot(
         let text = resp.text().await.unwrap_or_default();
         return Err(format!("capture {status}: {text}"));
     }
-    let parsed: ApiEnvelope<CaptureSnapshotResult> =
-        resp.json().await.map_err(|e| format!("capture parse: {e}"))?;
-    Ok(parsed.data)
+    let envelope: ApiEnvelope<JobSubmissionAck> = resp
+        .json()
+        .await
+        .map_err(|e| format!("capture submission parse: {e}"))?;
+    let job_id = envelope.data.job_id;
+
+    // Notify the React side immediately so the seed-chip can begin
+    // listening for progress before the first event arrives.
+    let started = JobStarted {
+        job_id: job_id.clone(),
+        operation: envelope.data.operation,
+        stone: stone.clone(),
+        fqn: fqn.clone(),
+    };
+    if let Err(e) = app.emit("job:started", &started) {
+        tracing::warn!(error = %e, "failed to emit job:started for capture");
+    }
+
+    // Consume the SSE stream + resolve with the final result.
+    finalise_capture_job(&app, &endpoint, &job_id).await
+}
+
+/// Submission ack — what the POST returns immediately.
+#[derive(Debug, Deserialize)]
+struct JobSubmissionAck {
+    job_id: String,
+    operation: String,
+}
+
+/// Job-started event payload emitted to the React side. Carries
+/// enough context for `useJobProgress(jobId)` to register and label
+/// itself without a separate fetch.
+#[derive(Debug, Clone, Serialize)]
+pub struct JobStarted {
+    pub job_id: String,
+    pub operation: String,
+    pub stone: String,
+    pub fqn: String,
+}
+
+/// Watch the per-job stream to terminal, fetch the final result,
+/// and shape it as `CaptureSnapshotResult`.
+async fn finalise_capture_job(
+    app: &tauri::AppHandle,
+    endpoint: &str,
+    job_id: &str,
+) -> Result<CaptureSnapshotResult, String> {
+    let outcome = crate::jobs::consume_job_stream(app, endpoint, job_id).await?;
+    match outcome {
+        crate::jobs::JobOutcome::Failed(err) => Err(format!("capture failed: {err}")),
+        crate::jobs::JobOutcome::Completed(result_value) => {
+            // The streaming `job.completed` doesn't carry the result
+            // body — fetch it via GET (cheap, local-host) so the
+            // Tauri command can return the typed shape to React.
+            let result = if result_value.is_null() {
+                crate::jobs::fetch_job_result(endpoint, job_id).await?
+            } else {
+                result_value
+            };
+            // Emit the final completed event with the result so any
+            // React listener gets it.
+            let _ = app.emit(
+                crate::jobs::event_names::COMPLETED,
+                &crate::jobs::JobCompleted {
+                    job_id: job_id.to_string(),
+                    result: result.clone(),
+                },
+            );
+            // Reshape into the typed CaptureSnapshotResult.
+            let typed: CaptureSnapshotResult = serde_json::from_value(serde_json::json!({
+                "job_id": job_id,
+                "snapshot_id": result.get("snapshot_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "event_id": result.get("event_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "source_fqn": result.get("source_fqn").and_then(|v| v.as_str()).unwrap_or(""),
+                "source_stone": result.get("source_stone").and_then(|v| v.as_str()).unwrap_or(""),
+                "size_total_bytes": result.get("size_total_bytes").and_then(|v| v.as_u64()).unwrap_or(0),
+                "volumes": result.get("volumes").and_then(|v| v.as_u64()).unwrap_or(0),
+                "external_mounts": result.get("external_mounts").and_then(|v| v.as_u64()).unwrap_or(0),
+            }))
+            .map_err(|e| format!("capture result reshape: {e}"))?;
+            Ok(typed)
+        }
+    }
 }
 
 /// Trigger a plant from a snapshot. `from_stone` is required —
@@ -435,8 +541,12 @@ pub async fn capture_snapshot(
 /// the drop target stone tells us where to plant; we need the
 /// snapshot's source stone to fetch from (which is `from_stone`).
 /// `target_stone` is where the plant lands.
+///
+/// Same async-via-jobs flow as `capture_snapshot` — see that
+/// function's docs for the per-step event sequence.
 #[tauri::command]
 pub async fn plant_snapshot(
+    app: tauri::AppHandle,
     target_stone: String,
     target_fqn: String,
     from_snapshot: String,
@@ -479,9 +589,60 @@ pub async fn plant_snapshot(
         let text = resp.text().await.unwrap_or_default();
         return Err(format!("plant {status}: {text}"));
     }
-    let parsed: ApiEnvelope<PlantSnapshotResult> =
-        resp.json().await.map_err(|e| format!("plant parse: {e}"))?;
-    Ok(parsed.data)
+    let envelope: ApiEnvelope<JobSubmissionAck> = resp
+        .json()
+        .await
+        .map_err(|e| format!("plant submission parse: {e}"))?;
+    let job_id = envelope.data.job_id;
+
+    let started = JobStarted {
+        job_id: job_id.clone(),
+        operation: envelope.data.operation,
+        stone: target_stone.clone(),
+        fqn: target_fqn.clone(),
+    };
+    if let Err(e) = app.emit("job:started", &started) {
+        tracing::warn!(error = %e, "failed to emit job:started for plant");
+    }
+
+    finalise_plant_job(&app, &endpoint, &job_id).await
+}
+
+/// Watch the per-job stream to terminal, fetch the final result,
+/// and shape it as `PlantSnapshotResult`.
+async fn finalise_plant_job(
+    app: &tauri::AppHandle,
+    endpoint: &str,
+    job_id: &str,
+) -> Result<PlantSnapshotResult, String> {
+    let outcome = crate::jobs::consume_job_stream(app, endpoint, job_id).await?;
+    match outcome {
+        crate::jobs::JobOutcome::Failed(err) => Err(format!("plant failed: {err}")),
+        crate::jobs::JobOutcome::Completed(result_value) => {
+            let result = if result_value.is_null() {
+                crate::jobs::fetch_job_result(endpoint, job_id).await?
+            } else {
+                result_value
+            };
+            let _ = app.emit(
+                crate::jobs::event_names::COMPLETED,
+                &crate::jobs::JobCompleted {
+                    job_id: job_id.to_string(),
+                    result: result.clone(),
+                },
+            );
+            let typed: PlantSnapshotResult = serde_json::from_value(serde_json::json!({
+                "job_id": job_id,
+                "snapshot_id": result.get("snapshot_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "event_id": result.get("event_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "source_fqn": result.get("source_fqn").and_then(|v| v.as_str()).unwrap_or(""),
+                "target_fqn": result.get("target_fqn").and_then(|v| v.as_str()).unwrap_or(""),
+                "digest_drift": result.get("digest_drift").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            }))
+            .map_err(|e| format!("plant result reshape: {e}"))?;
+            Ok(typed)
+        }
+    }
 }
 
 /// One seed entry returned by `list_seeds_in_bank`.
@@ -546,11 +707,12 @@ pub async fn list_seeds_in_bank(
     Ok(parsed.data)
 }
 
-/// Plant response. Mirrors the server-side
-/// `PlantSnapshotResponse` shape so the typed Tauri call returns
-/// usable data without schema drift.
+/// Plant response. Carries the job id (for client-side
+/// correlation with subsequent progress events) plus the final
+/// `PlantedSnapshotResult` shape from Moss's job aggregate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlantSnapshotResult {
+    pub job_id: String,
     pub snapshot_id: String,
     pub event_id: String,
     pub source_fqn: String,

@@ -169,13 +169,23 @@ pub enum JobEvent {
         operation: String, // "install", "remove", "update"
         timestamp: DateTime<Utc>,
     },
-    /// Job progress update
+    /// Job progress update.
+    ///
+    /// `step` / `total_steps` are populated by single-operation jobs
+    /// (capture_snapshot, plant_snapshot) so wire consumers can render
+    /// real progress without separately fetching the Job state. Batch
+    /// jobs leave them `None` and rely on `completed.len() / targets.len()`
+    /// against the Job snapshot.
     Progress {
         job_id: String,
         offering: String,
         message: String,
         level: String, // "info", "warn", "error", "debug"
         timestamp: DateTime<Utc>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        step: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total_steps: Option<u32>,
     },
     /// Job completed successfully
     Completed {
@@ -276,6 +286,31 @@ impl JobEvent {
             message: message.into(),
             level: level.into(),
             timestamp: Utc::now(),
+            step: None,
+            total_steps: None,
+        }
+    }
+
+    /// Progress builder for single-operation jobs that report step
+    /// counters alongside the message. `step` is 1-indexed; `total`
+    /// is 0 when not yet known (consumers render the message without
+    /// a percent until total > 0).
+    pub fn progress_with_step(
+        job_id: impl Into<String>,
+        offering: impl Into<String>,
+        message: impl Into<String>,
+        level: impl Into<String>,
+        step: u32,
+        total: u32,
+    ) -> Self {
+        Self::Progress {
+            job_id: job_id.into(),
+            offering: offering.into(),
+            message: message.into(),
+            level: level.into(),
+            timestamp: Utc::now(),
+            step: Some(step),
+            total_steps: if total > 0 { Some(total) } else { None },
         }
     }
 

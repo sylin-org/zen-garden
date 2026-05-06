@@ -293,8 +293,9 @@ impl Jobs {
         self.metrics
             .record_mutation_latency(Self::NAME, started.elapsed())
             .await;
-        self.event_bus
-            .emit(JobEvent::progress(id, offering, message, "info"));
+        self.event_bus.emit(JobEvent::progress_with_step(
+            id, offering, message, "info", step, total,
+        ));
         self.emit(JobsChanged::ItemCompleted {
             id: id.to_string(),
             item: format!("step-{step}"),

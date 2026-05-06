@@ -78,3 +78,18 @@ pub fn raw_client_for_capture() -> reqwest::Client {
         .build()
         .expect("building reqwest client should not fail")
 }
+
+/// Bare reqwest client for the per-job SSE stream. No overall
+/// timeout — a capture or plant on a multi-GB offering may run for
+/// many minutes. Per-read timeout is generous (10 minutes) because
+/// some single steps (image save, large volume archive) legitimately
+/// take that long without emitting intermediate SSE frames. Moss's
+/// own SSE keep-alive emits every 15 s by default, so a 10 min
+/// read-silence is a hard "connection is dead" signal.
+pub fn raw_client_for_job_stream() -> reqwest::Client {
+    reqwest::Client::builder()
+        .read_timeout(Duration::from_secs(600))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .expect("building reqwest client should not fail")
+}

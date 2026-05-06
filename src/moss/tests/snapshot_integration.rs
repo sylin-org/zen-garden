@@ -271,6 +271,7 @@ async fn capture_round_trips_image_and_volumes_and_external_mounts() {
         &store,
         &log,
         EventActor::system("stone-test"),
+        None,
     )
     .await;
 

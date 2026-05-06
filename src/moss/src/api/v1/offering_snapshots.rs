@@ -177,16 +177,18 @@ pub async fn capture_offering_snapshot_v1(
         None => EventActor::system(state.current.stone.name.clone()),
     };
 
-    let result = crate::infra::snapshot::capture_snapshot(&state, &fqn, &store, &log, actor)
-        .await
-        .map_err(|e| {
-            tracing::error!(
-                offering = %offering_name,
-                error = %e,
-                "Snapshot capture failed"
-            );
-            internal("SNAPSHOT_CAPTURE_FAILED", e.to_string())
-        })?;
+    let result = crate::infra::snapshot::capture_snapshot(
+        &state, &fqn, &store, &log, actor, None,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            offering = %offering_name,
+            error = %e,
+            "Snapshot capture failed"
+        );
+        internal("SNAPSHOT_CAPTURE_FAILED", e.to_string())
+    })?;
 
     crate::api::ok(CaptureSnapshotResponse {
         snapshot_id: result.manifest.id,
@@ -494,6 +496,7 @@ pub async fn plant_offering_snapshot_v1(
         &request.from_snapshot,
         &log,
         actor,
+        None,
     )
     .await
     .map_err(|e| {

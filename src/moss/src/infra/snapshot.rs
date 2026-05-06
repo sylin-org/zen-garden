@@ -75,12 +75,24 @@ pub struct CapturedSnapshot {
 /// gardener to clean up (or for the next capture to overwrite
 /// via the snapshot id namespace). The function does not
 /// implement transactional rollback today.
+/// Number of fixed steps before + after the variable per-volume
+/// archive loop in `capture_snapshot`. The total step count for a
+/// capture is `FIXED_STEPS_BEFORE + volume_count + FIXED_STEPS_AFTER`
+/// = `4 + N + 4` where N is the number of volume mounts.
+///
+/// - Before: commit container, save image, hash image, list volumes
+/// - After: compute manifest digest, record BackupTaken event,
+///   save manifest, truncate event log
+const CAPTURE_STEPS_BEFORE_VOLUMES: u32 = 4;
+const CAPTURE_STEPS_AFTER_VOLUMES: u32 = 4;
+
 pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
     state: &Moss,
     fqn: &OfferingFqn,
     store: &S,
     log: &EventLog,
     actor: EventActor,
+    job_id: Option<&str>,
 ) -> Result<CapturedSnapshot> {
     let snapshot_id = garden_common::utils::ids::generate_guidv7();
     let encoded_fqn = fqn.encoded_for_container();
@@ -94,7 +106,11 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         "Starting snapshot capture"
     );
 
-    // 1 + 2 — commit container, save image to <store>/<id>/image.tar.
+    // Step 1 — commit container.
+    state
+        .jobs
+        .record_step_opt(job_id, &fqn_string, 1, 0, "committing container")
+        .await;
     let original_image = state
         .platform
         .container
@@ -111,6 +127,11 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         .context("commit container for snapshot")?;
     let image_ref = format!("{}:{}", repo, tag);
 
+    // Step 2 — save image to tar.
+    state
+        .jobs
+        .record_step_opt(job_id, &fqn_string, 2, 0, "saving image to tar")
+        .await;
     let image_path = store.image_path(&snapshot_id);
     if let Some(parent) = image_path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -123,13 +144,22 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         .save_image(&image_ref, &image_path)
         .await
         .context("save Docker image to snapshot tarball")?;
+
+    // Step 3 — hash image tarball.
+    state
+        .jobs
+        .record_step_opt(job_id, &fqn_string, 3, 0, "hashing image tarball")
+        .await;
     let image_sha = sha512_file(&image_path)
         .await
         .context("hash snapshot image tarball")?;
 
-    // 3 + 4 — pack volumes and external mounts; classify each by
-    // path. The managed-volumes root for this offering is
-    // `<volumes_dir>/<encoded_fqn>`; anything else is external.
+    // Step 4 — list container volumes. Once the count is known, the
+    // job's total_steps gets pinned to 4 + volumes.len() + 4.
+    state
+        .jobs
+        .record_step_opt(job_id, &fqn_string, 4, 0, "listing volumes")
+        .await;
     let volumes = state
         .platform
         .container
@@ -138,11 +168,26 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         .context("list container volume mounts")?;
     let managed_root = PathBuf::from(garden_common::constants::paths::volumes_dir())
         .join(&encoded_fqn);
+    let total_steps =
+        CAPTURE_STEPS_BEFORE_VOLUMES + volumes.len() as u32 + CAPTURE_STEPS_AFTER_VOLUMES;
 
     let mut snapshot_volumes: Vec<SnapshotVolume> = Vec::new();
     let mut snapshot_external_mounts: Vec<SnapshotExternalMount> = Vec::new();
 
+    // Steps 5..=4+N — archive + hash each volume / external mount.
+    let mut step = CAPTURE_STEPS_BEFORE_VOLUMES;
     for (host_path, container_path) in volumes {
+        step += 1;
+        state
+            .jobs
+            .record_step_opt(
+                job_id,
+                &fqn_string,
+                step,
+                total_steps,
+                &format!("archiving {host_path}"),
+            )
+            .await;
         let host_path_buf = PathBuf::from(&host_path);
         let class = classify_volume(&host_path_buf, &managed_root);
         let archive_dest = match class {
@@ -179,12 +224,18 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         }
     }
 
-    // 4b — manifest digest. We hash the canonical JSON form of
-    // the offering's compiled manifest at capture time so
-    // restore can detect drift. Best-effort: if the catalog
-    // doesn't have a compiled manifest cached (e.g. an Adopted
-    // offering), record the digest of the empty payload — the
-    // restore-side check just warns either way.
+    // Step 5+N — manifest digest.
+    step += 1;
+    state
+        .jobs
+        .record_step_opt(
+            job_id,
+            &fqn_string,
+            step,
+            total_steps,
+            "computing manifest digest",
+        )
+        .await;
     let manifest_digest = match state.catalog.get_compiled(&fqn_string).await {
         Some(compiled) => {
             let bytes = serde_json::to_vec(&compiled)
@@ -200,9 +251,20 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         }
     };
 
-    // 5 — append BackupTaken event so the snapshot's
+    // Step 6+N — record BackupTaken event so the snapshot's
     // source_event_id is meaningful. Other instances comparing
     // their watermark to this id will know they're behind.
+    step += 1;
+    state
+        .jobs
+        .record_step_opt(
+            job_id,
+            &fqn_string,
+            step,
+            total_steps,
+            "recording BackupTaken event",
+        )
+        .await;
     let mut details = serde_json::Map::new();
     details.insert(
         "snapshot_id".into(),
@@ -224,7 +286,12 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         .context("build BackupTaken event")?;
     log.append(&event).await.context("append BackupTaken event")?;
 
-    // 6 — assemble + save manifest.
+    // Step 7+N — save manifest.
+    step += 1;
+    state
+        .jobs
+        .record_step_opt(job_id, &fqn_string, step, total_steps, "saving manifest")
+        .await;
     let mut manifest = SnapshotManifest {
         id: snapshot_id.clone(),
         source_fqn: fqn_string.clone(),
@@ -249,7 +316,18 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         .await
         .context("persist snapshot manifest")?;
 
-    // 7 — retention. Truncate every event before this snapshot.
+    // Step 8+N — retention. Truncate every event before this snapshot.
+    step += 1;
+    state
+        .jobs
+        .record_step_opt(
+            job_id,
+            &fqn_string,
+            step,
+            total_steps,
+            "truncating event log",
+        )
+        .await;
     if let Err(e) = log.truncate_before(&event.event_id).await {
         // Non-fatal: the snapshot is durable, the event is
         // recorded. A failed truncate just leaves disk debris
@@ -275,6 +353,13 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         manifest,
         event_id: event.event_id,
     })
+}
+
+/// Compute the total step count for a capture given the volume mount
+/// count. Public so the API handler can pre-set total_steps when it
+/// knows the count, and the integration tests can verify the math.
+pub fn capture_total_steps(volume_count: u32) -> u32 {
+    CAPTURE_STEPS_BEFORE_VOLUMES + volume_count + CAPTURE_STEPS_AFTER_VOLUMES
 }
 
 /// Derive a volume's display name from its container path. Mirrors
@@ -312,6 +397,31 @@ mod tests {
         assert_eq!(derive_volume_name(""), "data");
         // A path with only a trailing separator has no basename.
         assert_eq!(derive_volume_name("/"), "data");
+    }
+
+    #[test]
+    fn capture_total_steps_for_singleton_offering() {
+        // mongodb with one data volume + no external mounts:
+        // 4 (commit, save, hash, list) + 1 (archive volume) +
+        // 4 (manifest digest, BackupTaken event, save manifest,
+        // truncate log) = 9 steps.
+        assert_eq!(capture_total_steps(1), 9);
+    }
+
+    #[test]
+    fn capture_total_steps_for_zero_volumes_offering() {
+        // Stateless offering with no mounts (uncommon but possible):
+        // 4 + 0 + 4 = 8 steps. Still positive so the seed-chip
+        // fills smoothly even in this degenerate case.
+        assert_eq!(capture_total_steps(0), 8);
+    }
+
+    #[test]
+    fn capture_total_steps_scales_linearly_with_volume_count() {
+        // 3 volumes + 2 external mounts (a richly-mounted offering):
+        // 4 + 5 + 4 = 13 steps.
+        assert_eq!(capture_total_steps(5), 13);
+        assert_eq!(capture_total_steps(10), 18);
     }
 }
 

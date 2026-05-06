@@ -242,6 +242,23 @@ impl Jobs {
         .await;
     }
 
+    /// Convenience over [`Self::record_step`] that no-ops when `id`
+    /// is `None`. Used by operation flows (capture, plant) that may
+    /// or may not be running under a tracked job — passing `None`
+    /// from a unit test or pre-job context does the right thing.
+    pub async fn record_step_opt(
+        &self,
+        id: Option<&str>,
+        offering: &str,
+        step: u32,
+        total: u32,
+        message: &str,
+    ) {
+        if let Some(id) = id {
+            self.record_step(id, offering, step, total, message).await;
+        }
+    }
+
     /// Record a per-step progress tick on a single-operation job.
     ///
     /// Updates `current_step` / `total_steps` / `last_message` on the

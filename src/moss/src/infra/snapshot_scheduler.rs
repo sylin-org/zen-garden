@@ -144,7 +144,7 @@ async fn maybe_capture(
 
     let store = LocalSnapshotStore::new(local_snapshot_root(&fqn));
     let actor = EventActor::system(state.current.stone.name.clone());
-    crate::infra::snapshot::capture_snapshot(state, &fqn, &store, &log, actor)
+    crate::infra::snapshot::capture_snapshot(state, &fqn, &store, &log, actor, None)
         .await
         .map(|_| ())
 }

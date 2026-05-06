@@ -67,6 +67,20 @@ pub enum DigestDrift {
     Unknown,
 }
 
+/// Total step count for `plant_from_local_snapshot`. Fixed (no
+/// variable per-volume axis at this level — volume restoration
+/// happens in a single bulk `apply_volumes_with_staging` call).
+///
+/// Steps:
+/// 1. Loading snapshot manifest (+ digest drift + compiled lookup)
+/// 2. Stopping existing container (no-op-but-counted when absent)
+/// 3. Loading image into Docker
+/// 4. Restoring volumes
+/// 5. Recreating container
+/// 6. Waiting for health
+/// 7. Recording RestoreApplied event
+pub const PLANT_TOTAL_STEPS: u32 = 7;
+
 /// Plant a snapshot already present in `store` onto this stone
 /// as `target_fqn`. The snapshot's `source_fqn` may differ from
 /// `target_fqn` — that's the "fork" case where the user is
@@ -78,7 +92,21 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
     snapshot_id: &str,
     log: &EventLog,
     actor: EventActor,
+    job_id: Option<&str>,
 ) -> Result<PlantedSnapshot> {
+    let target_name = target_fqn.fqn();
+
+    // Step 1 — load manifest + drift check + compiled lookup.
+    state
+        .jobs
+        .record_step_opt(
+            job_id,
+            &target_name,
+            1,
+            PLANT_TOTAL_STEPS,
+            "loading snapshot manifest",
+        )
+        .await;
     let manifest = store
         .load_manifest(snapshot_id)
         .await
@@ -100,8 +128,6 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
         );
     }
 
-    // Resolve the target's compiled offering for volume mappings
-    // and the eventual container spec.
     let compiled = state
         .catalog
         .get_compiled(&target_fqn.fqn())
@@ -113,10 +139,20 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
             )
         })?;
 
-    // Stop + remove any existing container for the target FQN.
-    // The staging restore handles per-volume atomic swaps so
-    // we don't need to worry about racing the removal.
-    let target_name = target_fqn.fqn();
+    // Step 2 — stop + remove existing container if present. Counted
+    // even when no container exists, so the seed-chip's progress is
+    // monotonic regardless of whether this is a first-time plant
+    // (no existing container) or a restore-in-place.
+    state
+        .jobs
+        .record_step_opt(
+            job_id,
+            &target_name,
+            2,
+            PLANT_TOTAL_STEPS,
+            "stopping existing container",
+        )
+        .await;
     if state
         .platform
         .container
@@ -140,7 +176,17 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
             .context("remove existing container before plant")?;
     }
 
-    // Load the snapshot's image tarball into Docker.
+    // Step 3 — load image into Docker.
+    state
+        .jobs
+        .record_step_opt(
+            job_id,
+            &target_name,
+            3,
+            PLANT_TOTAL_STEPS,
+            "loading image into Docker",
+        )
+        .await;
     let image_path = store.image_path(snapshot_id);
     state
         .platform
@@ -149,10 +195,17 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
         .await
         .with_context(|| format!("load snapshot image {}", image_path.display()))?;
 
-    // Build volume restore plans: map every snapshot volume +
-    // external mount to a live host path. Volumes resolve via
-    // the compiled manifest's volume table; external mounts
-    // restore to their captured host_path verbatim.
+    // Step 4 — restore volumes via the staging path.
+    state
+        .jobs
+        .record_step_opt(
+            job_id,
+            &target_name,
+            4,
+            PLANT_TOTAL_STEPS,
+            "restoring volumes",
+        )
+        .await;
     let plans = build_volume_restore_plans(&manifest, &compiled.volumes, store, snapshot_id);
 
     if !plans.is_empty() {
@@ -161,7 +214,17 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
             .context("apply volumes with staging during plant")?;
     }
 
-    // Recreate the container with the offering's compiled spec.
+    // Step 5 — recreate container.
+    state
+        .jobs
+        .record_step_opt(
+            job_id,
+            &target_name,
+            5,
+            PLANT_TOTAL_STEPS,
+            "recreating container",
+        )
+        .await;
     let spec = compiled_to_container_spec(&compiled);
     state
         .platform
@@ -170,8 +233,17 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
         .await
         .context("install container after plant")?;
 
-    // Wait for the container to come back healthy. Use the
-    // same default timeout the Water phase of nourish uses.
+    // Step 6 — wait for health.
+    state
+        .jobs
+        .record_step_opt(
+            job_id,
+            &target_name,
+            6,
+            PLANT_TOTAL_STEPS,
+            "waiting for container health",
+        )
+        .await;
     let healthy = state
         .health
         .wait_until_healthy(&target_name, Duration::from_secs(120))
@@ -186,8 +258,18 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
         );
     }
 
-    // 8. Append RestoreApplied event so peers (when M3 lands)
+    // Step 7 — append RestoreApplied event so peers (when M3 lands)
     // can detect this instance jumped forward.
+    state
+        .jobs
+        .record_step_opt(
+            job_id,
+            &target_name,
+            7,
+            PLANT_TOTAL_STEPS,
+            "recording RestoreApplied event",
+        )
+        .await;
     let mut details = serde_json::Map::new();
     details.insert(
         "from_snapshot_id".into(),
@@ -602,4 +684,15 @@ mod tests {
     // by hand here would couple this test to the catalog
     // schema's evolution. Coverage lives at the integration
     // level instead — the plant flow round-trips through it.
+
+    #[test]
+    fn plant_total_steps_is_seven() {
+        // Pin the constant so accidentally adding/removing a step
+        // shows up as a test failure. If you change PLANT_TOTAL_STEPS,
+        // update this assertion AND the per-step record_step_opt
+        // calls in plant_from_local_snapshot AND any consumer that
+        // pre-allocates step capacity (e.g. Pavilion's seed-chip
+        // computing percent = step / total).
+        assert_eq!(PLANT_TOTAL_STEPS, 7);
+    }
 }

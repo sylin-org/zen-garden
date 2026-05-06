@@ -138,6 +138,19 @@ try {
     Pop-Location
 }
 
+# ─── Force tauri-build re-run (asset embedding) ───────────────
+#
+# `tauri::generate_context!()` embeds frontend/dist contents into the
+# binary at compile time via a cache file written by tauri-build in
+# OUT_DIR. Cargo's `rerun-if-changed=frontend/dist` directive in
+# build.rs SHOULD pick up dist changes, but it's been observed to miss
+# the edge case where dist was empty/partial on a prior run and got
+# fully (re-)populated by the npm build above. Touching build.rs
+# guarantees cargo re-runs the build script — which rewrites the OUT_DIR
+# asset cache, which forces the macro to re-expand on the next compile.
+$BuildRs = Join-Path $PavilionDir "build.rs"
+if (Test-Path $BuildRs) { (Get-Item $BuildRs).LastWriteTime = Get-Date }
+
 # ─── Rust release build ───────────────────────────────────────
 
 Push-Location $RepoRoot

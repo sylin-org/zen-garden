@@ -35,6 +35,7 @@ use crate::Moss;
 use crate::docker::ContainerSpec;
 use crate::domain::offering_events::{EventActor, EventKind, EventLog, new_event};
 use crate::domain::snapshot::{SnapshotManifest, SnapshotStore, sha256_bytes};
+use crate::infra::cross_stone::{self, CrossStoneError};
 use crate::infra::harvest::{VolumeRestorePlan, apply_volumes_with_staging};
 
 /// Outcome of [`plant_from_local_snapshot`] — surfaced to the
@@ -224,6 +225,176 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
         target_fqn: target_fqn.fqn(),
         digest_drift,
     })
+}
+
+/// Fetch every artifact of a snapshot from a remote stone and
+/// write them into the target [`SnapshotStore`] at the same
+/// paths the local capture would produce. Used by P2 (cross-
+/// stone plant): the caller resolves the source stone +
+/// source FQN, constructs a local staging store, and calls
+/// this to materialise the snapshot before invoking
+/// [`plant_from_local_snapshot`].
+///
+/// `source_fqn` is required because the snapshot lives in a
+/// per-FQN catalog on the source stone; the source-side URL
+/// includes it as a path segment. In practice the caller
+/// always knows the source FQN — it's the FQN the user clicked
+/// in the catalog or dragged on the canvas.
+///
+/// Sequential fetch: manifest first, then image, then volumes,
+/// then external mounts. M2 ships the simpler shape; future
+/// commits may parallelise per-file fetches for multi-GB
+/// snapshots over fast LANs.
+pub async fn fetch_snapshot_from_stone<S: SnapshotStore + ?Sized>(
+    state: &Moss,
+    source_stone: &str,
+    source_fqn: &OfferingFqn,
+    snapshot_id: &str,
+    store: &S,
+) -> Result<SnapshotManifest> {
+    let endpoint = cross_stone::resolve_stone_endpoint(state, source_stone)
+        .await
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "source stone '{source_stone}' not in topology cache; can't fetch snapshot"
+            )
+        })?;
+    let client = streaming_client()?;
+
+    let manifest_path = format!(
+        "/api/v1/stone/offerings/{}/snapshots/{}",
+        urlencoding::encode(&source_fqn.fqn()),
+        urlencoding::encode(snapshot_id)
+    );
+    let manifest: SnapshotManifest = cross_stone::fetch_from_stone(
+        &client,
+        &endpoint,
+        source_stone,
+        &manifest_path,
+    )
+    .await
+    .map_err(|e: CrossStoneError| anyhow::anyhow!(e.to_string()))?;
+
+    // Persist the manifest first so a partial download leaves a
+    // visible (but incomplete) snapshot the user can clean up
+    // explicitly. Subsequent steps fill in the artifacts.
+    store
+        .save_manifest(&manifest)
+        .await
+        .context("save fetched snapshot manifest")?;
+
+    // Image.
+    fetch_artifact(
+        &client,
+        &endpoint,
+        source_stone,
+        source_fqn,
+        snapshot_id,
+        "image",
+        "image.tar",
+        &store.image_path(snapshot_id),
+    )
+    .await
+    .context("fetch snapshot image")?;
+
+    // Volumes.
+    for vol in &manifest.volumes {
+        fetch_artifact(
+            &client,
+            &endpoint,
+            source_stone,
+            source_fqn,
+            snapshot_id,
+            "volume",
+            &vol.name,
+            &store.volume_path(snapshot_id, &vol.name),
+        )
+        .await
+        .with_context(|| format!("fetch snapshot volume {}", vol.name))?;
+    }
+
+    // External mounts. The `kind=external_mount` endpoint
+    // expects the *encoded* host path; the local store
+    // computes the same encoding when it constructs
+    // `external_mount_path`, so the round-trip is consistent.
+    for em in &manifest.external_mounts {
+        let encoded =
+            crate::domain::snapshot::LocalSnapshotStore::encoded_external_mount_for(&em.host_path);
+        fetch_artifact(
+            &client,
+            &endpoint,
+            source_stone,
+            source_fqn,
+            snapshot_id,
+            "external_mount",
+            &encoded,
+            &store.external_mount_path(snapshot_id, &em.host_path),
+        )
+        .await
+        .with_context(|| format!("fetch snapshot external mount {}", em.host_path))?;
+    }
+
+    Ok(manifest)
+}
+
+/// Stream one artifact from the source stone to a local file.
+async fn fetch_artifact(
+    client: &reqwest::Client,
+    endpoint: &str,
+    source_stone: &str,
+    source_fqn: &OfferingFqn,
+    snapshot_id: &str,
+    kind: &str,
+    artifact: &str,
+    dest: &std::path::Path,
+) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create snapshot artifact dir: {}", parent.display()))?;
+    }
+
+    let path = format!(
+        "/api/v1/stone/offerings/{}/snapshots/{}/files/{}/{}",
+        urlencoding::encode(&source_fqn.fqn()),
+        urlencoding::encode(snapshot_id),
+        urlencoding::encode(kind),
+        urlencoding::encode(artifact),
+    );
+    let response =
+        cross_stone::stream_from_stone(client, endpoint, source_stone, &path)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .with_context(|| format!("create artifact dest: {}", dest.display()))?;
+    let mut stream = response.bytes_stream();
+    use futures_util::StreamExt;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.with_context(|| format!("stream chunk for {kind}/{artifact}"))?;
+        file.write_all(&chunk)
+            .await
+            .with_context(|| format!("write artifact chunk: {}", dest.display()))?;
+    }
+    file.flush()
+        .await
+        .with_context(|| format!("flush artifact file: {}", dest.display()))?;
+    Ok(())
+}
+
+/// HTTP client for cross-stone artifact streaming. No overall
+/// timeout (snapshot files are large and may take many minutes
+/// over slow LANs); per-read timeouts on the underlying TCP
+/// stream are enforced by the OS. Pond mTLS upgrade is via
+/// `StoneClient` in the future — M2 uses plain HTTP plus
+/// trust-the-LAN, matching `mirror_capabilities`.
+fn streaming_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .build()
+        .context("build snapshot streaming HTTP client")
 }
 
 /// Pure builder: map a snapshot's volume + external-mount lists

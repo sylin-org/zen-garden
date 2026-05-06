@@ -302,6 +302,14 @@ impl LocalSnapshotStore {
     /// not reversible — callers needing the original host path
     /// read it from the manifest, not the filename.
     fn encoded_external_mount(host_path: &str) -> String {
+        Self::encoded_external_mount_for(host_path)
+    }
+
+    /// Public façade over the internal encoder so cross-stone
+    /// plant can compute the same URL-segment encoding the
+    /// store uses on the wire side. The returned string is a
+    /// single filesystem-safe path component (no separators).
+    pub fn encoded_external_mount_for(host_path: &str) -> String {
         let trimmed = host_path
             .trim_start_matches(|c: char| c == '/' || c == '\\')
             .replace('\\', "/");

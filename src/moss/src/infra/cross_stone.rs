@@ -153,6 +153,52 @@ pub async fn fetch_from_stone<T: DeserializeOwned>(
     classify_and_decode::<T>(response, stone_name).await
 }
 
+/// `GET <endpoint><path>`, returning the raw `reqwest::Response`
+/// for callers that want to stream the body directly (snapshot
+/// artifact downloads — image tars, volume archives — that
+/// would blow the heap if buffered).
+///
+/// Status checking is the same as [`fetch_from_stone`]: 404 →
+/// `NotFound`, other non-success → `HttpStatus`. The caller
+/// owns the response body from there.
+pub async fn stream_from_stone(
+    client: &Client,
+    endpoint: &str,
+    stone_name: &str,
+    path: &str,
+) -> Result<reqwest::Response, CrossStoneError> {
+    let url = format!("{}{}", endpoint.trim_end_matches('/'), path);
+    let response =
+        client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|source| CrossStoneError::Unreachable {
+                stone: stone_name.to_string(),
+                source,
+            })?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        let message = serde_json::from_str::<ApiErrorResponse>(&body)
+            .map(|err| err.error.message)
+            .unwrap_or(body);
+        return Err(if status == StatusCode::NOT_FOUND {
+            CrossStoneError::NotFound {
+                stone: stone_name.to_string(),
+                message,
+            }
+        } else {
+            CrossStoneError::HttpStatus {
+                stone: stone_name.to_string(),
+                status,
+                message,
+            }
+        });
+    }
+    Ok(response)
+}
+
 /// `POST <endpoint><path>` with a JSON-encoded `body`, decode the
 /// response as `ApiResponse<R>`, return the inner `R`.
 pub async fn post_to_stone<Q: Serialize, R: DeserializeOwned>(

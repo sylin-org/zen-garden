@@ -366,19 +366,28 @@ pub async fn delete_offering_snapshot_v1(
     })
 }
 
-/// Plant request body. `from_snapshot` is required (the source
-/// id); `as_fqn` defaults to the snapshot's recorded source FQN
-/// when omitted (the typical "restore in place" or "join the
-/// set on a different stone" gestures), or specifies a fork to
-/// a different FQN.
+/// Plant request body.
+///
+/// - `from_snapshot` (required): the snapshot id to plant from.
+/// - `from_stone` (optional): if set, fetch the snapshot from
+///   the named peer stone first, materialise it locally, then
+///   plant. Omitted = local snapshot store only.
+/// - `from_fqn` (optional): the source FQN — only meaningful
+///   with `from_stone`. Defaults to the URL FQN.
+/// - `as_fqn` (optional): override the planted offering's FQN.
+///   Defaults to the URL FQN. Used for "fork" — derive a new
+///   instance from existing seeded data.
+/// - `user` (optional): attribution for the RestoreApplied
+///   event.
 #[derive(Debug, Deserialize)]
 pub struct PlantSnapshotRequest {
     pub from_snapshot: String,
-    /// Override the planted offering's FQN. Defaults to the
-    /// snapshot's `source_fqn` when omitted.
+    #[serde(default)]
+    pub from_stone: Option<String>,
+    #[serde(default)]
+    pub from_fqn: Option<String>,
     #[serde(default)]
     pub as_fqn: Option<String>,
-    /// User attribution for the RestoreApplied event.
     #[serde(default)]
     pub user: Option<String>,
 }
@@ -427,30 +436,56 @@ pub async fn plant_offering_snapshot_v1(
         .as_deref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or(target_offering_name);
+        .unwrap_or(target_offering_name.clone());
     let target_fqn = parse_fqn(&target_fqn_string)?;
 
-    // Snapshot lives under the *snapshot's source FQN* directory;
-    // we don't know it without loading the manifest. The
-    // simplest M2 path: try every per-FQN snapshot directory
-    // under <data_dir>/snapshots looking for the id. In
-    // practice the user's caller knows the source FQN — for
-    // "restore in place" it's the same as target_fqn; for
-    // "fork" it must be supplied. We accept that constraint:
-    // M2 plant requires the snapshot to live under the
-    // target_fqn's catalog. Cross-FQN fork via the canvas
-    // arrives in M2.5 alongside the bank-seeding flow.
-    //
-    // Note that this constraint matches the drag-canvas UX:
-    // dragging a seed onto a stone implies the seed's source
-    // FQN as the default target, and the FQN-fork override
-    // creates a new target catalog entry.
-    let store = LocalSnapshotStore::new(local_snapshot_root(&target_fqn));
-    let log = EventLog::open(offering_event_log_path(&target_fqn));
     let actor = match request.user {
         Some(user) => EventActor::user(state.current.stone.name.clone(), user),
         None => EventActor::system(state.current.stone.name.clone()),
     };
+
+    // Resolve the snapshot location. Three cases:
+    //
+    //   1. from_stone is None → use the local catalog under the
+    //      target FQN. Snapshot must already exist locally.
+    //   2. from_stone is Some + from_fqn is Some → fetch from
+    //      that stone's catalog at the named source FQN, save
+    //      under the target FQN locally, then plant.
+    //   3. from_stone is Some + from_fqn is None → assume the
+    //      source FQN equals the URL FQN (the canvas's "drag
+    //      from this offering's seed catalog onto a stone"
+    //      pattern).
+    let store = LocalSnapshotStore::new(local_snapshot_root(&target_fqn));
+    let log = EventLog::open(offering_event_log_path(&target_fqn));
+
+    if let Some(source_stone) = request.from_stone.as_deref().filter(|s| !s.trim().is_empty())
+    {
+        let source_fqn_string = request
+            .from_fqn
+            .as_deref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(target_offering_name);
+        let source_fqn = parse_fqn(&source_fqn_string)?;
+        crate::infra::plant::fetch_snapshot_from_stone(
+            &state,
+            source_stone,
+            &source_fqn,
+            &request.from_snapshot,
+            &store,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                source_stone,
+                source_fqn = %source_fqn.fqn(),
+                snapshot_id = %request.from_snapshot,
+                error = %e,
+                "Cross-stone snapshot fetch failed"
+            );
+            internal("SNAPSHOT_FETCH_FAILED", e.to_string())
+        })?;
+    }
 
     let result = crate::infra::plant::plant_from_local_snapshot(
         &state,

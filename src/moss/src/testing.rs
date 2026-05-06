@@ -302,3 +302,11 @@ pub async fn build_test_router() -> Router {
     let state = build_test_state().await;
     router::configure(state)
 }
+
+/// Variant that takes a pre-built `Moss` so tests can drive the
+/// state directly (e.g. submit jobs, fire events) before issuing
+/// HTTP requests via the returned router. Both views share the
+/// same Arc-backed state.
+pub fn build_test_router_from(state: Moss) -> Router {
+    router::configure(state)
+}

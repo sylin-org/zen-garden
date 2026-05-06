@@ -559,3 +559,105 @@ async fn record_step_on_unknown_id_is_noop() {
     jobs.record_step("nope", "x", 1, 5, "ignored").await;
     assert!(jobs.get("nope").await.is_none());
 }
+
+#[tokio::test]
+async fn record_step_emits_jobevent_progress_with_step_total() {
+    // Pin the wire-format contract: record_step emits a
+    // JobEvent::Progress carrying step + total_steps so SSE
+    // consumers (Pavilion's useJobProgress) get the structured
+    // progress without an extra GET.
+    use crate::domain::events::{DomainEvent, JobEvent};
+    use tokio::time::{Duration, timeout};
+
+    let metrics = std::sync::Arc::new(crate::domain::Metrics::new());
+    let event_bus = crate::infra::EventBus::new();
+    let mut rx = event_bus.subscribe();
+    let state: std::sync::Arc<tokio::sync::RwLock<JobsState>> =
+        std::sync::Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+    let jobs = Jobs::with_shared_state(state, metrics, event_bus).await;
+
+    jobs.submit("j1".into(), "capture_snapshot", vec!["mongodb::prd".into()])
+        .await;
+    jobs.start("j1", "capture_snapshot", "mongodb::prd").await;
+
+    // Drain non-progress events that started fired.
+    while let Ok(Ok(ev)) = timeout(Duration::from_millis(50), rx.recv()).await {
+        if matches!(ev, DomainEvent::Job(JobEvent::Progress { .. })) {
+            // Unexpected — start() shouldn't fire Progress.
+            panic!("Progress fired before record_step");
+        }
+    }
+
+    jobs.record_step("j1", "mongodb::prd", 5, 9, "archiving /data/db")
+        .await;
+
+    // The next event should be a Progress carrying step=5, total=9.
+    loop {
+        let ev = timeout(Duration::from_millis(200), rx.recv())
+            .await
+            .expect("timed out waiting for Progress event")
+            .expect("event bus closed");
+        if let DomainEvent::Job(JobEvent::Progress {
+            step,
+            total_steps,
+            message,
+            job_id,
+            ..
+        }) = ev
+        {
+            assert_eq!(step, Some(5));
+            assert_eq!(total_steps, Some(9));
+            assert_eq!(message, "archiving /data/db");
+            assert_eq!(job_id, "j1");
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn record_step_with_total_zero_emits_step_only() {
+    // Pre-volume-listing capture steps emit total=0 because the
+    // count isn't computed yet. Verify the wire event reflects that
+    // (step is Some, total_steps is None) so consumers correctly
+    // render an indeterminate state rather than a 0% bar.
+    use crate::domain::events::{DomainEvent, JobEvent};
+    use tokio::time::{Duration, timeout};
+
+    let metrics = std::sync::Arc::new(crate::domain::Metrics::new());
+    let event_bus = crate::infra::EventBus::new();
+    let mut rx = event_bus.subscribe();
+    let state: std::sync::Arc<tokio::sync::RwLock<JobsState>> =
+        std::sync::Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+    let jobs = Jobs::with_shared_state(state, metrics, event_bus).await;
+
+    jobs.submit("j1".into(), "capture_snapshot", vec!["mongodb::prd".into()])
+        .await;
+    jobs.start("j1", "capture_snapshot", "mongodb::prd").await;
+
+    // Drain start.
+    while let Ok(Ok(ev)) = timeout(Duration::from_millis(50), rx.recv()).await {
+        if matches!(ev, DomainEvent::Job(JobEvent::Progress { .. })) {
+            panic!("unexpected Progress before record_step");
+        }
+    }
+
+    jobs.record_step("j1", "mongodb::prd", 1, 0, "committing container")
+        .await;
+
+    loop {
+        let ev = timeout(Duration::from_millis(200), rx.recv())
+            .await
+            .expect("timed out")
+            .expect("event bus closed");
+        if let DomainEvent::Job(JobEvent::Progress {
+            step,
+            total_steps,
+            ..
+        }) = ev
+        {
+            assert_eq!(step, Some(1));
+            assert!(total_steps.is_none(), "total=0 should map to None on the wire");
+            break;
+        }
+    }
+}

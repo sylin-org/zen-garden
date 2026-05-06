@@ -35,6 +35,36 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = $PSScriptRoot
+
+# Canonicalise through any Windows junctions / symlinks before
+# deriving sub-paths. If the user invokes the script via a
+# junction (e.g. `F:\Files\repo\...` → `F:\Replica\NAS\Files\repo\...`),
+# Node's `fs.realpathSync` — which Vite's [vite:build-html] plugin
+# transitively calls when resolving index.html — canonicalises to
+# the underlying real path. That diverges from `$PSScriptRoot`'s
+# junction-traversed view, so rollup ends up with one path used as
+# the build root and a different path as the asset's resolved
+# location. It then computes `path.relative(root, asset)` which
+# emits an asset name like `..\..\..\..\..\..\..\..\Replica\NAS\…\index.html`
+# — eight dotdots that rollup rejects with
+# `The "fileName" or "name" properties of emitted chunks and
+# assets must be strings that are neither absolute nor relative
+# paths`.
+#
+# Resolving here keeps every downstream tool (npm, vite, cargo,
+# Push-Location) on the same canonical path. Falls back to the
+# raw `$PSScriptRoot` if node is unavailable or the resolve fails
+# for any reason.
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+if ($null -ne $nodeCmd) {
+    try {
+        $resolved = & $nodeCmd.Source -e "process.stdout.write(require('fs').realpathSync(process.argv[1]))" $RepoRoot 2>$null
+        if ($LASTEXITCODE -eq 0 -and $resolved) {
+            $RepoRoot = $resolved.Trim()
+        }
+    } catch { }
+}
+
 $PavilionDir = Join-Path $RepoRoot "src\pavilion"
 $FrontendDir = Join-Path $PavilionDir "frontend"
 

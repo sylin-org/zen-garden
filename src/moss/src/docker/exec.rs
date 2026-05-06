@@ -223,6 +223,61 @@ impl ContainerRuntime {
         Ok(image_id)
     }
 
+    /// Save a Docker image to a tarball on disk via the Docker
+    /// daemon's `image export` endpoint.
+    ///
+    /// Used by snapshot capture (ORCH-0039) to bundle the offering's
+    /// committed image alongside its volumes. The output format is
+    /// the standard `docker save` tarball — `docker load -i <path>`
+    /// reverses it on the target stone.
+    ///
+    /// Streams the response chunk-by-chunk so memory stays bounded
+    /// for multi-GB images.
+    ///
+    /// # Arguments
+    /// * `image_ref` - Image reference (`repo:tag` or image id)
+    /// * `dest` - File path to write the tar to. Parent directory
+    ///   must already exist; the file is overwritten if present.
+    pub async fn save_image(
+        &self,
+        image_ref: &str,
+        dest: &std::path::Path,
+    ) -> Result<u64> {
+        use tokio::io::AsyncWriteExt;
+
+        tracing::info!(
+            image = %image_ref,
+            dest = %dest.display(),
+            "Saving Docker image to tarball"
+        );
+
+        let mut stream = self.docker.export_image(image_ref);
+        let mut file = tokio::fs::File::create(dest)
+            .await
+            .with_context(|| format!("create image tarball: {}", dest.display()))?;
+        let mut bytes_written: u64 = 0;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .with_context(|| format!("export_image stream chunk for {image_ref}"))?;
+            file.write_all(&chunk)
+                .await
+                .with_context(|| format!("write image tarball chunk: {}", dest.display()))?;
+            bytes_written += chunk.len() as u64;
+        }
+        file.flush()
+            .await
+            .with_context(|| format!("flush image tarball: {}", dest.display()))?;
+
+        tracing::info!(
+            image = %image_ref,
+            dest = %dest.display(),
+            bytes = bytes_written,
+            "Docker image saved"
+        );
+
+        Ok(bytes_written)
+    }
+
     /// Ensure a managed container's `/etc/resolv.conf` points at the correct
     /// DNS servers (bridge gateway -> systemd-resolved). Patches the file
     /// in-place via `docker exec` -- no container restart needed.

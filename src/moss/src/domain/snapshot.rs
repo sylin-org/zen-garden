@@ -187,6 +187,43 @@ pub fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+// ── Volume classification ──────────────────────────────────────
+
+/// How a captured volume should be categorised in the snapshot.
+/// The Docker `volumes` array on a CompiledOffering doesn't
+/// distinguish managed Docker volumes from arbitrary host bind
+/// mounts — both come back as `(host_path, container_path)`
+/// tuples. The distinction is computed from the host_path: if it
+/// lives under the platform's `volumes_dir()` for *this* offering,
+/// it's a managed volume; otherwise it's an external mount and
+/// must be packed under the offering author's declared host
+/// path so plant can restore it to the same place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolumeClass {
+    /// Docker-managed named volume — host_path lives under
+    /// `<volumes_dir>/<offering_encoded>/`.
+    Managed,
+    /// External mount — host_path is anywhere else, including
+    /// user data directories declared in the offering manifest.
+    External,
+}
+
+/// Classify a captured volume by comparing its `host_path` to
+/// the per-offering managed-volumes root. Pure function, no I/O.
+///
+/// `host_path` and `managed_root` should both be in the same
+/// path style (the platform's native form). The check is a
+/// path-prefix comparison: any volume whose host_path starts
+/// with the managed root is Managed; everything else is
+/// External.
+pub fn classify_volume(host_path: &Path, managed_root: &Path) -> VolumeClass {
+    if host_path.starts_with(managed_root) {
+        VolumeClass::Managed
+    } else {
+        VolumeClass::External
+    }
+}
+
 // ── Storage adapter ─────────────────────────────────────────────
 
 /// Operations a snapshot store provides. Both the local-disk
@@ -541,6 +578,55 @@ mod tests {
         assert!(
             json.contains("\"transport\":\"docker_save\""),
             "image transport must serialize as snake_case: {json}"
+        );
+    }
+
+    #[test]
+    fn classify_volume_distinguishes_managed_from_external() {
+        // The managed root is `<volumes_dir>/<encoded_offering>`,
+        // e.g. on Linux `/var/lib/zen-garden/volumes/mongodb--prd`.
+        let managed_root = std::path::PathBuf::from("/var/lib/zen-garden/volumes/mongodb--prd");
+
+        // Host path under the managed root → Managed.
+        let inside = std::path::PathBuf::from("/var/lib/zen-garden/volumes/mongodb--prd/data");
+        assert_eq!(
+            classify_volume(&inside, &managed_root),
+            VolumeClass::Managed
+        );
+
+        // The managed root itself counts as Managed.
+        assert_eq!(
+            classify_volume(&managed_root, &managed_root),
+            VolumeClass::Managed
+        );
+
+        // Sibling FQN's volumes directory is External (different
+        // offering instance — must be packed as a foreign mount).
+        let sibling = std::path::PathBuf::from("/var/lib/zen-garden/volumes/mongodb--staging/data");
+        assert_eq!(
+            classify_volume(&sibling, &managed_root),
+            VolumeClass::External
+        );
+
+        // User-data directory anywhere else is External.
+        let user_data = std::path::PathBuf::from("/var/data/photos");
+        assert_eq!(
+            classify_volume(&user_data, &managed_root),
+            VolumeClass::External
+        );
+
+        // Subtle prefix match: a path that starts with the same
+        // characters but is NOT under the managed root must
+        // classify as External. `starts_with` on Path operates
+        // on path components, not raw bytes — so
+        // `/var/lib/zen-garden/volumes/mongodb--prd-staging` is
+        // NOT a child of `/var/lib/zen-garden/volumes/mongodb--prd`.
+        let look_alike =
+            std::path::PathBuf::from("/var/lib/zen-garden/volumes/mongodb--prd-staging/data");
+        assert_eq!(
+            classify_volume(&look_alike, &managed_root),
+            VolumeClass::External,
+            "Path::starts_with must respect component boundaries"
         );
     }
 }

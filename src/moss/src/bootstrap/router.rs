@@ -557,6 +557,10 @@ pub fn configure(state: Moss) -> Router {
             delete(api::v1::offering_capabilities::remove_offering_capability_v1),
         )
         .route(
+            "/api/v1/stone/offerings/{name}/snapshots",
+            post(api::v1::offering_snapshots::capture_offering_snapshot_v1),
+        )
+        .route(
             "/api/v1/stone/offerings/{offering}/adopt",
             post(api::v1::adoption::adopt_offering_v1),
         )

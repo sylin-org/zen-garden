@@ -48,6 +48,7 @@ pub mod secrets;
 pub mod service;
 #[cfg(target_os = "windows")]
 pub mod shell_integration;
+pub mod snapshot;
 pub mod stone_client;
 pub mod storage;
 pub mod task_store;

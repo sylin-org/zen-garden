@@ -302,6 +302,14 @@ pub fn configure_public(state: Moss) -> Router {
         // ══════════════════════════════════════════════════════════════════
         .route("/api/v1/jobs", get(api::v1::jobs::list_jobs))
         .route("/api/v1/jobs/{job_id}", get(api::v1::jobs::get_job_status))
+        // Per-job SSE progress stream (Item 2). First event is
+        // `job.snapshot` with the current Job state; subsequent
+        // events stream live progress and the stream auto-closes
+        // on the terminal event.
+        .route(
+            "/api/v1/jobs/{job_id}/stream",
+            get(api::v1::jobs::stream_job),
+        )
         .route(
             "/api/v1/manifest",
             get(api::v1::manifest::get_api_manifest_v1),
@@ -1066,10 +1074,19 @@ pub fn configure(state: Moss) -> Router {
         )
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/jobs - Job tracking
-        // Note: Event streaming consolidated to /api/v1/stone/presence/stream
+        //
+        // Per-job SSE stream is at /jobs/{id}/stream — filtered view
+        // of the unified pulse channel for a single job, with a
+        // snapshot first frame so reconnects survive in-progress
+        // events. The global presence stream at
+        // /api/v1/stone/presence/stream still carries every event.
         // ══════════════════════════════════════════════════════════════════
         .route("/api/v1/jobs", get(api::v1::jobs::list_jobs))
         .route("/api/v1/jobs/{job_id}", get(api::v1::jobs::get_job_status))
+        .route(
+            "/api/v1/jobs/{job_id}/stream",
+            get(api::v1::jobs::stream_job),
+        )
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/helpers/* - Internal utility endpoints
         // ══════════════════════════════════════════════════════════════════

@@ -105,12 +105,34 @@ impl SnapshotTarget {
     }
 }
 
-/// Successful capture response. Surfaces the snapshot's id and
-/// the event_id of the `BackupTaken` event so callers can
-/// correlate (e.g. Pavilion's drag-canvas marks the seed
-/// "forming" then "complete" using these).
+/// Initial capture response — returned synchronously when the POST
+/// is accepted. The caller subscribes to
+/// `GET /api/v1/jobs/{job_id}/stream` (or polls
+/// `GET /api/v1/jobs/{job_id}`) to track progress and read the final
+/// `CapturedSnapshotResult` once the job reaches `Completed`.
+///
+/// Per ORCH-0039 Item 2 §"async API surface": capture is now an
+/// async submission rather than a synchronous call. The handler
+/// returns this shape immediately and a tokio task runs the actual
+/// capture, emitting per-step JobEvents and storing the final
+/// `CapturedSnapshotResult` on the job's `result` field on
+/// completion.
 #[derive(Debug, Serialize)]
 pub struct CaptureSnapshotResponse {
+    /// Job id to subscribe to for progress.
+    pub job_id: String,
+    /// Operation name — `"capture_snapshot"`. Lets clients dispatch on
+    /// shape when they receive job events without keeping a separate
+    /// id→operation map.
+    pub operation: &'static str,
+}
+
+/// Final capture result — stored as the Job's `result` field on
+/// completion. SSE consumers see this in the `job.snapshot` frame
+/// once the job is `Completed`; HTTP GET on `/jobs/{id}` returns it
+/// as part of the Job shape.
+#[derive(Debug, Serialize)]
+pub struct CapturedSnapshotResult {
     pub snapshot_id: String,
     pub event_id: String,
     pub source_fqn: String,
@@ -133,6 +155,11 @@ pub async fn capture_offering_snapshot_v1(
     Path(offering_name): Path<String>,
     body: Option<Json<CaptureSnapshotRequest>>,
 ) -> crate::api::ApiResult<CaptureSnapshotResponse> {
+    // ── Synchronous validation ───────────────────────────────────
+    // Anything that should produce a 4xx (invalid input) or 404
+    // (missing bank) runs before we submit the job, so the API
+    // returns a sync error rather than an async-failed job for bad
+    // requests.
     let fqn = OfferingFqn::parse(&offering_name).map_err(|e| {
         bad_request(
             "INVALID_OFFERING_NAME",
@@ -168,36 +195,92 @@ pub async fn capture_offering_snapshot_v1(
             mount.join("snapshots").join(fqn.encoded_for_container())
         }
     };
-    let store = LocalSnapshotStore::new(snapshot_root);
-    let log_path = offering_event_log_path(&fqn);
-    let log = EventLog::open(log_path);
 
-    let actor = match request.user {
+    let actor = match request.user.clone() {
         Some(user) => EventActor::user(state.current.stone.name.clone(), user),
         None => EventActor::system(state.current.stone.name.clone()),
     };
 
-    let result = crate::infra::snapshot::capture_snapshot(
-        &state, &fqn, &store, &log, actor, None,
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(
-            offering = %offering_name,
-            error = %e,
-            "Snapshot capture failed"
-        );
-        internal("SNAPSHOT_CAPTURE_FAILED", e.to_string())
-    })?;
+    // ── Submit job + spawn worker ────────────────────────────────
+    let job_id = garden_common::utils::ids::generate_guidv7();
+    let fqn_string = fqn.fqn();
+
+    state
+        .jobs
+        .submit(job_id.clone(), "capture_snapshot", vec![fqn_string.clone()])
+        .await;
+    state
+        .jobs
+        .start(&job_id, "capture_snapshot", &fqn_string)
+        .await;
+
+    // Clone everything the spawned task needs to outlive this handler.
+    let state_for_task = state.clone();
+    let job_id_for_task = job_id.clone();
+    let fqn_for_task = fqn.clone();
+    let log_path = offering_event_log_path(&fqn);
+
+    tokio::spawn(async move {
+        let store = LocalSnapshotStore::new(snapshot_root);
+        let log = EventLog::open(log_path);
+        let fqn_string = fqn_for_task.fqn();
+
+        match crate::infra::snapshot::capture_snapshot(
+            &state_for_task,
+            &fqn_for_task,
+            &store,
+            &log,
+            actor,
+            Some(&job_id_for_task),
+        )
+        .await
+        {
+            Ok(captured) => {
+                let result = CapturedSnapshotResult {
+                    snapshot_id: captured.manifest.id.clone(),
+                    event_id: captured.event_id.clone(),
+                    source_fqn: captured.manifest.source_fqn.clone(),
+                    source_stone: captured.manifest.source_stone.clone(),
+                    size_total_bytes: captured.manifest.size_total_bytes,
+                    volumes: captured.manifest.volumes.len(),
+                    external_mounts: captured.manifest.external_mounts.len(),
+                };
+                let result_json = serde_json::to_value(&result).unwrap_or_else(|e| {
+                    tracing::error!(error = %e, "serialise capture result");
+                    serde_json::json!({})
+                });
+                state_for_task
+                    .jobs
+                    .complete_with_result(&job_id_for_task, &fqn_string, result_json)
+                    .await;
+                tracing::info!(
+                    job_id = %job_id_for_task,
+                    snapshot_id = %captured.manifest.id,
+                    "capture_snapshot job completed"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    job_id = %job_id_for_task,
+                    offering = %fqn_string,
+                    error = %e,
+                    "capture_snapshot job failed"
+                );
+                state_for_task
+                    .jobs
+                    .fail(
+                        &job_id_for_task,
+                        &fqn_string,
+                        Some((fqn_string.clone(), format!("{e:#}"))),
+                    )
+                    .await;
+            }
+        }
+    });
 
     crate::api::ok(CaptureSnapshotResponse {
-        snapshot_id: result.manifest.id,
-        event_id: result.event_id,
-        source_fqn: result.manifest.source_fqn,
-        source_stone: result.manifest.source_stone,
-        size_total_bytes: result.manifest.size_total_bytes,
-        volumes: result.manifest.volumes.len(),
-        external_mounts: result.manifest.external_mounts.len(),
+        job_id,
+        operation: "capture_snapshot",
     })
 }
 
@@ -394,11 +477,22 @@ pub struct PlantSnapshotRequest {
     pub user: Option<String>,
 }
 
-/// Plant response: the snapshot id we read from, the event id
-/// recorded on the target, the resolved target FQN, and the
-/// digest-drift status.
+/// Initial plant response. Mirrors `CaptureSnapshotResponse`: the
+/// handler returns this synchronously when the POST is accepted, the
+/// final `PlantedSnapshotResult` is delivered via the job's `result`
+/// once the spawned task reaches `Completed`.
 #[derive(Debug, Serialize)]
 pub struct PlantSnapshotResponse {
+    pub job_id: String,
+    pub operation: &'static str,
+}
+
+/// Final plant result — stored on the Job's `result` field. Same
+/// shape as the previous synchronous response so consumers can
+/// decode it identically off the SSE terminal frame or off
+/// `GET /api/v1/jobs/{id}`.
+#[derive(Debug, Serialize)]
+pub struct PlantedSnapshotResult {
     pub snapshot_id: String,
     pub event_id: String,
     pub source_fqn: String,
@@ -426,6 +520,7 @@ pub async fn plant_offering_snapshot_v1(
     Path(target_offering_name): Path<String>,
     Json(request): Json<PlantSnapshotRequest>,
 ) -> ApiResult<PlantSnapshotResponse> {
+    // ── Synchronous validation ───────────────────────────────────
     if request.from_snapshot.trim().is_empty() {
         return Err(bad_request(
             "MISSING_SNAPSHOT_ID",
@@ -441,80 +536,145 @@ pub async fn plant_offering_snapshot_v1(
         .unwrap_or(target_offering_name.clone());
     let target_fqn = parse_fqn(&target_fqn_string)?;
 
-    let actor = match request.user {
+    let actor = match request.user.clone() {
         Some(user) => EventActor::user(state.current.stone.name.clone(), user),
         None => EventActor::system(state.current.stone.name.clone()),
     };
 
-    // Resolve the snapshot location. Three cases:
-    //
-    //   1. from_stone is None → use the local catalog under the
-    //      target FQN. Snapshot must already exist locally.
-    //   2. from_stone is Some + from_fqn is Some → fetch from
-    //      that stone's catalog at the named source FQN, save
-    //      under the target FQN locally, then plant.
-    //   3. from_stone is Some + from_fqn is None → assume the
-    //      source FQN equals the URL FQN (the canvas's "drag
-    //      from this offering's seed catalog onto a stone"
-    //      pattern).
-    let store = LocalSnapshotStore::new(local_snapshot_root(&target_fqn));
-    let log = EventLog::open(offering_event_log_path(&target_fqn));
-
-    if let Some(source_stone) = request.from_stone.as_deref().filter(|s| !s.trim().is_empty())
-    {
+    // Resolve `from_stone` / `from_fqn` early so a mistyped source
+    // FQN returns a 4xx synchronously rather than failing the job
+    // asynchronously.
+    let from_stone_opt = request
+        .from_stone
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(String::from);
+    let from_fqn_opt = if from_stone_opt.is_some() {
         let source_fqn_string = request
             .from_fqn
             .as_deref()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or(target_offering_name);
-        let source_fqn = parse_fqn(&source_fqn_string)?;
-        crate::infra::plant::fetch_snapshot_from_stone(
-            &state,
-            source_stone,
-            &source_fqn,
-            &request.from_snapshot,
+        Some(parse_fqn(&source_fqn_string)?)
+    } else {
+        None
+    };
+
+    // ── Submit job + spawn worker ────────────────────────────────
+    let job_id = garden_common::utils::ids::generate_guidv7();
+    let target_fqn_str = target_fqn.fqn();
+
+    state
+        .jobs
+        .submit(job_id.clone(), "plant_snapshot", vec![target_fqn_str.clone()])
+        .await;
+    state
+        .jobs
+        .start(&job_id, "plant_snapshot", &target_fqn_str)
+        .await;
+
+    let state_for_task = state.clone();
+    let job_id_for_task = job_id.clone();
+    let target_fqn_for_task = target_fqn.clone();
+    let from_snapshot = request.from_snapshot.clone();
+    let snapshot_root_for_task = local_snapshot_root(&target_fqn);
+    let log_path_for_task = offering_event_log_path(&target_fqn);
+
+    tokio::spawn(async move {
+        let store = LocalSnapshotStore::new(snapshot_root_for_task);
+        let log = EventLog::open(log_path_for_task);
+        let target_fqn_str = target_fqn_for_task.fqn();
+
+        // Cross-stone fetch (commit P2 path) — runs inside the job's
+        // task so any fetch failure surfaces as a job failure rather
+        // than a sync 5xx.
+        if let (Some(source_stone), Some(source_fqn)) = (from_stone_opt, from_fqn_opt) {
+            if let Err(e) = crate::infra::plant::fetch_snapshot_from_stone(
+                &state_for_task,
+                &source_stone,
+                &source_fqn,
+                &from_snapshot,
+                &store,
+            )
+            .await
+            {
+                tracing::error!(
+                    job_id = %job_id_for_task,
+                    source_stone,
+                    source_fqn = %source_fqn.fqn(),
+                    snapshot_id = %from_snapshot,
+                    error = %e,
+                    "Cross-stone snapshot fetch failed"
+                );
+                state_for_task
+                    .jobs
+                    .fail(
+                        &job_id_for_task,
+                        &target_fqn_str,
+                        Some((target_fqn_str.clone(), format!("fetch from {source_stone}: {e:#}"))),
+                    )
+                    .await;
+                return;
+            }
+        }
+
+        match crate::infra::plant::plant_from_local_snapshot(
+            &state_for_task,
+            &target_fqn_for_task,
             &store,
+            &from_snapshot,
+            &log,
+            actor,
+            Some(&job_id_for_task),
         )
         .await
-        .map_err(|e| {
-            tracing::error!(
-                source_stone,
-                source_fqn = %source_fqn.fqn(),
-                snapshot_id = %request.from_snapshot,
-                error = %e,
-                "Cross-stone snapshot fetch failed"
-            );
-            internal("SNAPSHOT_FETCH_FAILED", e.to_string())
-        })?;
-    }
-
-    let result = crate::infra::plant::plant_from_local_snapshot(
-        &state,
-        &target_fqn,
-        &store,
-        &request.from_snapshot,
-        &log,
-        actor,
-        None,
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(
-            target_fqn = %target_fqn.fqn(),
-            snapshot_id = %request.from_snapshot,
-            error = %e,
-            "Plant failed"
-        );
-        internal("PLANT_FAILED", e.to_string())
-    })?;
+        {
+            Ok(planted) => {
+                let result = PlantedSnapshotResult {
+                    snapshot_id: planted.snapshot_id.clone(),
+                    event_id: planted.event_id.clone(),
+                    source_fqn: planted.source_fqn.clone(),
+                    target_fqn: planted.target_fqn.clone(),
+                    digest_drift: format!("{:?}", planted.digest_drift).to_lowercase(),
+                };
+                let result_json = serde_json::to_value(&result).unwrap_or_else(|e| {
+                    tracing::error!(error = %e, "serialise plant result");
+                    serde_json::json!({})
+                });
+                state_for_task
+                    .jobs
+                    .complete_with_result(&job_id_for_task, &target_fqn_str, result_json)
+                    .await;
+                tracing::info!(
+                    job_id = %job_id_for_task,
+                    snapshot_id = %planted.snapshot_id,
+                    target_fqn = %planted.target_fqn,
+                    "plant_snapshot job completed"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    job_id = %job_id_for_task,
+                    target_fqn = %target_fqn_str,
+                    error = %e,
+                    "plant_snapshot job failed"
+                );
+                state_for_task
+                    .jobs
+                    .fail(
+                        &job_id_for_task,
+                        &target_fqn_str,
+                        Some((target_fqn_str.clone(), format!("{e:#}"))),
+                    )
+                    .await;
+            }
+        }
+    });
 
     crate::api::ok(PlantSnapshotResponse {
-        snapshot_id: result.snapshot_id,
-        event_id: result.event_id,
-        source_fqn: result.source_fqn,
-        target_fqn: result.target_fqn,
-        digest_drift: format!("{:?}", result.digest_drift).to_lowercase(),
+        job_id,
+        operation: "plant_snapshot",
     })
 }
 

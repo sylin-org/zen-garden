@@ -366,6 +366,120 @@ pub async fn delete_offering_snapshot_v1(
     })
 }
 
+/// Plant request body. `from_snapshot` is required (the source
+/// id); `as_fqn` defaults to the snapshot's recorded source FQN
+/// when omitted (the typical "restore in place" or "join the
+/// set on a different stone" gestures), or specifies a fork to
+/// a different FQN.
+#[derive(Debug, Deserialize)]
+pub struct PlantSnapshotRequest {
+    pub from_snapshot: String,
+    /// Override the planted offering's FQN. Defaults to the
+    /// snapshot's `source_fqn` when omitted.
+    #[serde(default)]
+    pub as_fqn: Option<String>,
+    /// User attribution for the RestoreApplied event.
+    #[serde(default)]
+    pub user: Option<String>,
+}
+
+/// Plant response: the snapshot id we read from, the event id
+/// recorded on the target, the resolved target FQN, and the
+/// digest-drift status.
+#[derive(Debug, Serialize)]
+pub struct PlantSnapshotResponse {
+    pub snapshot_id: String,
+    pub event_id: String,
+    pub source_fqn: String,
+    pub target_fqn: String,
+    pub digest_drift: String,
+}
+
+/// `POST /api/v1/stone/offerings/{name}/plant`
+///
+/// Plant a local snapshot onto this stone as `name`. M2 reads
+/// snapshots from the local catalog under
+/// `<data_dir>/snapshots/<encoded_fqn>/`; cross-stone fetch
+/// (commit P2) extends this by downloading the snapshot from a
+/// remote stone first, then taking the same plant path.
+///
+/// `name` in the URL is the **target** FQN — the FQN this stone
+/// runs after the plant completes. The snapshot's recorded
+/// `source_fqn` may match (restore in place) or differ (fork or
+/// cross-FQN seed). When the body's `as_fqn` is set, the URL
+/// FQN is ignored in favour of `as_fqn` — useful when the
+/// caller wants a single endpoint shape regardless of fork
+/// intent.
+pub async fn plant_offering_snapshot_v1(
+    State(state): State<Moss>,
+    Path(target_offering_name): Path<String>,
+    Json(request): Json<PlantSnapshotRequest>,
+) -> ApiResult<PlantSnapshotResponse> {
+    if request.from_snapshot.trim().is_empty() {
+        return Err(bad_request(
+            "MISSING_SNAPSHOT_ID",
+            "from_snapshot is required",
+        ));
+    }
+
+    let target_fqn_string = request
+        .as_fqn
+        .as_deref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(target_offering_name);
+    let target_fqn = parse_fqn(&target_fqn_string)?;
+
+    // Snapshot lives under the *snapshot's source FQN* directory;
+    // we don't know it without loading the manifest. The
+    // simplest M2 path: try every per-FQN snapshot directory
+    // under <data_dir>/snapshots looking for the id. In
+    // practice the user's caller knows the source FQN — for
+    // "restore in place" it's the same as target_fqn; for
+    // "fork" it must be supplied. We accept that constraint:
+    // M2 plant requires the snapshot to live under the
+    // target_fqn's catalog. Cross-FQN fork via the canvas
+    // arrives in M2.5 alongside the bank-seeding flow.
+    //
+    // Note that this constraint matches the drag-canvas UX:
+    // dragging a seed onto a stone implies the seed's source
+    // FQN as the default target, and the FQN-fork override
+    // creates a new target catalog entry.
+    let store = LocalSnapshotStore::new(local_snapshot_root(&target_fqn));
+    let log = EventLog::open(offering_event_log_path(&target_fqn));
+    let actor = match request.user {
+        Some(user) => EventActor::user(state.current.stone.name.clone(), user),
+        None => EventActor::system(state.current.stone.name.clone()),
+    };
+
+    let result = crate::infra::plant::plant_from_local_snapshot(
+        &state,
+        &target_fqn,
+        &store,
+        &request.from_snapshot,
+        &log,
+        actor,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            target_fqn = %target_fqn.fqn(),
+            snapshot_id = %request.from_snapshot,
+            error = %e,
+            "Plant failed"
+        );
+        internal("PLANT_FAILED", e.to_string())
+    })?;
+
+    crate::api::ok(PlantSnapshotResponse {
+        snapshot_id: result.snapshot_id,
+        event_id: result.event_id,
+        source_fqn: result.source_fqn,
+        target_fqn: result.target_fqn,
+        digest_drift: format!("{:?}", result.digest_drift).to_lowercase(),
+    })
+}
+
 /// Catalog response for `GET /offerings/{name}/snapshots`.
 #[derive(Debug, Serialize)]
 pub struct ListSnapshotsResponse {

@@ -571,6 +571,10 @@ pub fn configure(state: Moss) -> Router {
             get(api::v1::offering_snapshots::get_offering_snapshot_artifact_v1),
         )
         .route(
+            "/api/v1/stone/offerings/{name}/plant",
+            post(api::v1::offering_snapshots::plant_offering_snapshot_v1),
+        )
+        .route(
             "/api/v1/stone/offerings/{offering}/adopt",
             post(api::v1::adoption::adopt_offering_v1),
         )

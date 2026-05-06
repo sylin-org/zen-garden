@@ -1,0 +1,434 @@
+//! Plant from snapshot — applies a captured [`SnapshotManifest`]
+//! to the local stone, recreating the offering's container with
+//! the captured image, volumes, and external mounts.
+//!
+//! ORCH-0039 §"Plant" specifies the flow:
+//! 1. Resolve the snapshot (local or, in commit P2, cross-stone)
+//! 2. Validate the manifest digest against the offering's
+//!    current compiled manifest. Drift warns; doesn't refuse.
+//! 3. Stop + remove existing container if any (preserve volumes
+//!    so the staging restore can swap them atomically).
+//! 4. Load the captured image into the local Docker daemon.
+//! 5. Restore volumes + external mounts via
+//!    [`apply_volumes_with_staging`] (atomic per-volume, with
+//!    rollback on failure).
+//! 6. Recreate the container from the offering's compiled
+//!    manifest using the existing
+//!    [`ContainerRuntime::install_service`] path.
+//! 7. Wait for health via [`Health::wait_until_healthy`].
+//! 8. Append `RestoreApplied` to the per-offering event log.
+//!
+//! Local-snapshot only in M2. Cross-stone fetch (commit P2)
+//! adds a download step ahead of (3) that materialises a remote
+//! snapshot into a local staging store; the rest of the flow
+//! is identical.
+//!
+//! [ORCH-0039]: ../../../../docs/decisions/ORCH-0039-seed-based-offering-replication.md
+
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use garden_common::offerings::OfferingFqn;
+
+use crate::Moss;
+use crate::docker::ContainerSpec;
+use crate::domain::offering_events::{EventActor, EventKind, EventLog, new_event};
+use crate::domain::snapshot::{SnapshotManifest, SnapshotStore, sha256_bytes};
+use crate::infra::harvest::{VolumeRestorePlan, apply_volumes_with_staging};
+
+/// Outcome of [`plant_from_local_snapshot`] — surfaced to the
+/// HTTP handler so it can echo the relevant ids back to the
+/// client.
+#[derive(Debug, Clone)]
+pub struct PlantedSnapshot {
+    pub snapshot_id: String,
+    pub event_id: String,
+    pub source_fqn: String,
+    pub target_fqn: String,
+    pub digest_drift: DigestDrift,
+}
+
+/// Compares the snapshot's `manifest_digest` to the target
+/// offering's current compiled-manifest digest. M2 default
+/// policy: warn on drift, proceed with restore.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DigestDrift {
+    /// Both digests match — manifest hasn't changed since
+    /// capture.
+    Match,
+    /// Digests differ. Caller logged a warning; the restore
+    /// proceeds because the user asked for it.
+    Drift,
+    /// Target offering has no compiled manifest in the catalog
+    /// (e.g. Adopted offerings). Drift cannot be evaluated; the
+    /// restore proceeds by default.
+    Unknown,
+}
+
+/// Plant a snapshot already present in `store` onto this stone
+/// as `target_fqn`. The snapshot's `source_fqn` may differ from
+/// `target_fqn` — that's the "fork" case where the user is
+/// deriving a new instance from existing seeded data.
+pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
+    state: &Moss,
+    target_fqn: &OfferingFqn,
+    store: &S,
+    snapshot_id: &str,
+    log: &EventLog,
+    actor: EventActor,
+) -> Result<PlantedSnapshot> {
+    let manifest = store
+        .load_manifest(snapshot_id)
+        .await
+        .with_context(|| format!("load snapshot manifest {snapshot_id}"))?;
+
+    tracing::info!(
+        snapshot_id,
+        source_fqn = %manifest.source_fqn,
+        target_fqn = %target_fqn.fqn(),
+        "Starting plant from local snapshot"
+    );
+
+    let digest_drift = check_digest_drift(state, target_fqn, &manifest).await;
+    if digest_drift == DigestDrift::Drift {
+        tracing::warn!(
+            snapshot_id,
+            target_fqn = %target_fqn.fqn(),
+            "Manifest digest drift between snapshot capture and current target offering — proceeding with restore"
+        );
+    }
+
+    // Resolve the target's compiled offering for volume mappings
+    // and the eventual container spec.
+    let compiled = state
+        .catalog
+        .get_compiled(&target_fqn.fqn())
+        .await
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "target offering '{}' has no compiled manifest in catalog — plant requires a known offering shape",
+                target_fqn.fqn()
+            )
+        })?;
+
+    // Stop + remove any existing container for the target FQN.
+    // The staging restore handles per-volume atomic swaps so
+    // we don't need to worry about racing the removal.
+    let target_name = target_fqn.fqn();
+    if state
+        .platform
+        .container
+        .zen_container_exists(&target_name)
+        .await
+        .unwrap_or(false)
+    {
+        // stop is idempotent (no-op when already stopped); the
+        // remove uses v: false so volumes survive — they'll be
+        // swapped atomically below.
+        let _ = state
+            .platform
+            .container
+            .stop_service(&target_name, Some(&state.console))
+            .await;
+        state
+            .platform
+            .container
+            .remove_service(&target_name, Some(&state.console))
+            .await
+            .context("remove existing container before plant")?;
+    }
+
+    // Load the snapshot's image tarball into Docker.
+    let image_path = store.image_path(snapshot_id);
+    state
+        .platform
+        .container
+        .load_image(&image_path)
+        .await
+        .with_context(|| format!("load snapshot image {}", image_path.display()))?;
+
+    // Build volume restore plans: map every snapshot volume +
+    // external mount to a live host path. Volumes resolve via
+    // the compiled manifest's volume table; external mounts
+    // restore to their captured host_path verbatim.
+    let plans = build_volume_restore_plans(&manifest, &compiled.volumes, store, snapshot_id);
+
+    if !plans.is_empty() {
+        apply_volumes_with_staging(&plans, snapshot_id)
+            .await
+            .context("apply volumes with staging during plant")?;
+    }
+
+    // Recreate the container with the offering's compiled spec.
+    let spec = compiled_to_container_spec(&compiled);
+    state
+        .platform
+        .container
+        .install_service(&target_name, &spec, Some(&state.console))
+        .await
+        .context("install container after plant")?;
+
+    // Wait for the container to come back healthy. Use the
+    // same default timeout the Water phase of nourish uses.
+    let healthy = state
+        .health
+        .wait_until_healthy(&target_name, Duration::from_secs(120))
+        .await;
+    if !healthy {
+        // Soft error — the plant did what it could; the
+        // operator may want to inspect. We still record the
+        // event so the chain is honest about what was applied.
+        tracing::warn!(
+            target_fqn = %target_name,
+            "Container did not reach healthy state within 120 s after plant"
+        );
+    }
+
+    // 8. Append RestoreApplied event so peers (when M3 lands)
+    // can detect this instance jumped forward.
+    let mut details = serde_json::Map::new();
+    details.insert(
+        "from_snapshot_id".into(),
+        serde_json::Value::String(snapshot_id.to_string()),
+    );
+    details.insert(
+        "source_fqn".into(),
+        serde_json::Value::String(manifest.source_fqn.clone()),
+    );
+    details.insert(
+        "digest_drift".into(),
+        serde_json::Value::String(format!("{digest_drift:?}").to_lowercase()),
+    );
+    details.insert(
+        "healthy_after_plant".into(),
+        serde_json::Value::Bool(healthy),
+    );
+    let event = new_event(
+        log,
+        target_fqn.fqn(),
+        EventKind::RestoreApplied,
+        actor,
+        details,
+    )
+    .await
+    .context("build RestoreApplied event")?;
+    log.append(&event)
+        .await
+        .context("append RestoreApplied event")?;
+
+    Ok(PlantedSnapshot {
+        snapshot_id: snapshot_id.to_string(),
+        event_id: event.event_id,
+        source_fqn: manifest.source_fqn,
+        target_fqn: target_fqn.fqn(),
+        digest_drift,
+    })
+}
+
+/// Pure builder: map a snapshot's volume + external-mount lists
+/// to filesystem-rooted [`VolumeRestorePlan`]s.
+///
+/// - Each snapshot volume needs the compiled manifest's
+///   `(host_path, container_path)` table to resolve where its
+///   data should land. A volume in the snapshot whose
+///   container_path doesn't appear in the compiled volumes is
+///   skipped with a warning — the offering shape changed
+///   between capture and plant such that this mount is gone.
+/// - Each snapshot external mount restores to its captured
+///   `host_path` directly (the snapshot manifest is the
+///   authoritative source for external-mount placement —
+///   restoring elsewhere would defeat the entire purpose).
+pub fn build_volume_restore_plans<S: SnapshotStore + ?Sized>(
+    manifest: &SnapshotManifest,
+    compiled_volumes: &[(String, String)],
+    store: &S,
+    snapshot_id: &str,
+) -> Vec<VolumeRestorePlan> {
+    let mut plans = Vec::with_capacity(manifest.volumes.len() + manifest.external_mounts.len());
+
+    for vol in &manifest.volumes {
+        let live = compiled_volumes
+            .iter()
+            .find(|(_, cp)| *cp == vol.container_path)
+            .map(|(host, _)| host.clone());
+        let Some(live_host) = live else {
+            tracing::warn!(
+                volume = %vol.name,
+                container_path = %vol.container_path,
+                "Snapshot volume not present in target offering's compiled volumes — skipping"
+            );
+            continue;
+        };
+        plans.push(VolumeRestorePlan {
+            name: vol.name.clone(),
+            archive_path: store.volume_path(snapshot_id, &vol.name),
+            live_path: PathBuf::from(live_host),
+        });
+    }
+
+    for em in &manifest.external_mounts {
+        plans.push(VolumeRestorePlan {
+            name: format!("ext:{}", em.host_path),
+            archive_path: store.external_mount_path(snapshot_id, &em.host_path),
+            live_path: PathBuf::from(&em.host_path),
+        });
+    }
+
+    plans
+}
+
+/// Compare the snapshot's recorded manifest digest to the
+/// target offering's current compiled-manifest digest.
+async fn check_digest_drift(
+    state: &Moss,
+    target_fqn: &OfferingFqn,
+    snapshot: &SnapshotManifest,
+) -> DigestDrift {
+    let Some(compiled) = state.catalog.get_compiled(&target_fqn.fqn()).await else {
+        return DigestDrift::Unknown;
+    };
+    let current_digest = match serde_json::to_vec(&compiled) {
+        Ok(bytes) => sha256_bytes(&bytes),
+        Err(_) => return DigestDrift::Unknown,
+    };
+    if current_digest == snapshot.manifest_digest {
+        DigestDrift::Match
+    } else {
+        DigestDrift::Drift
+    }
+}
+
+/// Build a [`ContainerSpec`] from a [`CompiledOffering`]. Mirrors
+/// the field-by-field copy that the existing nourish + install
+/// flows do at their own boundaries; centralised here so plant
+/// doesn't need to depend on the (image-direct) resolver path.
+fn compiled_to_container_spec(
+    compiled: &crate::domain::catalog::entry::CompiledOffering,
+) -> ContainerSpec {
+    // Ports: ContainerSpec expects `Vec<(host, container)>`;
+    // CompiledOffering keys ports by name. We only carry the
+    // tuples — `install_service` resolves names internally
+    // when remediating port conflicts.
+    let mut ports: Vec<(u16, u16)> = compiled.ports.values().copied().collect();
+    // Stable order so the diff against running containers is
+    // deterministic — install_service uses the order to drive
+    // port-conflict resolution and we want reproducible
+    // remappings.
+    ports.sort_by_key(|p| p.1);
+
+    ContainerSpec {
+        image: compiled.image.clone(),
+        command: compiled.command.clone(),
+        ports,
+        environment: compiled.environment.clone(),
+        volumes: compiled.volumes.clone(),
+        config_files: compiled.config_files.clone(),
+        device_requests: compiled.device_requests.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Coverage for the pure helpers. Plant's full Docker-
+    //! dependent orchestration is exercised in
+    //! tests/plant_integration.rs (added when the harvest
+    //! integration suite lands).
+    use super::*;
+    use crate::domain::snapshot::{
+        ImageTransport, LocalSnapshotStore, SnapshotExternalMount, SnapshotImage, SnapshotVolume,
+    };
+    use chrono::Utc;
+    use tempfile::TempDir;
+
+    fn make_manifest() -> SnapshotManifest {
+        SnapshotManifest {
+            id: "snap-1".into(),
+            source_fqn: "mongodb::prd".into(),
+            source_stone: "stone-alpha".into(),
+            source_event_id: "evt-1".into(),
+            created_at: Utc::now(),
+            manifest_digest: "deadbeef".into(),
+            image: SnapshotImage {
+                ref_string: "zen-harvest/mongodb--prd:t1".into(),
+                transport: ImageTransport::DockerSave,
+                size_bytes: 100,
+                sha512: "img".into(),
+            },
+            volumes: vec![SnapshotVolume {
+                name: "data".into(),
+                container_path: "/data/db".into(),
+                size_bytes: 50,
+                sha512: "v".into(),
+            }],
+            external_mounts: vec![SnapshotExternalMount {
+                host_path: "/var/data/photos".into(),
+                container_path: "/photos".into(),
+                size_bytes: 200,
+                sha512: "em".into(),
+            }],
+            size_total_bytes: 350,
+        }
+    }
+
+    #[test]
+    fn build_plans_maps_snapshot_volumes_to_compiled_host_paths() {
+        let dir = TempDir::new().unwrap();
+        let store = LocalSnapshotStore::new(dir.path().to_path_buf());
+        let manifest = make_manifest();
+        // Compiled volumes table: container_path → host_path.
+        let compiled = vec![
+            ("/var/lib/zen-garden/volumes/mongodb--prd/db".into(), "/data/db".into()),
+        ];
+        let plans = build_volume_restore_plans(&manifest, &compiled, &store, "snap-1");
+
+        // 1 volume + 1 external mount = 2 plans.
+        assert_eq!(plans.len(), 2);
+        // Volume goes to the compiled host_path.
+        assert_eq!(plans[0].name, "data");
+        assert_eq!(
+            plans[0].live_path,
+            PathBuf::from("/var/lib/zen-garden/volumes/mongodb--prd/db")
+        );
+        // External mount goes to the captured host_path.
+        assert_eq!(plans[1].name, "ext:/var/data/photos");
+        assert_eq!(plans[1].live_path, PathBuf::from("/var/data/photos"));
+    }
+
+    #[test]
+    fn build_plans_skips_volume_when_compiled_no_longer_declares_it() {
+        // Snapshot has a volume at container_path /data/db, but
+        // the target offering's manifest has changed and no
+        // longer mentions /data/db. The plan-builder must skip
+        // (with a warning logged elsewhere) rather than try to
+        // restore into a guessed path.
+        let dir = TempDir::new().unwrap();
+        let store = LocalSnapshotStore::new(dir.path().to_path_buf());
+        let manifest = make_manifest();
+        let compiled = vec![
+            // Different container_path — doesn't match snapshot.
+            ("/var/x/foo".into(), "/different/path".into()),
+        ];
+        let plans = build_volume_restore_plans(&manifest, &compiled, &store, "snap-1");
+        // Volume skipped, external mount kept.
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].name, "ext:/var/data/photos");
+    }
+
+    #[test]
+    fn build_plans_with_no_volumes_or_mounts_returns_empty() {
+        let dir = TempDir::new().unwrap();
+        let store = LocalSnapshotStore::new(dir.path().to_path_buf());
+        let mut manifest = make_manifest();
+        manifest.volumes.clear();
+        manifest.external_mounts.clear();
+        let plans = build_volume_restore_plans(&manifest, &[], &store, "snap-1");
+        assert!(plans.is_empty());
+    }
+
+    // `compiled_to_container_spec` is a 5-line field copy. The
+    // CompiledOffering type isn't Default and constructing one
+    // by hand here would couple this test to the catalog
+    // schema's evolution. Coverage lives at the integration
+    // level instead — the plant flow round-trips through it.
+}

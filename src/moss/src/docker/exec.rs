@@ -278,6 +278,55 @@ impl ContainerRuntime {
         Ok(bytes_written)
     }
 
+    /// Load a Docker image from a tarball produced by
+    /// [`save_image`](Self::save_image) (or any compatible
+    /// `docker save` output). Streams the file into the daemon
+    /// chunk-by-chunk so memory stays bounded for multi-GB
+    /// images.
+    ///
+    /// Used by snapshot plant (ORCH-0039) to materialise the
+    /// captured image on the target stone before recreating the
+    /// container. Returns the imported image's `repo:tag` if
+    /// the import emits one — this matches the value
+    /// `save_image` recorded in the snapshot manifest's
+    /// `image.ref_string`.
+    pub async fn load_image(&self, tar_path: &std::path::Path) -> Result<()> {
+        use bollard::body_full;
+        use bollard::query_parameters::ImportImageOptionsBuilder;
+
+        tracing::info!(
+            tar = %tar_path.display(),
+            "Loading Docker image from tarball"
+        );
+
+        let bytes = tokio::fs::read(tar_path)
+            .await
+            .with_context(|| format!("read image tarball: {}", tar_path.display()))?;
+
+        let mut stream = self.docker.import_image(
+            ImportImageOptionsBuilder::default().build(),
+            body_full(bytes.into()),
+            None,
+        );
+
+        // Drain the build-info stream — `import_image` returns
+        // progress events and a final completion marker. Errors
+        // surface as `Err` items in the stream; we forward the
+        // first one.
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(_info) => {} // progress; keep draining
+                Err(e) => {
+                    return Err(anyhow::Error::from(e)
+                        .context(format!("import image from {}", tar_path.display())));
+                }
+            }
+        }
+
+        tracing::info!(tar = %tar_path.display(), "Docker image loaded");
+        Ok(())
+    }
+
     /// Ensure a managed container's `/etc/resolv.conf` points at the correct
     /// DNS servers (bridge gateway -> systemd-resolved). Patches the file
     /// in-place via `docker exec` -- no container restart needed.

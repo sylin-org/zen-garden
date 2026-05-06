@@ -484,6 +484,68 @@ pub async fn plant_snapshot(
     Ok(parsed.data)
 }
 
+/// One seed entry returned by `list_seeds_in_bank`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BankSeedEntry {
+    pub snapshot_id: String,
+    pub source_fqn: String,
+    pub source_stone: String,
+    pub source_event_id: String,
+    pub created_at: String,
+    pub size_total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BankSeedsResult {
+    pub bank: String,
+    pub count: usize,
+    pub seeds: Vec<BankSeedEntry>,
+}
+
+/// List every seed living in `bank_name` across all FQNs that
+/// have ever captured into it. The frontend uses this to render
+/// draggable seed chips on the bank's detail card.
+#[tauri::command]
+pub async fn list_seeds_in_bank(
+    bank_name: String,
+    tending: State<'_, Arc<Tending>>,
+) -> Result<BankSeedsResult, String> {
+    // The bank-snapshots endpoint lives on each stone — we query
+    // the tended stone since that's the one the user is operating
+    // through. A stone that doesn't hold the bank's volume locally
+    // returns 404; we surface that as an empty list so the canvas
+    // can still render something useful.
+    let Some(tended) = tending.current().await else {
+        return Err("no stone tended".to_string());
+    };
+    let client = connection::raw_client_for_capture();
+    let url = format!(
+        "{}/api/v1/stone/banks/{}/seeds",
+        tended.endpoint.trim_end_matches('/'),
+        encode_uri_segment(&bank_name)
+    );
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("seeds GET {url}: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(BankSeedsResult {
+            bank: bank_name,
+            count: 0,
+            seeds: Vec::new(),
+        });
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("seeds {status}: {text}"));
+    }
+    let parsed: ApiEnvelope<BankSeedsResult> =
+        resp.json().await.map_err(|e| format!("seeds parse: {e}"))?;
+    Ok(parsed.data)
+}
+
 /// Plant response. Mirrors the server-side
 /// `PlantSnapshotResponse` shape so the typed Tauri call returns
 /// usable data without schema drift.

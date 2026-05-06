@@ -44,6 +44,7 @@ pub fn run() {
             commands::show_main_window,
             commands::capture_snapshot,
             commands::plant_snapshot,
+            commands::list_seeds_in_bank,
             crate::ceremony::ceremony_step,
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

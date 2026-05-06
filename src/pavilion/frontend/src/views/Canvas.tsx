@@ -71,6 +71,39 @@ interface DragOfferingPayload {
   display_name: string
 }
 
+interface DragSeedPayload {
+  kind: "seed"
+  snapshot_id: string
+  source_fqn: string
+  source_stone: string
+  bank_name: string
+}
+
+type DragPayload = DragOfferingPayload | DragSeedPayload
+
+interface BankSeedEntry {
+  snapshot_id: string
+  source_fqn: string
+  source_stone: string
+  source_event_id: string
+  created_at: string
+  size_total_bytes: number
+}
+
+interface BankSeedsResult {
+  bank: string
+  count: number
+  seeds: BankSeedEntry[]
+}
+
+interface PlantSnapshotResult {
+  snapshot_id: string
+  event_id: string
+  source_fqn: string
+  target_fqn: string
+  digest_drift: string
+}
+
 const DRAG_MIME = "application/zen-garden+json"
 
 interface CanvasProps {
@@ -106,6 +139,12 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
   /// tended one). Populates the offering chips on the stone card
   /// that the drag layer renders.
   const [selectedServices, setSelectedServices] = useState<ServiceLite[]>([])
+
+  /// Seeds living in the *currently selected bank*. Fetched lazily
+  /// when a bank becomes the selected node. Bank-scoped seed
+  /// catalogs let the bank card render draggable seed chips that
+  /// drop onto stones to plant.
+  const [selectedSeeds, setSelectedSeeds] = useState<BankSeedEntry[]>([])
 
   /// Drag state — which bank node the cursor is currently over so
   /// the sphere can highlight it as a valid drop target. Set on
@@ -295,7 +334,58 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
     }
   }, [selectedId, selectedKind, tended, stones])
 
+  /// Fetch seeds when the user selects a bank — populates the
+  /// draggable chips on the bank's detail card. Reset to empty
+  /// when the selection moves away.
+  useEffect(() => {
+    if (selectedKind !== "bank" || !selectedId) {
+      setSelectedSeeds([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const result = await invoke<BankSeedsResult>("list_seeds_in_bank", {
+          bankName: selectedId,
+        })
+        if (!cancelled) {
+          setSelectedSeeds(result.seeds)
+          // Update the bank node's seed-count chip to reflect
+          // the catalog the user is now looking at.
+          sphereRef.current?.setSeedCount(selectedId, result.count)
+        }
+      } catch (e) {
+        console.error("list_seeds_in_bank failed:", e)
+        if (!cancelled) setSelectedSeeds([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedId, selectedKind])
+
   // ── Drag-drop handlers on the canvas mount ────────────────────
+  /// Pick the valid drop target for a given drag payload by
+  /// reading the sphere's currently-hovered node + kind. Returns
+  /// `null` when the drop wouldn't be valid (wrong kind under
+  /// cursor, or nothing under cursor).
+  const validDropTargetFor = useCallback(
+    (payload: DragPayload): { kind: "stone" | "bank"; id: string } | null => {
+      if (!hovered || !hoveredKind) return null
+      if (payload.kind === "offering" && hoveredKind === "bank") {
+        return { kind: "bank", id: hovered }
+      }
+      if (payload.kind === "seed" && hoveredKind === "stone") {
+        // Find the stone object so we can resolve its name (the
+        // sphere's hovered id is stone_id; plant takes
+        // stone_name).
+        return { kind: "stone", id: hovered }
+      }
+      return null
+    },
+    [hovered, hoveredKind],
+  )
+
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
       // Only consume drag events that carry our payload — leaves
@@ -304,15 +394,15 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
       e.preventDefault()
       e.dataTransfer.dropEffect = "copy"
 
-      // Raycast to identify which bank node (if any) is under the
-      // cursor. The sphere's hover machinery already updated
-      // `hovered`/`hoveredKind` on pointermove; we read those
-      // directly. Drag events fire less frequently than pointer
-      // events, but the cursor position should still update.
-      const isBank = hoveredKind === "bank"
-      setDragOver(isBank ? hovered : null)
+      // Pavilion can't read the dataTransfer on dragover (only
+      // dragstart and drop expose it on most browsers). Use the
+      // sphere's hovered slot as the drop-target indicator —
+      // the inset glow on the canvas mount lights up as long as
+      // *something* is under the cursor; the drop handler
+      // validates the kind pairing.
+      setDragOver(hovered)
     },
-    [hovered, hoveredKind],
+    [hovered],
   )
 
   const handleDragLeave = useCallback(() => {
@@ -325,56 +415,98 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
       setDragOver(null)
       if (!raw) return
       e.preventDefault()
-      let payload: DragOfferingPayload
+      let payload: DragPayload
       try {
-        payload = JSON.parse(raw) as DragOfferingPayload
+        payload = JSON.parse(raw) as DragPayload
       } catch {
         return
       }
-      if (payload.kind !== "offering") return
 
-      // The drop must land on a bank for the offering→bank pairing.
-      const isBank = hoveredKind === "bank"
-      if (!isBank || !hovered) return
-      const bankName = hovered
+      const target = validDropTargetFor(payload)
+      if (!target) return
 
-      // Optimistic forming state — appears as a chip on the bank
-      // card immediately, replaced on success/failure.
-      const formingId = `${payload.source_stone}::${payload.fqn}->${bankName}`
-      setForming((prev) => ({
-        ...prev,
-        [formingId]: { fqn: payload.fqn, bankName },
-      }))
-
-      try {
-        const result = await invoke<CaptureSnapshotResult>("capture_snapshot", {
-          stone: payload.source_stone,
-          fqn: payload.fqn,
-          target: `bank:${bankName}`,
-        })
-        setLastCapture(result)
-        // Bump the bank's seed-count chip optimistically so the
-        // user sees the immediate result of their drag.
-        const sphere = sphereRef.current
-        if (sphere) {
-          const bank = banks.find((b) => b.name === bankName)
-          if (bank) {
-            sphere.setSeedCount(bankName, 1) // first seed; refined when seed catalog is wired
-            void bank
+      // Dispatch on the (source-kind, target-kind) pair per the
+      // ORCH-0039 resolution table.
+      if (payload.kind === "offering" && target.kind === "bank") {
+        const bankName = target.id
+        const formingId = `${payload.source_stone}::${payload.fqn}->${bankName}`
+        setForming((prev) => ({
+          ...prev,
+          [formingId]: { fqn: payload.fqn, bankName },
+        }))
+        try {
+          const result = await invoke<CaptureSnapshotResult>("capture_snapshot", {
+            stone: payload.source_stone,
+            fqn: payload.fqn,
+            target: `bank:${bankName}`,
+          })
+          setLastCapture(result)
+          // Refresh the bank's seed catalog so the chip count
+          // reflects the new arrival.
+          try {
+            const updated = await invoke<BankSeedsResult>("list_seeds_in_bank", {
+              bankName,
+            })
+            sphereRef.current?.setSeedCount(bankName, updated.count)
+            if (selectedKind === "bank" && selectedId === bankName) {
+              setSelectedSeeds(updated.seeds)
+            }
+          } catch {
+            // Catalog refresh failure is cosmetic; the capture
+            // succeeded and the next selection will resync.
           }
+        } catch (err) {
+          setError(`Backup failed: ${String(err)}`)
+        } finally {
+          setForming((prev) => {
+            const next = { ...prev }
+            delete next[formingId]
+            return next
+          })
         }
-      } catch (err) {
-        setError(`Backup failed: ${String(err)}`)
-      } finally {
-        setForming((prev) => {
-          const next = { ...prev }
-          delete next[formingId]
-          return next
-        })
+        return
+      }
+
+      if (payload.kind === "seed" && target.kind === "stone") {
+        // Stones in awareness are keyed by stone_id; plant takes
+        // stone_name. Look up the stone object to resolve.
+        const stone = stones.find((s) => s.stone_id === target.id)
+        if (!stone) return
+        const formingId = `${payload.snapshot_id}->${stone.stone_name}`
+        setForming((prev) => ({
+          ...prev,
+          [formingId]: {
+            fqn: payload.source_fqn,
+            bankName: payload.bank_name,
+          },
+        }))
+        try {
+          const result = await invoke<PlantSnapshotResult>("plant_snapshot", {
+            targetStone: stone.stone_name,
+            targetFqn: payload.source_fqn,
+            fromSnapshot: payload.snapshot_id,
+            fromStone: payload.source_stone,
+            fromFqn: payload.source_fqn,
+          })
+          setLastCapture(null)
+          setError(null)
+          setLastPlant(result)
+        } catch (err) {
+          setError(`Plant failed: ${String(err)}`)
+        } finally {
+          setForming((prev) => {
+            const next = { ...prev }
+            delete next[formingId]
+            return next
+          })
+        }
+        return
       }
     },
-    [hovered, hoveredKind, banks],
+    [validDropTargetFor, stones, selectedKind, selectedId],
   )
+
+  const [lastPlant, setLastPlant] = useState<PlantSnapshotResult | null>(null)
 
   // Push the drag-target highlight into the sphere's hovered slot
   // so the existing hover-glow CSS path applies. Without this the
@@ -468,6 +600,7 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
           <CanvasBankCard
             bank={selectedBank}
             position={tracked.selected.pos}
+            seeds={selectedSeeds}
             onDismiss={() => {
               sphereRef.current?.resetView()
               setSelectedId(null)
@@ -495,6 +628,15 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
         <CanvasToast
           message={`Snapshot captured: ${lastCapture.source_fqn} (${formatBytesShort(lastCapture.size_total_bytes)})`}
           onDismiss={() => setLastCapture(null)}
+        />
+      )}
+
+      {lastPlant && (
+        <CanvasToast
+          message={`Planted ${lastPlant.target_fqn}${
+            lastPlant.digest_drift === "drift" ? " (manifest drift)" : ""
+          }`}
+          onDismiss={() => setLastPlant(null)}
         />
       )}
 
@@ -655,12 +797,14 @@ function OfferingChip({ stoneName, service }: OfferingChipProps): JSX.Element {
 interface CanvasBankCardProps {
   bank: GardenBankSummary
   position: { x: number; y: number }
+  seeds: BankSeedEntry[]
   onDismiss: () => void
 }
 
 function CanvasBankCard({
   bank,
   position,
+  seeds,
   onDismiss,
 }: CanvasBankCardProps): JSX.Element {
   return (
@@ -698,6 +842,59 @@ function CanvasBankCard({
           <dd>{bank.roles.length === 0 ? "—" : bank.roles.join(" · ")}</dd>
         </div>
       </dl>
+
+      {seeds.length > 0 && (
+        <section className="canvas-card-seeds">
+          <div className="canvas-card-section-title">
+            Drag a seed to a stone to plant
+          </div>
+          <div className="canvas-card-seed-list">
+            {seeds.map((seed) => (
+              <SeedChip key={seed.snapshot_id} seed={seed} bankName={bank.name} />
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  )
+}
+
+interface SeedChipProps {
+  seed: BankSeedEntry
+  bankName: string
+}
+
+function SeedChip({ seed, bankName }: SeedChipProps): JSX.Element {
+  const onDragStart = (e: React.DragEvent) => {
+    const payload: DragSeedPayload = {
+      kind: "seed",
+      snapshot_id: seed.snapshot_id,
+      source_fqn: seed.source_fqn,
+      source_stone: seed.source_stone,
+      bank_name: bankName,
+    }
+    e.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload))
+    e.dataTransfer.effectAllowed = "copy"
+  }
+  return (
+    <div
+      className="seed seed-draggable"
+      draggable
+      onDragStart={onDragStart}
+      title={`Drag to a stone to plant ${seed.source_fqn} (${formatBytesShort(
+        seed.size_total_bytes,
+      )})`}
+    >
+      <span className="seed-glyph" aria-hidden>
+        ◆
+      </span>
+      <span className="seed-label">
+        {seed.source_fqn}
+        <span className="seed-meta">
+          {" · "}
+          {formatRelative(seed.created_at)}
+        </span>
+      </span>
     </div>
   )
 }
@@ -746,6 +943,13 @@ function formatBytesShort(bytes: number): string {
     i += 1
   }
   return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)}${units[i]}`
+}
+
+function formatRelative(iso: string): string {
+  const then = new Date(iso).getTime()
+  const now = Date.now()
+  const secs = Math.max(0, Math.floor((now - then) / 1000))
+  return formatAgeSecs(secs)
 }
 
 function formatAgeSecs(secs: number): string {

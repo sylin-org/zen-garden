@@ -664,11 +664,15 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
     if (!sphere) return
     for (const stone of stones) {
       const entries = stoneOfferings.get(stone.stone_name) ?? []
-      // Sphere's computeEdges reads `{offering, instance_name}` per entry.
+      // Sphere's computeEdges reads {offering, instance_name, role}
+      // per entry. The role drives edge styling — primary↔replica
+      // edges render as directional dashed gold, peer↔peer
+      // (Joining/Joining or unknown) as symmetric solid sage.
       sphere.updateStone(stone.stone_id, {
         offerings: entries.map((e) => ({
           offering: e.offering,
           instance_name: e.instance_name ?? null,
+          role: e.role ?? null,
         })),
       })
     }

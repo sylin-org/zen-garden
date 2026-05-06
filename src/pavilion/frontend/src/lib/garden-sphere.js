@@ -124,21 +124,59 @@ function greatCircle(p1, p2, R, segs = 48) {
   return pts;
 }
 
-/** Find shared service offerings between all stone pairs */
+/**
+ * Compute set-membership edges between stone pairs.
+ *
+ * For each pair (i, j), collect the offerings they share by serviceKey.
+ * For each shared offering, look up each stone's role (primary | replica
+ * | joining | degraded | null) and classify the edge:
+ *
+ * - **directed**: one stone is primary AND the other is replica (or
+ *   joining catching up). Renders as a dashed gold line with the head
+ *   pointing from the primary to the replica.
+ * - **peer**: neither side claims primary, OR roles are unknown.
+ *   Renders as a solid sage line, symmetric.
+ *
+ * `direction` on each edge:
+ *   - 0 = peer (no primary↔replica relation)
+ *   - 1 = i → j (i is primary)
+ *   - 2 = j → i (j is primary)
+ *
+ * Mixed sets where some are primary↔replica and others are peer-only
+ * fall under whichever the FIRST shared offering classifies as. The
+ * rendering picks one shape per edge — over-rendering one tube per
+ * shared offering would cluster too densely on the sphere. Future
+ * work: tooltips / labels listing each set's role pair.
+ */
 function computeEdges(stones) {
   const edges = [];
   for (let i = 0; i < stones.length; i++)
     for (let j = i + 1; j < stones.length; j++) {
       const shared = new Set();
+      let direction = 0;
       const svcsA = stones[i].offerings || [];
       const svcsB = stones[j].offerings || [];
       svcsA.forEach((a) =>
         svcsB.forEach((b) => {
-          if (serviceKey(a) === serviceKey(b)) shared.add(serviceKey(a));
+          if (serviceKey(a) === serviceKey(b)) {
+            shared.add(serviceKey(a));
+            // First shared offering with a primary↔(replica|joining)
+            // pair pins the edge direction.
+            if (direction === 0) {
+              const aRole = (a.role || "").toLowerCase();
+              const bRole = (b.role || "").toLowerCase();
+              const aIsPrimary = aRole === "primary";
+              const bIsPrimary = bRole === "primary";
+              const aIsFollower = aRole === "replica" || aRole === "joining";
+              const bIsFollower = bRole === "replica" || bRole === "joining";
+              if (aIsPrimary && bIsFollower) direction = 1;
+              else if (bIsPrimary && aIsFollower) direction = 2;
+            }
+          }
         }),
       );
       if (shared.size > 0)
-        edges.push({ from: i, to: j, sets: [...shared] });
+        edges.push({ from: i, to: j, sets: [...shared], direction });
     }
   return edges;
 }
@@ -783,8 +821,13 @@ export class GardenSphere {
     computeEdges(activeStones).forEach((edge) => {
       const n1 = activeNodes[edge.from],
         n2 = activeNodes[edge.to];
+      // Direction picks which endpoint is the "primary" — the
+      // sparkles flow from primary toward replica. Direction 0 =
+      // peer (sparkles symmetric).
+      const fromPos = edge.direction === 2 ? n2.group.position : n1.group.position;
+      const toPos = edge.direction === 2 ? n1.group.position : n2.group.position;
       this.conns.push(
-        this._mkConn(n1.group.position, n2.group.position, edge.sets),
+        this._mkConn(fromPos, toPos, edge.sets, edge.direction),
       );
     });
   }
@@ -986,13 +1029,32 @@ export class GardenSphere {
     this.banks = [];
   }
 
-  _mkConn(p1, p2, sets) {
+  /**
+   * Build an edge between two stones for shared offering(s).
+   *
+   * `direction` (from `computeEdges`):
+   *   - 0: peer↔peer — solid sage tube, sparkles drift symmetrically
+   *   - 1 or 2: primary↔replica — gold tube, sparkles flow from
+   *     primary (p1) to replica (p2) and the line is rendered
+   *     thinner with a gold accent.
+   *
+   * The geometric direction is encoded in the curve order: when
+   * direction != 0 the caller has already swapped p1/p2 such that
+   * p1 is always the primary. So sparkle motion is always p1 → p2.
+   */
+  _mkConn(p1, p2, sets, direction = 0) {
+    const directed = direction !== 0;
     const pts = greatCircle(p1, p2, this.R, 48),
       curve = new THREE.CatmullRomCurve3(pts);
+
+    // Peer edges: sage. Directed (primary→replica): gold accent.
+    const tubeColor = directed ? 0xc4b060 : 0x84a59d;
+    const labelColor = directed ? "#c4b060" : "#84a59d";
+
     const tubeMat = new THREE.MeshBasicMaterial({
-      color: 0x84a59d,
+      color: tubeColor,
       transparent: true,
-      opacity: 0.18,
+      opacity: directed ? 0.28 : 0.18,
       depthWrite: false,
     });
     const tube = new THREE.Mesh(
@@ -1011,10 +1073,13 @@ export class GardenSphere {
     lc.height = 48;
     const lx = lc.getContext("2d");
     lx.font = '400 16px "IBM Plex Mono",monospace';
-    lx.fillStyle = "#84a59d";
+    lx.fillStyle = labelColor;
     lx.textAlign = "center";
     lx.textBaseline = "middle";
-    lx.fillText(sets.join(" · "), 128, 24);
+    // Directed edges add a "▶" cue so a still-frame screenshot still
+    // communicates the relationship.
+    const labelText = directed ? `${sets.join(" · ")} ▶` : sets.join(" · ");
+    lx.fillText(labelText, 128, 24);
     const labelMat = new THREE.SpriteMaterial({
       map: new THREE.CanvasTexture(lc),
       transparent: true,
@@ -1028,23 +1093,32 @@ export class GardenSphere {
     label.scale.set(3.5, 0.7, 1);
     this.sg.add(label);
     const sparkles = [];
-    for (let i = 0; i < Math.min(sets.length + 1, 3); i++) {
+    // Directed edges: more sparkles, all moving in the +t direction
+    // (the animation loop already advances t each frame). Peer
+    // edges: existing 3-sparkle symmetric pattern.
+    const sparkCount = directed
+      ? Math.min(sets.length + 2, 4)
+      : Math.min(sets.length + 1, 3);
+    for (let i = 0; i < sparkCount; i++) {
       const sMat = new THREE.SpriteMaterial({
         map: this.sparkTex,
         transparent: true,
-        opacity: 0.7,
+        opacity: directed ? 0.85 : 0.7,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
       const s = new THREE.Sprite(sMat);
-      s.scale.set(0.35, 0.35, 1);
-      s.userData.t = i / 3;
-      s.userData.spd = 0.08 + Math.random() * 0.06;
+      s.scale.set(directed ? 0.4 : 0.35, directed ? 0.4 : 0.35, 1);
+      s.userData.t = i / sparkCount;
+      // Directed edges sparkle slightly faster — visual cue for "this
+      // is an active replication relationship, not just a cohabitation".
+      s.userData.spd =
+        (directed ? 0.11 : 0.08) + Math.random() * 0.06;
       s.position.copy(curve.getPoint(s.userData.t));
       this.sg.add(s);
       sparkles.push(s);
     }
-    return { tube, tubeMat, curve, sparkles, label, labelMat, sets };
+    return { tube, tubeMat, curve, sparkles, label, labelMat, sets, directed };
   }
 
   _animate() {

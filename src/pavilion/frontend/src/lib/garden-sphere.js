@@ -254,6 +254,117 @@ function renderStoneCanvas(stone, offline = false) {
   return c;
 }
 
+/// Identity helper for banks. The Pavilion bank shape may use
+/// either a dedicated `id` field or a `replica_set_name` /
+/// `name` fallback depending on which Tauri command produced
+/// it; the canvas accepts either form and treats whatever is
+/// present as the unique key.
+export function bankIdOf(bank) {
+  return bank.id || bank.replica_set_id || bank.replica_set_name || bank.name || "";
+}
+
+/// Render a bank's canvas-based display sprite. 384×384 transparent
+/// canvas with a usage gauge ring, name, capacity, and seed-count
+/// chips. ORCH-0039 §"Canvas" calls for banks alongside stones;
+/// the visual language differs (smaller, ring-only gauge, mono
+/// capacity readout) so the two kinds are distinguishable at a
+/// glance even on a busy sphere.
+function renderBankCanvas(bank) {
+  const S = 384,
+    H = S / 2,
+    CY = 160,
+    AR = 110,
+    LW = 6;
+  const c = document.createElement("canvas");
+  c.width = S;
+  c.height = S;
+  const x = c.getContext("2d");
+
+  const usedPct = bankUsedPercent(bank);
+  const isReplicated = (bank.local_volume_count || 0) > 0
+    && (bank.replica_count || bank.replicas?.length || 0) > 1;
+  const accent = "#c4b060"; // gold — banks read as treasure
+
+  // Outer usage ring.
+  const ringStart = -Math.PI / 2;
+  x.beginPath();
+  x.arc(H, CY, AR, ringStart, ringStart + Math.PI * 2);
+  x.strokeStyle = "rgba(255,255,255,0.07)";
+  x.lineWidth = LW;
+  x.stroke();
+  if (usedPct > 0.5) {
+    x.beginPath();
+    x.arc(H, CY, AR, ringStart, ringStart + Math.PI * 2 * (usedPct / 100));
+    x.strokeStyle = usedPct > 85 ? "#c45050" : usedPct > 70 ? "#d4a373" : accent;
+    x.lineWidth = LW;
+    x.lineCap = "round";
+    x.stroke();
+  }
+
+  // Inner accent ring (replicated banks get a brighter halo).
+  x.beginPath();
+  x.arc(H, CY, AR - 16, 0, Math.PI * 2);
+  x.strokeStyle = withAlpha(accent, isReplicated ? 0.45 : 0.22);
+  x.lineWidth = isReplicated ? 3 : 2;
+  x.stroke();
+
+  // Center diamond (signals "bank" — stones use a circle LED).
+  x.shadowColor = accent;
+  x.shadowBlur = 14;
+  x.fillStyle = accent;
+  x.translate(H, CY);
+  x.rotate(Math.PI / 4);
+  x.fillRect(-7, -7, 14, 14);
+  x.rotate(-Math.PI / 4);
+  x.translate(-H, -CY);
+  x.shadowBlur = 0;
+
+  // Name.
+  x.font = '500 24px "IBM Plex Sans",sans-serif';
+  x.fillStyle = "#fafaf9";
+  x.textAlign = "center";
+  x.textBaseline = "top";
+  x.fillText(bank.name || bank.replica_set_name || "bank", H, CY + AR + 12);
+
+  // Capacity readout.
+  x.font = '300 14px "IBM Plex Mono",monospace';
+  x.fillStyle = "#78716c";
+  const cap = formatBytesShort(bank.capacity_bytes || 0);
+  const used = formatBytesShort(bank.used_bytes || 0);
+  x.fillText(`${used} / ${cap}`, H, CY + AR + 42);
+
+  // Seed-count chip when present (filled in by setSeedCount).
+  if (bank._seedCount && bank._seedCount > 0) {
+    x.font = '500 12px "IBM Plex Mono",monospace';
+    x.fillStyle = accent;
+    x.fillText(`${bank._seedCount} seed${bank._seedCount === 1 ? "" : "s"}`, H, CY + AR + 68);
+  }
+
+  return c;
+}
+
+/// Compute used-percent given a bank's capacity / used fields,
+/// safely handling missing data.
+function bankUsedPercent(bank) {
+  const cap = bank.capacity_bytes || 0;
+  if (cap <= 0) return 0;
+  const used = bank.used_bytes || 0;
+  return Math.min(100, (used / cap) * 100);
+}
+
+/// Format a byte count for the canvas in short form (e.g. "1.2T").
+function formatBytesShort(bytes) {
+  if (!bytes) return "—";
+  const units = ["B", "K", "M", "G", "T", "P"];
+  let i = 0;
+  let n = bytes;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i += 1;
+  }
+  return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)}${units[i]}`;
+}
+
 function makeGlowTex(color = "#84a59d") {
   const c = document.createElement("canvas");
   c.width = 128;
@@ -296,6 +407,18 @@ export class GardenSphere {
     this.conns = [];
     this.hitTargets = [];
     this.stones = [];
+
+    // Banks (ORCH-0039 Frame 2) — rendered as smaller nodes on
+    // an inner sphere at radius `R * BANK_RADIUS_RATIO`. Each
+    // bank's hit targets land in `bankHitTargets` so click
+    // dispatching can distinguish a bank pick from a stone pick
+    // without traversing the whole hit list.
+    this.banks = [];
+    this.bankNodes = [];
+    this.bankHitTargets = [];
+    this.bankRadius = (opts.radius || 10) * 0.55;
+    this.hoveredKind = null; // 'stone' | 'bank' | null
+
     this.hoveredId = null;
     this.selectedId = null;
     this.departingId = null;
@@ -494,6 +617,77 @@ export class GardenSphere {
     this.onDataChange(this.stones);
   }
 
+  // ── Bank API (ORCH-0039 Frame 2) ──────────────────────────────
+
+  /** Replace the bank pool with a fresh list. */
+  setBanks(banks) {
+    this._clearBanks();
+    this.banks = [...banks];
+    const positions = fibSphere(this.banks.length);
+    this.banks.forEach((b, idx) => {
+      const pos = new THREE.Vector3(...positions[idx]).multiplyScalar(this.bankRadius);
+      this.bankNodes.push(this._mkBankNode(b, pos));
+    });
+    this.onDataChange(this.stones);
+  }
+
+  /** Add a single bank. Triggers animated re-layout of bank ring. */
+  addBank(bank) {
+    if (this.banks.find((b) => bankIdOf(b) === bankIdOf(bank))) return;
+    this.banks.push(bank);
+    const positions = fibSphere(this.banks.length);
+    this.bankNodes.forEach((n, idx) => {
+      const [px, py, pz] = positions[idx];
+      n.targetPos = new THREE.Vector3(px, py, pz).multiplyScalar(this.bankRadius);
+    });
+    const last = positions[this.banks.length - 1];
+    const pos = new THREE.Vector3(...last).multiplyScalar(this.bankRadius);
+    const newNode = this._mkBankNode(bank, pos);
+    newNode.enterScale = 0;
+    this.bankNodes.push(newNode);
+    this.layoutProgress = 0;
+  }
+
+  /** Remove a bank by id with fade-out then re-layout. */
+  removeBank(id) {
+    const ni = this.bankNodes.findIndex((n) => bankIdOf(n.bank) === id);
+    if (ni < 0) return;
+    const node = this.bankNodes[ni];
+    node.removing = true;
+    node.removeProgress = 0;
+    node.removeCallback = () => {
+      this.sg.remove(node.group);
+      this.bankHitTargets = this.bankHitTargets.filter(
+        (h) => h.userData.bankId !== id,
+      );
+      this.bankNodes.splice(this.bankNodes.indexOf(node), 1);
+      this.banks = this.banks.filter((b) => bankIdOf(b) !== id);
+      const positions = fibSphere(this.banks.length);
+      this.bankNodes.forEach((n, idx) => {
+        n.targetPos = new THREE.Vector3(...positions[idx]).multiplyScalar(
+          this.bankRadius,
+        );
+      });
+      this.layoutProgress = 0;
+    };
+  }
+
+  /** Live-update a bank's data (capacity, used bytes, seed count). */
+  updateBank(id, patch) {
+    const node = this.bankNodes.find((n) => bankIdOf(n.bank) === id);
+    if (!node) return;
+    Object.assign(node.bank, patch);
+    const bi = this.banks.findIndex((b) => bankIdOf(b) === id);
+    if (bi >= 0) this.banks[bi] = { ...this.banks[bi], ...patch };
+    this._refreshBankTex(node);
+  }
+
+  /** Update a bank's seed count chip without disturbing other
+   *  fields. Used by the canvas when seed catalogs change. */
+  setSeedCount(id, count) {
+    this.updateBank(id, { _seedCount: count });
+  }
+
   /** Reset sphere rotation and camera to default position. */
   resetView() {
     this.sg.quaternion.identity();
@@ -617,21 +811,38 @@ export class GardenSphere {
   }
 
   _screenOf(id) {
-    const n = this.nodes.find((n) => n.stone.stone_id === id);
-    if (!n) return null;
-    const wp = new THREE.Vector3();
-    n.disp.getWorldPosition(wp);
-    const screen = this._toScreen(wp);
-    // The arc center sits at CY=195 in a 512px canvas sprite,
-    // which is (256-195)/512 = 11.9% above the sprite center.
-    // Estimate the sprite's screen height from its world scale
-    // and camera distance, then shift Y upward by that fraction.
-    const dist = this.camera.position.distanceTo(wp);
-    const vFov = this.camera.fov * (Math.PI / 180);
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const spriteScreenH = (n.disp.scale.y / (2 * dist * Math.tan(vFov / 2))) * rect.height;
-    screen.y -= spriteScreenH * ((256 - 195) / 512);
-    return screen;
+    // Stones first, then banks — same dispatch as raycasting.
+    const stoneNode = this.nodes.find((n) => n.stone.stone_id === id);
+    if (stoneNode) {
+      const wp = new THREE.Vector3();
+      stoneNode.disp.getWorldPosition(wp);
+      const screen = this._toScreen(wp);
+      const dist = this.camera.position.distanceTo(wp);
+      const vFov = this.camera.fov * (Math.PI / 180);
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      const spriteScreenH =
+        (stoneNode.disp.scale.y / (2 * dist * Math.tan(vFov / 2))) * rect.height;
+      // Stone sprite: arc center at CY=195 in a 512px canvas
+      // → 11.9% above center.
+      screen.y -= spriteScreenH * ((256 - 195) / 512);
+      return screen;
+    }
+    const bankNode = this.bankNodes.find((n) => bankIdOf(n.bank) === id);
+    if (bankNode) {
+      const wp = new THREE.Vector3();
+      bankNode.disp.getWorldPosition(wp);
+      const screen = this._toScreen(wp);
+      const dist = this.camera.position.distanceTo(wp);
+      const vFov = this.camera.fov * (Math.PI / 180);
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      const spriteScreenH =
+        (bankNode.disp.scale.y / (2 * dist * Math.tan(vFov / 2))) * rect.height;
+      // Bank sprite: ring center at CY=160 in a 384px canvas
+      // → 8.3% above center.
+      screen.y -= spriteScreenH * ((192 - 160) / 384);
+      return screen;
+    }
+    return null;
   }
 
   _mkNode(stone, pos) {
@@ -694,6 +905,85 @@ export class GardenSphere {
       removing: false,
       removeProgress: 0,
     };
+  }
+
+  _mkBankNode(bank, pos) {
+    const accent = "#c4b060"; // gold for banks
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    this.sg.add(group);
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(accent),
+      emissive: new THREE.Color(accent),
+      emissiveIntensity: 0.35,
+      roughness: 0.6,
+      metalness: 0.3,
+      transparent: true,
+      opacity: 1,
+    });
+    // Banks are visually smaller than stones — half the body radius.
+    group.add(new THREE.Mesh(new THREE.SphereGeometry(0.28, 18, 18), bodyMat));
+    const glowMat = new THREE.SpriteMaterial({
+      map: makeGlowTex(accent),
+      transparent: true,
+      opacity: 0.3,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const glow = new THREE.Sprite(glowMat);
+    glow.scale.set(2.6, 2.6, 1);
+    group.add(glow);
+    const tex = new THREE.CanvasTexture(renderBankCanvas(bank));
+    tex.minFilter = THREE.LinearFilter;
+    const dispMat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+    });
+    const disp = new THREE.Sprite(dispMat);
+    disp.position.copy(pos.clone().normalize().multiplyScalar(0.5));
+    disp.scale.set(2.8, 2.8, 1);
+    group.add(disp);
+    const id = bankIdOf(bank);
+    const hit = new THREE.Mesh(
+      new THREE.SphereGeometry(1.4, 8, 8),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    hit.userData.bankId = id;
+    group.add(hit);
+    this.bankHitTargets.push(hit);
+    return {
+      kind: "bank",
+      group,
+      body: group.children[0],
+      bodyMat,
+      glow,
+      glowMat,
+      disp,
+      dispMat,
+      pos,
+      bank,
+      baseScale: 2.8,
+      targetPos: null,
+      enterScale: 1,
+      removing: false,
+      removeProgress: 0,
+    };
+  }
+
+  _refreshBankTex(node) {
+    const c = renderBankCanvas(node.bank);
+    node.disp.material.map.dispose();
+    node.disp.material.map = new THREE.CanvasTexture(c);
+    node.disp.material.map.minFilter = THREE.LinearFilter;
+    node.disp.material.needsUpdate = true;
+  }
+
+  _clearBanks() {
+    this.bankNodes.forEach((n) => this.sg.remove(n.group));
+    this.bankNodes = [];
+    this.bankHitTargets = [];
+    this.banks = [];
   }
 
   _mkConn(p1, p2, sets) {
@@ -826,10 +1116,25 @@ export class GardenSphere {
           n.group.scale.setScalar(1 - Math.pow(1 - n.enterScale, 2));
         }
       });
+      // Bank nodes share the same layout-migration tick.
+      this.bankNodes.forEach((n) => {
+        if (n.targetPos && !n.removing) {
+          n.group.position.lerp(n.targetPos, ease);
+          n.pos = n.group.position.clone();
+          n.disp.position.copy(n.pos.clone().normalize().multiplyScalar(0.5));
+          if (this.layoutProgress >= 1) {
+            n.targetPos = null;
+          }
+        }
+        if (n.enterScale < 1) {
+          n.enterScale = Math.min(n.enterScale + dt / 0.6, 1);
+          n.group.scale.setScalar(1 - Math.pow(1 - n.enterScale, 2));
+        }
+      });
       if (needEdgeRebuild) this._rebuildEdges();
     }
 
-    // Remove animation
+    // Remove animation (stones)
     this.nodes.forEach((n) => {
       if (n.removing) {
         n.removeProgress = Math.min(n.removeProgress + dt / 0.5, 1);
@@ -838,6 +1143,22 @@ export class GardenSphere {
         n.bodyMat.opacity = a;
         n.dispMat.opacity = a;
         n.glowMat.opacity = a * 0.35;
+        if (n.removeProgress >= 1 && n.removeCallback) {
+          n.removeCallback();
+          n.removeCallback = null;
+        }
+      }
+    });
+
+    // Remove animation (banks) — same fade pattern.
+    this.bankNodes.forEach((n) => {
+      if (n.removing) {
+        n.removeProgress = Math.min(n.removeProgress + dt / 0.5, 1);
+        const a = 1 - n.removeProgress;
+        n.group.scale.setScalar(a);
+        n.bodyMat.opacity = a;
+        n.dispMat.opacity = a;
+        n.glowMat.opacity = a * 0.3;
         if (n.removeProgress >= 1 && n.removeCallback) {
           n.removeCallback();
           n.removeCallback = null;
@@ -887,6 +1208,35 @@ export class GardenSphere {
       }
     });
 
+    // Bank nodes — depth-based opacity / scale + steady gold breath.
+    // Banks read as treasure, not living organisms, so the
+    // breath rate is slower and never goes dim.
+    this.bankNodes.forEach((n) => {
+      if (n.removing) return;
+      n.group.getWorldPosition(wp);
+      const dist = this.camera.position.distanceTo(wp);
+      const near = camZ - this.bankRadius,
+        far = camZ + this.bankRadius;
+      const depth = THREE.MathUtils.clamp(
+        (dist - near) / (far - near),
+        0,
+        1,
+      );
+      const opacity = THREE.MathUtils.lerp(1.0, 0.18, depth);
+      const scale = THREE.MathUtils.lerp(1.0, 0.65, depth);
+      n.dispMat.opacity = opacity;
+      n.disp.scale.setScalar(n.baseScale * scale);
+      n.glowMat.opacity = opacity * 0.3;
+      n.bodyMat.opacity = opacity;
+      n.bodyMat.emissiveIntensity =
+        0.25 + 0.15 * Math.sin(t * 0.4 * Math.PI * 2);
+      const id = bankIdOf(n.bank);
+      if (id === this.hoveredId || id === this.selectedId) {
+        n.glowMat.opacity = Math.min(opacity * 0.7, 0.7);
+        n.disp.scale.setScalar(n.baseScale * scale * 1.1);
+      }
+    });
+
     // Emit tracking data for card positioning
     this.onTrack({
       selected: this.selectedId
@@ -931,8 +1281,19 @@ export class GardenSphere {
     this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
     this.ray.setFromCamera(this.mouse, this.camera);
-    const hits = this.ray.intersectObjects(this.hitTargets);
-    return hits.length > 0 ? hits[0].object.userData.stoneId : null;
+    // Stones pick first (outer sphere); banks fall through (inner)
+    // when no stone is hit. The two pools are kept separate so a
+    // ray that grazes both prefers the stone, matching the spatial
+    // hierarchy.
+    const stoneHits = this.ray.intersectObjects(this.hitTargets);
+    if (stoneHits.length > 0) {
+      return { kind: "stone", id: stoneHits[0].object.userData.stoneId };
+    }
+    const bankHits = this.ray.intersectObjects(this.bankHitTargets);
+    if (bankHits.length > 0) {
+      return { kind: "bank", id: bankHits[0].object.userData.bankId };
+    }
+    return null;
   }
 
   _onPD(e) {
@@ -942,23 +1303,38 @@ export class GardenSphere {
       this.vel = { x: 0, y: 0 };
       this.rotProgress = 1; // cancel slerp on drag
     } else if (e.button === 0) {
-      const id = this._rayTest(e);
-      const newId = id === this.selectedId ? null : id;
+      const hit = this._rayTest(e);
+      const hitId = hit ? hit.id : null;
+      const hitKind = hit ? hit.kind : null;
+      const newId = hitId === this.selectedId ? null : hitId;
+      const newKind = newId ? hitKind : null;
       const prevId = this.selectedId;
       this.selectedId = newId;
+      this.selectedKind = newKind;
       if (newId) {
         this.departingId = prevId;
-        const node = this.nodes.find((n) => n.stone.stone_id === newId);
+        const node =
+          newKind === "bank"
+            ? this.bankNodes.find((n) => bankIdOf(n.bank) === newId)
+            : this.nodes.find((n) => n.stone.stone_id === newId);
         if (node) {
           this.rotFrom = this.sg.quaternion.clone();
           this.rotTarget = this._computeRotTarget(node);
           this.rotProgress = 0;
           this.vel = { x: 0, y: 0 };
         }
-        this.onTransition({ selectedId: newId, departingId: prevId });
+        this.onTransition({
+          selectedId: newId,
+          departingId: prevId,
+          kind: newKind,
+        });
       } else {
         this.departingId = prevId;
-        this.onTransition({ selectedId: null, departingId: prevId });
+        this.onTransition({
+          selectedId: null,
+          departingId: prevId,
+          kind: null,
+        });
       }
     }
     this.lastInput = performance.now();
@@ -966,10 +1342,13 @@ export class GardenSphere {
 
   _onPM(e) {
     if (!this.isDrag) {
-      const id = this._rayTest(e);
-      if (id !== this.hoveredId) {
-        this.hoveredId = id;
-        this.onHover(id);
+      const hit = this._rayTest(e);
+      const hitId = hit ? hit.id : null;
+      const hitKind = hit ? hit.kind : null;
+      if (hitId !== this.hoveredId) {
+        this.hoveredId = hitId;
+        this.hoveredKind = hitKind;
+        this.onHover(hitId, hitKind);
       }
     }
     if (this.isDrag) {

@@ -1799,3 +1799,22 @@
   border-top: 1px solid var(--vh);
   text-align: center;
 }
+
+/* Bank-specific accents — banks read as "treasure" via the gold
+   palette to distinguish them from stones at a glance. */
+.canvas-card-bank {
+  border-color: rgba(196, 176, 96, 0.25);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4),
+    0 0 12px rgba(196, 176, 96, 0.08);
+}
+
+.canvas-card-bank-glyph {
+  color: var(--gold);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.canvas-hover-chip-bank {
+  border: 1px solid rgba(196, 176, 96, 0.35);
+  color: var(--gold);
+}

@@ -24,6 +24,21 @@ interface TendedStone {
   endpoint: string
 }
 
+/// Wire shape returned by `get_storage` — garden-wide bank summary
+/// from the tended Moss. The canvas reads `name` + `replica_count`
+/// for the bank node label; `roles` is surfaced on the detail card.
+interface GardenBankSummary {
+  name: string
+  replica_count: number
+  primary_stone: string | null
+  roles: string[]
+}
+
+interface StoragePayload {
+  count: number
+  banks: GardenBankSummary[]
+}
+
 interface CanvasProps {
   onClose: () => void
 }
@@ -41,10 +56,14 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
   const sphereRef = useRef<GardenSphere | null>(null)
   const knownIdsRef = useRef<Set<string>>(new Set())
 
+  const knownBankIdsRef = useRef<Set<string>>(new Set())
   const [hovered, setHovered] = useState<string | null>(null)
+  const [hoveredKind, setHoveredKind] = useState<"stone" | "bank" | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedKind, setSelectedKind] = useState<"stone" | "bank" | null>(null)
   const [tracked, setTracked] = useState<TrackData | null>(null)
   const [stones, setStones] = useState<AwareStone[]>([])
+  const [banks, setBanks] = useState<GardenBankSummary[]>([])
   const [tended, setTended] = useState<TendedStone | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -69,9 +88,13 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
   useEffect(() => {
     if (!containerRef.current) return
     const sphere = new GardenSphere(containerRef.current, {
-      onHover: setHovered,
-      onTransition: ({ selectedId, departingId: _departingId }) => {
+      onHover: (id, kind) => {
+        setHovered(id)
+        setHoveredKind(kind ?? null)
+      },
+      onTransition: ({ selectedId, departingId: _departingId, kind }) => {
         setSelectedId(selectedId)
+        setSelectedKind(kind ?? null)
       },
       onTrack: (data) => setTracked(data),
     })
@@ -80,6 +103,7 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
       sphere.destroy()
       sphereRef.current = null
       knownIdsRef.current.clear()
+      knownBankIdsRef.current.clear()
     }
   }, [])
 
@@ -115,15 +139,45 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
     })
   }, [stones, toSphereShape])
 
+  // ── Bank sync (mirrors the stone diff path) ──────────────────
+  useEffect(() => {
+    const sphere = sphereRef.current
+    if (!sphere) return
+    const next = new Set(banks.map((b) => b.name))
+    const known = knownBankIdsRef.current
+
+    if (known.size === 0 && banks.length > 0) {
+      sphere.setBanks(banks)
+      banks.forEach((b) => known.add(b.name))
+      return
+    }
+    banks.forEach((b) => {
+      if (!known.has(b.name)) {
+        sphere.addBank(b)
+        known.add(b.name)
+      } else {
+        sphere.updateBank(b.name, b)
+      }
+    })
+    Array.from(known).forEach((id) => {
+      if (!next.has(id)) {
+        sphere.removeBank(id)
+        known.delete(id)
+      }
+    })
+  }, [banks])
+
   // ── Initial load + topology subscription ─────────────────────
   const refresh = useCallback(async () => {
     try {
-      const [s, t] = await Promise.all([
+      const [s, t, storage] = await Promise.all([
         invoke<AwareStone[]>("get_topology"),
         invoke<TendedStone | null>("get_tended"),
+        invoke<StoragePayload | null>("get_storage"),
       ])
       setStones(s)
       setTended(t)
+      setBanks(storage?.banks ?? [])
       setError(null)
     } catch (e) {
       setError(String(e))
@@ -156,8 +210,35 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
   }, [refresh])
 
   const selectedStone = useMemo(
-    () => stones.find((s) => s.stone_id === selectedId) ?? null,
-    [stones, selectedId],
+    () =>
+      selectedKind === "stone"
+        ? (stones.find((s) => s.stone_id === selectedId) ?? null)
+        : null,
+    [stones, selectedId, selectedKind],
+  )
+
+  const selectedBank = useMemo(
+    () =>
+      selectedKind === "bank"
+        ? (banks.find((b) => b.name === selectedId) ?? null)
+        : null,
+    [banks, selectedId, selectedKind],
+  )
+
+  const hoveredStone = useMemo(
+    () =>
+      hoveredKind === "stone"
+        ? (stones.find((s) => s.stone_id === hovered) ?? null)
+        : null,
+    [stones, hovered, hoveredKind],
+  )
+
+  const hoveredBank = useMemo(
+    () =>
+      hoveredKind === "bank"
+        ? (banks.find((b) => b.name === hovered) ?? null)
+        : null,
+    [banks, hovered, hoveredKind],
   )
 
   return (
@@ -192,14 +273,34 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
             onDismiss={() => {
               sphereRef.current?.resetView()
               setSelectedId(null)
+              setSelectedKind(null)
+            }}
+          />
+        )}
+
+        {selectedBank && tracked?.selected && (
+          <CanvasBankCard
+            bank={selectedBank}
+            position={tracked.selected.pos}
+            onDismiss={() => {
+              sphereRef.current?.resetView()
+              setSelectedId(null)
+              setSelectedKind(null)
             }}
           />
         )}
 
         {hovered && hovered !== selectedId && tracked?.hovered && (
           <CanvasHoverChip
-            stone={stones.find((s) => s.stone_id === hovered)}
+            label={
+              hoveredKind === "bank"
+                ? hoveredBank?.name
+                : hoveredStone
+                  ? displayName(hoveredStone.stone_name)
+                  : undefined
+            }
             position={tracked.hovered.pos}
+            kind={hoveredKind ?? "stone"}
           />
         )}
       </div>
@@ -268,22 +369,74 @@ function CanvasStoneCard({
   )
 }
 
-interface CanvasHoverChipProps {
-  stone: AwareStone | undefined
+interface CanvasBankCardProps {
+  bank: GardenBankSummary
   position: { x: number; y: number }
+  onDismiss: () => void
+}
+
+function CanvasBankCard({
+  bank,
+  position,
+  onDismiss,
+}: CanvasBankCardProps): JSX.Element {
+  return (
+    <div
+      className="canvas-card canvas-card-bank"
+      style={{ left: `${position.x}px`, top: `${position.y}px` }}
+    >
+      <header className="canvas-card-header">
+        <span className="canvas-card-bank-glyph" aria-hidden>
+          ◆
+        </span>
+        <span className="canvas-card-title">{bank.name}</span>
+        <button
+          type="button"
+          className="canvas-card-close"
+          onClick={onDismiss}
+          aria-label="Close"
+        >
+          ×
+        </button>
+      </header>
+      <dl className="canvas-card-body">
+        <div className="canvas-card-row">
+          <dt>Replicas</dt>
+          <dd>{bank.replica_count}</dd>
+        </div>
+        <div className="canvas-card-row">
+          <dt>Primary</dt>
+          <dd className={bank.primary_stone ? "kv-value-mono" : ""}>
+            {bank.primary_stone ?? "—"}
+          </dd>
+        </div>
+        <div className="canvas-card-row">
+          <dt>Roles</dt>
+          <dd>{bank.roles.length === 0 ? "—" : bank.roles.join(" · ")}</dd>
+        </div>
+      </dl>
+    </div>
+  )
+}
+
+interface CanvasHoverChipProps {
+  label: string | undefined
+  position: { x: number; y: number }
+  kind: "stone" | "bank"
 }
 
 function CanvasHoverChip({
-  stone,
+  label,
   position,
+  kind,
 }: CanvasHoverChipProps): JSX.Element | null {
-  if (!stone) return null
+  if (!label) return null
   return (
     <div
-      className="canvas-hover-chip"
+      className={`canvas-hover-chip canvas-hover-chip-${kind}`}
       style={{ left: `${position.x}px`, top: `${position.y}px` }}
     >
-      {displayName(stone.stone_name)}
+      {label}
     </div>
   )
 }

@@ -160,6 +160,11 @@ pub async fn run(
     let shutdown_token = state.shutdown_token.clone();
     tokio::spawn(supervisor.run(shutdown_token));
 
+    // Periodic snapshot scheduler (ORCH-0039 §"Snapshot frequency").
+    // Runs forever; aborts cleanly when Moss exits because the
+    // tokio runtime tears down all tasks.
+    let _ = crate::infra::snapshot_scheduler::spawn_periodic_snapshot_scheduler(state.clone());
+
     serve(state, &api_endpoint).await
 }
 

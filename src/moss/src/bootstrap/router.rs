@@ -558,7 +558,17 @@ pub fn configure(state: Moss) -> Router {
         )
         .route(
             "/api/v1/stone/offerings/{name}/snapshots",
-            post(api::v1::offering_snapshots::capture_offering_snapshot_v1),
+            post(api::v1::offering_snapshots::capture_offering_snapshot_v1)
+                .get(api::v1::offering_snapshots::list_offering_snapshots_v1),
+        )
+        .route(
+            "/api/v1/stone/offerings/{name}/snapshots/{id}",
+            get(api::v1::offering_snapshots::get_offering_snapshot_manifest_v1)
+                .delete(api::v1::offering_snapshots::delete_offering_snapshot_v1),
+        )
+        .route(
+            "/api/v1/stone/offerings/{name}/snapshots/{id}/files/{kind}/{artifact}",
+            get(api::v1::offering_snapshots::get_offering_snapshot_artifact_v1),
         )
         .route(
             "/api/v1/stone/offerings/{offering}/adopt",

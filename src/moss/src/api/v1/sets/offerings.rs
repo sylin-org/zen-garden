@@ -126,9 +126,15 @@ pub async fn get_offering_set(
     };
 
     let primary_stone = primary_stone_of(&members);
-    let uri_template = members
-        .iter()
-        .find_map(|m| m.uri_template.clone());
+    // Connection URI template lookup: prefer a per-FQN gateway entry
+    // (registered by an orchestrator like mongo per ORCH-0011) since
+    // those carry replica-set-aware templates like
+    // `mongodb://{host}:{port}/?replicaSet=zen-garden`. Falls back to
+    // the offering tool's own uri_template (none today, but
+    // forward-safe).
+    let uri_template = orchestrator_uri_template(&state, &fqn)
+        .await
+        .or_else(|| members.iter().find_map(|m| m.uri_template.clone()));
     let connection_uris: Vec<String> = members
         .iter()
         .flat_map(|m| m.uris.iter().cloned())
@@ -232,6 +238,24 @@ async fn collect_offering_groups(state: &Moss) -> HashMap<String, Vec<InternalMe
     }
 
     groups
+}
+
+/// Look up the orchestrator-registered gateway entry for `fqn` and
+/// return its URI template if any. Mongo registers
+/// `mongodb://{host}:{port}/?replicaSet=zen-garden` per ORCH-0011;
+/// other elected orchestrators register their own scheme. Independent
+/// offerings have no gateway entry — return `None` and the caller
+/// falls back to whatever the offering tool itself carries.
+async fn orchestrator_uri_template(state: &Moss, fqn: &str) -> Option<String> {
+    let query = ToolQuery {
+        category: Some(garden_common::constants::CATEGORY_ORCHESTRATOR.to_string()),
+        fqid: Some(fqn.to_string()),
+        ..Default::default()
+    };
+    let (_cursor, tools) = state.tool.snapshot(&query).await;
+    tools
+        .into_iter()
+        .find_map(|tool| tool.service.uri_template)
 }
 
 fn internal_member_from(tool: GardenTool) -> InternalMember {

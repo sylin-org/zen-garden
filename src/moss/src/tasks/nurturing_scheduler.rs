@@ -318,7 +318,7 @@ impl NurturingScheduler {
 
     /// Select target seed banks based on routing strategy
     ///
-    /// Filters out Dormant replicas whose Primary is elsewhere (STORAGE-0006).
+    /// Filters out Replica banks whose Primary is elsewhere (STORAGE-0006).
     /// Only local Primary banks are eligible write targets. When a logical name
     /// has no local Primary, the seed bank is skipped (remote write support is
     /// Phase 3b).
@@ -337,11 +337,11 @@ impl NurturingScheduler {
                         if m.id == sb.id { Some(m.role) } else { None }
                     })
                     .unwrap_or(StorageRole::Primary);
-                if role == StorageRole::Dormant {
+                if role == StorageRole::Replica {
                     tracing::debug!(
                         seed_bank = %sb.name,
                         id = %sb.id,
-                        "Skipping dormant seed bank — writes route to primary"
+                        "Skipping replica seed bank — writes route to primary"
                     );
                     false
                 } else {
@@ -352,10 +352,10 @@ impl NurturingScheduler {
             .collect();
 
         if primary_banks.is_empty() && !seed_banks.is_empty() {
-            // All local banks are Dormant — primary is on a remote stone
+            // All local banks are Replica — primary is on a remote stone
             tracing::info!(
-                dormant_count = seed_banks.len(),
-                "All local seed banks are dormant — remote write not yet supported"
+                replica_count = seed_banks.len(),
+                "All local seed banks are replicas — remote write not yet supported"
             );
         }
 

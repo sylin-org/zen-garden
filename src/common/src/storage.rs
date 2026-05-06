@@ -480,7 +480,7 @@ pub struct StorageSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stone_name: Option<String>,
 
-    /// Runtime role (Primary / Dormant)
+    /// Runtime role (Primary / Replica)
     pub role: StorageRole,
 
     /// Whether the Primary role is pinned (locked)
@@ -1172,7 +1172,7 @@ impl ChangelogEntry {
 /// SSE notification tick — lightweight "something changed" signal.
 ///
 /// Emitted on the storage notification stream when the changelog advances.
-/// The Dormant subscriber uses this to know when to pull changes.
+/// The Replica subscriber uses this to know when to pull changes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageTick {
     /// Latest cursor on this managed storage
@@ -1201,7 +1201,7 @@ pub struct ChangesResponse {
     /// Changelog entries since the requested cursor (squashed to net-effect per path)
     pub changes: Vec<ChangelogEntry>,
     /// When `true`, the requested cursor has been compacted away.
-    /// The Dormant must perform a full directory-walk reconciliation
+    /// The Replica must perform a full directory-walk reconciliation
     /// instead of incremental sync. `changes` will be empty.
     #[serde(default, skip_serializing_if = "is_false")]
     pub full_sync_required: bool,
@@ -1453,21 +1453,44 @@ impl StorageBeacon {
 /// Runtime role of a managed storage within its replica group.
 ///
 /// Assigned at runtime by the storage orchestration task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+///
+/// `Deserialize` is implemented manually to be tolerant of unknown strings —
+/// any value outside the canonical two falls back to [`Self::Replica`] with
+/// a warning. Beacons from peers running older code carrying legacy role
+/// strings won't break the registry; the next orchestration tick reasserts
+/// the actual role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageRole {
     /// Accepts writes. One primary per logical storage name.
     #[default]
     Primary,
     /// Read-only replica. Replicates from primary via SSE pull.
-    Dormant,
+    Replica,
+}
+
+impl<'de> Deserialize<'de> for StorageRole {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.as_str() {
+            "primary" => Self::Primary,
+            "replica" => Self::Replica,
+            other => {
+                tracing::warn!(
+                    role = %other,
+                    "Unrecognised StorageRole — falling back to Replica until orchestration reasserts"
+                );
+                Self::Replica
+            }
+        })
+    }
 }
 
 impl std::fmt::Display for StorageRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StorageRole::Primary => write!(f, "{}", crate::constants::ROLE_PRIMARY),
-            StorageRole::Dormant => write!(f, "{}", crate::constants::ROLE_DORMANT),
+            StorageRole::Replica => write!(f, "{}", crate::constants::ROLE_REPLICA),
         }
     }
 }
@@ -1537,7 +1560,7 @@ pub struct StorageAnnouncement {
     pub replica_set_name_updated_at: Option<DateTime<Utc>>,
 
     // --- Runtime state ---
-    /// Runtime role (Primary / Dormant)
+    /// Runtime role (Primary / Replica)
     #[serde(default)]
     pub role: StorageRole,
 
@@ -1642,7 +1665,7 @@ pub enum StorageChanged {
         device_id: String,
         replica_set_id: String,
     },
-    /// A device's role changed (Primary ↔ Dormant).
+    /// A device's role changed (Primary ↔ Replica).
     RoleChanged {
         device_id: String,
         replica_set_id: String,
@@ -1743,7 +1766,35 @@ mod tests {
     #[test]
     fn test_seed_bank_role_display() {
         assert_eq!(StorageRole::Primary.to_string(), "primary");
-        assert_eq!(StorageRole::Dormant.to_string(), "dormant");
+        assert_eq!(StorageRole::Replica.to_string(), "replica");
+    }
+
+    #[test]
+    fn storage_role_deserialize_canonical_strings() {
+        assert_eq!(
+            serde_json::from_str::<StorageRole>(r#""primary""#).unwrap(),
+            StorageRole::Primary,
+        );
+        assert_eq!(
+            serde_json::from_str::<StorageRole>(r#""replica""#).unwrap(),
+            StorageRole::Replica,
+        );
+    }
+
+    #[test]
+    fn storage_role_falls_back_on_unknown_string() {
+        // "dormant" is the pre-ARCH-0038 wire string. Beacons from peers
+        // running older code carrying this value must not break the
+        // registry on receive — the lenient Deserialize maps to Replica
+        // and orchestration reasserts the actual role on the next tick.
+        assert_eq!(
+            serde_json::from_str::<StorageRole>(r#""dormant""#).unwrap(),
+            StorageRole::Replica,
+        );
+        assert_eq!(
+            serde_json::from_str::<StorageRole>(r#""garbage""#).unwrap(),
+            StorageRole::Replica,
+        );
     }
 
     #[test]
@@ -1808,7 +1859,7 @@ mod tests {
             replica_set_id: "019aaaaa-0000-7000-8000-000000000001".to_string(),
             replica_set_name: "personal".to_string(),
             replica_set_name_updated_at: None,
-            role: StorageRole::Dormant,
+            role: StorageRole::Replica,
             protocols: vec!["s3".to_string()],
             access: StorageAccess::Direct,
             visibility: "open".to_string(),
@@ -1837,7 +1888,7 @@ mod tests {
         assert_eq!(summary.capacity_gb as u32, 128);
         assert!(summary.device.is_none()); // remote — no device
         assert_eq!(summary.stone_name.as_deref(), Some("stone-beta"));
-        assert_eq!(summary.role, StorageRole::Dormant);
+        assert_eq!(summary.role, StorageRole::Replica);
         assert!(summary.pinned);
         assert!(summary.encrypted);
         assert!(summary.online); // remote assumed online
@@ -1869,7 +1920,7 @@ mod tests {
     }
 
     #[test]
-    fn test_format_line_dormant_pinned() {
+    fn test_format_line_replica_pinned() {
         let summary = StorageSummary {
             short_id: "0195b2c4".to_string(),
             name: "private-seed-bank".to_string(),
@@ -1878,17 +1929,17 @@ mod tests {
             capacity_gb: 128.0,
             device: None,
             stone_name: Some("stone-02".to_string()),
-            role: StorageRole::Dormant,
+            role: StorageRole::Replica,
             pinned: true,
             encrypted: true,
             online: true,
             roles: vec![],
         };
         let line = summary.format_line();
-        assert!(!line.contains("●"), "Dormant should not have ● marker");
+        assert!(!line.contains("●"), "Replica should not have ● marker");
         assert!(line.contains("0195b2c4"));
         assert!(line.contains("128GB"));
-        assert!(line.contains("dormant"));
+        assert!(line.contains("replica"));
         assert!(line.contains("★ pinned"));
     }
 

@@ -32,6 +32,7 @@ pub mod s3_gateway;
 pub mod s3_presign;
 pub mod s3_xml;
 pub mod services;
+pub mod sets;
 pub mod snapshots;
 pub mod stone;
 pub mod storage;

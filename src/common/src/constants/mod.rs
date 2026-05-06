@@ -271,8 +271,8 @@ pub const CATEGORY_COMPANION: &str = "companion";
 /// Replication role: this stone owns the seed bank
 pub const ROLE_PRIMARY: &str = "primary";
 
-/// Replication role: passive replica, not serving reads
-pub const ROLE_DORMANT: &str = "dormant";
+/// Replication role: active replica, pulls changes from primary and may serve reads
+pub const ROLE_REPLICA: &str = "replica";
 
 /// Composable role: receives offering harvests from nurturing cycles
 pub const ROLE_SEED_BANK: &str = "seed-bank";

@@ -164,11 +164,11 @@ mod tests {
     fn test_stamp_announcement_role_only() {
         let mut ann = make_announcement("mybank");
         let mut roles = HashMap::new();
-        roles.insert("mybank".to_string(), StorageRole::Dormant);
+        roles.insert("mybank".to_string(), StorageRole::Replica);
 
         stamp_announcement(&mut ann, "mybank", Some(&roles), None);
 
-        assert_eq!(ann.role, StorageRole::Dormant);
+        assert_eq!(ann.role, StorageRole::Replica);
         assert!(ann.pin_id.is_none());
     }
 
@@ -194,7 +194,7 @@ mod tests {
     fn test_stamp_announcement_both() {
         let mut ann = make_announcement("mybank");
         let mut roles = HashMap::new();
-        roles.insert("mybank".to_string(), StorageRole::Dormant);
+        roles.insert("mybank".to_string(), StorageRole::Replica);
         let mut pins = HashMap::new();
         pins.insert(
             "mybank".to_string(),
@@ -203,7 +203,7 @@ mod tests {
 
         stamp_announcement(&mut ann, "mybank", Some(&roles), Some(&pins));
 
-        assert_eq!(ann.role, StorageRole::Dormant);
+        assert_eq!(ann.role, StorageRole::Replica);
         assert!(ann.pin_id.is_some());
     }
 
@@ -224,7 +224,7 @@ mod tests {
             "019c6d5a-0000-7000-8000-000000000001".to_string(),
         );
         let mut roles = HashMap::new();
-        roles.insert("other-bank".to_string(), StorageRole::Dormant);
+        roles.insert("other-bank".to_string(), StorageRole::Replica);
 
         stamp_announcement(&mut ann, "mybank", Some(&roles), Some(&pins));
 

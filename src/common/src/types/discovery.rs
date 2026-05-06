@@ -79,7 +79,7 @@ pub struct TopologyServiceEntry {
     pub offering: String,
     pub category: String,
     pub status: String,
-    /// Orchestration role: "primary", "dormant", "joining", "degraded".
+    /// Orchestration role: "primary", "replica", "joining", "degraded".
     /// `None` when orchestration is not active for this offering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,

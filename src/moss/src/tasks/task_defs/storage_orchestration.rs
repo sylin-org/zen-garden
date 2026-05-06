@@ -1,6 +1,6 @@
 //! BackgroundTask: storage-orchestration (ARCH-0015, STORAGE-0006)
 //!
-//! Long-running task that assigns Primary/Dormant roles for replicated
+//! Long-running task that assigns Primary/Replica roles for replicated
 //! seed banks.
 
 use std::future::Future;

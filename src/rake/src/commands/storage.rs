@@ -480,7 +480,7 @@ impl Command for ListStorageCommand {
                         };
                         let role_tag = match r.role {
                             StorageRole::Primary => " [primary]",
-                            StorageRole::Dormant => " [dormant]",
+                            StorageRole::Replica => " [replica]",
                         };
                         let cap = format_bytes(r.capacity_bytes);
                         println!(
@@ -1463,7 +1463,7 @@ impl Command for StorageStatusCommand {
                 let role = role_map
                     .get(&bank.id)
                     .copied()
-                    .unwrap_or(StorageRole::Dormant);
+                    .unwrap_or(StorageRole::Replica);
                 let pinned = pin_map.get(&bank.id).copied().unwrap_or(false);
 
                 let status_icon = if bank.online {

@@ -149,6 +149,7 @@ pub async fn put_gateway(
             ip: Some(registration.ip.clone()),
             port: Some(registration.port),
             uri_template: registration.uri_template.clone(),
+            role: None,
         },
         capabilities: Vec::new(),
         storage: None,

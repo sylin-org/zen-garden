@@ -591,7 +591,7 @@ pub async fn discover_v1(
             storage_id: entry.tool.tool.id.clone(),
             role: match sm.and_then(|s| s.role.as_deref()) {
                 Some(garden_common::constants::ROLE_PRIMARY) => StorageRole::Primary,
-                _ => StorageRole::Dormant,
+                _ => StorageRole::Replica,
             },
             pinned: sm.and_then(|s| s.pin_id.as_ref()).is_some(),
             pin_id: sm.and_then(|s| s.pin_id.clone()),

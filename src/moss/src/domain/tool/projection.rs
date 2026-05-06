@@ -88,6 +88,7 @@ pub async fn project_local_tools(state: &Moss) -> Vec<GardenTool> {
                 ip: None,
                 port: None,
                 uri_template: None,
+                role: None,
             },
             capabilities: Vec::new(),
             storage: Some(garden_common::tools::StorageMetadata {
@@ -162,6 +163,10 @@ async fn offering_to_garden_tool(
         .collect();
 
     let status_str = offering.status.to_string().to_ascii_lowercase();
+    let role = offering
+        .orchestration
+        .as_ref()
+        .map(|o| o.role.to_string());
 
     GardenTool {
         fqid,
@@ -183,6 +188,7 @@ async fn offering_to_garden_tool(
             ip: Some(conn.ip),
             port: Some(conn.port),
             uri_template: None,
+            role,
         },
         capabilities,
         storage: None,

@@ -53,7 +53,7 @@ pub struct LocalStorage {
     pub replica_set_name: String,
     /// Mount path on this stone.
     pub mount_path: PathBuf,
-    /// Current role (Primary / Dormant).
+    /// Current role (Primary / Replica).
     pub role: StorageRole,
     /// Whether content is encrypted.
     pub encrypted: bool,
@@ -78,7 +78,7 @@ impl StorageRoute {
     /// Resolve a storage name to a route decision for **read** operations.
     ///
     /// Read routing: local storage is used regardless of role (Primary or
-    /// Dormant can both serve reads). If not found locally, routes to the
+    /// Replica can both serve reads). If not found locally, routes to the
     /// remote Primary.
     pub async fn for_read(
         name: &str,
@@ -100,7 +100,7 @@ impl StorageRoute {
     /// Resolve a storage name to a route decision for **write** operations.
     ///
     /// Write routing: only the Primary replica accepts writes. If the local
-    /// storage is Dormant, the request is proxied to the remote Primary.
+    /// storage is Replica, the request is proxied to the remote Primary.
     pub async fn for_write(
         name: &str,
         volumes: &Volumes,
@@ -115,11 +115,11 @@ impl StorageRoute {
 
             debug!(
                 storage = %name,
-                "Local storage is Dormant, routing write to remote Primary"
+                "Local storage is Replica, routing write to remote Primary"
             );
         }
 
-        // Local is absent or Dormant — find remote Primary
+        // Local is absent or Replica — find remote Primary
         find_remote(name, registry, stone_id)
             .await
             .context(format!("No Primary replica for storage '{}'", name))
@@ -289,21 +289,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_read_accepts_dormant() {
+    async fn test_resolve_read_accepts_replica() {
         let volumes = new_volumes();
         let registry = new_registry();
         {
             let mut map = volumes.write().await;
             map.insert(
                 "/dev/sda1".into(),
-                make_volume("id-1", "photos", StorageRole::Dormant, "/mnt/photos"),
+                make_volume("id-1", "photos", StorageRole::Replica, "/mnt/photos"),
             );
         }
 
         let route = StorageRoute::for_read("photos", &volumes, &registry, "stone-01")
             .await
             .unwrap();
-        assert!(matches!(route, StorageRoute::Local(l) if l.role == StorageRole::Dormant));
+        assert!(matches!(route, StorageRoute::Local(l) if l.role == StorageRole::Replica));
     }
 
     #[tokio::test]
@@ -334,14 +334,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_write_rejects_dormant_no_remote() {
+    async fn test_resolve_write_rejects_replica_no_remote() {
         let volumes = new_volumes();
         let registry = new_registry();
         {
             let mut map = volumes.write().await;
             map.insert(
                 "/dev/sda1".into(),
-                make_volume("id-1", "photos", StorageRole::Dormant, "/mnt/photos"),
+                make_volume("id-1", "photos", StorageRole::Replica, "/mnt/photos"),
             );
         }
 
@@ -393,7 +393,7 @@ mod tests {
             );
             map.insert(
                 "/dev/sdb1".into(),
-                make_volume("id-2", "backups", StorageRole::Dormant, "/mnt/backups"),
+                make_volume("id-2", "backups", StorageRole::Replica, "/mnt/backups"),
             );
         }
 

@@ -349,7 +349,7 @@ pub enum StorageEvent {
         new_name: String,
         timestamp: DateTime<Utc>,
     },
-    /// A device's storage role changed (Primary, Dormant, etc.)
+    /// A device's storage role changed (Primary, Replica, etc.)
     StorageRoleChanged {
         device_id: String,
         replica_set_id: String,

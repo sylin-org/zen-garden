@@ -214,8 +214,8 @@ pub async fn storage_overview_v1(
                 .unwrap_or(garden_common::storage::StorageRole::Primary)
         } else {
             match sm.and_then(|s| s.role.as_deref()) {
-                Some(garden_common::constants::ROLE_DORMANT) => {
-                    garden_common::storage::StorageRole::Dormant
+                Some(garden_common::constants::ROLE_REPLICA) => {
+                    garden_common::storage::StorageRole::Replica
                 }
                 _ => garden_common::storage::StorageRole::Primary,
             }
@@ -1837,7 +1837,7 @@ pub async fn unpin_bank_v1(
 /// GET /api/v1/stone/storage/banks/:name/changes?since={cursor}
 ///
 /// Pull changelog entries from a Primary seed bank.
-/// Dormant replicas call this on remote Primaries to fetch mutations.
+/// Replica banks call this on remote Primaries to fetch mutations.
 ///
 /// Returns `ChangesResponse { cursor, changes }`.
 pub async fn bank_changes_v1(
@@ -1906,7 +1906,7 @@ pub struct StorageStreamQuery {
 ///
 /// SSE "doorbell" for storage mutations on this stone.
 /// Emits lightweight `storage.tick` events when the changelog advances.
-/// Dormant replicas subscribe to this on the Primary stone.
+/// Replica banks subscribe to this on the Primary stone.
 ///
 /// Each event is ~100 bytes — the actual data is fetched via the
 /// `/bank/{id}/changes` pull endpoint.

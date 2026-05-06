@@ -42,7 +42,7 @@ pub struct CompiledOffering {
     #[serde(default)]
     pub network: NetworkRequirements,
     /// How instances coordinate across stones (ORCH-0006).
-    /// `Independent` (default) = no election. `Elected` = Primary/Dormant roles.
+    /// `Independent` (default) = no election. `Elected` = Primary/Replica roles.
     #[serde(default)]
     pub coordination: garden_common::CoordinationMode,
     /// GPU device requests from manifest `deploy.resources.reservations.devices`.

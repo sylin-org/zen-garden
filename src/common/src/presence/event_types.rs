@@ -87,7 +87,7 @@ pub const OFFERING_ELECTION_STARTED: &str = "offering.election.started";
 pub const OFFERING_ROLE_PROMOTED: &str = "offering.role.promoted";
 /// Offering demoted from primary role
 pub const OFFERING_ROLE_DEMOTED: &str = "offering.role.demoted";
-/// Offering sync completed (dormant replica pull)
+/// Offering sync completed (replica pull)
 pub const OFFERING_SYNC_COMPLETED: &str = "offering.sync.completed";
 /// Offering health degraded (consecutive failures)
 pub const OFFERING_HEALTH_DEGRADED: &str = "offering.health.degraded";

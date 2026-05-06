@@ -268,7 +268,7 @@ impl Moss {
         // remote stones learn about the change.
         crate::domain::tool::projection::reproject_and_publish(self).await;
 
-        // Nudge orchestration so role resolution (Primary/Dormant) reacts
+        // Nudge orchestration so role resolution (Primary/Replica) reacts
         // immediately to connect/disconnect/role changes (STORAGE-0018).
         self.current.storage.coordination.nudge.notify_one();
     }

@@ -538,7 +538,7 @@ pub struct Offering {
     // ORCHESTRATION (ORCH-0006)
     // ═══════════════════════════════════════════════════════════════════════
     /// How instances coordinate across stones.
-    /// `Independent` (default) = no election. `Elected` = Primary/Dormant roles.
+    /// `Independent` (default) = no election. `Elected` = Primary/Replica roles.
     #[serde(default)]
     pub coordination: CoordinationMode,
 }

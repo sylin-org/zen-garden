@@ -37,10 +37,10 @@ pub const DEGRADATION_CONSECUTIVE_FAILURES: u32 = 3;
 pub const DEGRADATION_CHECK_INTERVAL_SECS: u64 = 10;
 
 // ============================================================================
-// Sync (Dormant → Primary data pull)
+// Sync (Replica → Primary data pull)
 // ============================================================================
 
-/// Dormant replica poll interval (seconds).
+/// Replica poll interval (seconds).
 pub const SYNC_CHECK_INTERVAL_SECS: u64 = 60;
 
 // ============================================================================

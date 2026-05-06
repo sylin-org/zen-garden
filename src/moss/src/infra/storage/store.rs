@@ -27,7 +27,7 @@ const MANIFEST_REL: &str = ".zen-garden/manifest.json";
 /// Changelog file path relative to mount root.
 const CHANGELOG_REL: &str = ".zen-garden/changelog.jsonl";
 
-/// Last-synced cursor persisted by Dormant replicas.
+/// Last-synced cursor persisted by Replica banks.
 const LAST_CURSOR_REL: &str = ".zen-garden/last_cursor";
 
 /// Pin file path relative to mount root — persists pin_id across restarts.
@@ -696,7 +696,7 @@ impl ContentStore {
         // --- stale cursor detection ---
         // If the caller provided a cursor but the changelog's oldest entry is
         // newer than that cursor, the requested history has been compacted away.
-        // Signal full_sync_required so the Dormant reconciles from scratch.
+        // Signal full_sync_required so the Replica reconciles from scratch.
         if let Some(requested) = since
             && !requested.is_empty()
         {
@@ -790,7 +790,7 @@ impl ContentStore {
         })
     }
 
-    /// Read the last-synced cursor (used by Dormant replicas).
+    /// Read the last-synced cursor (used by Replica banks).
     pub async fn read_last_cursor(&self) -> Option<String> {
         let path = self.mount_root.join(LAST_CURSOR_REL);
         tokio::fs::read_to_string(&path)
@@ -800,7 +800,7 @@ impl ContentStore {
             .filter(|s| !s.is_empty())
     }
 
-    /// Persist the last-synced cursor (used by Dormant replicas).
+    /// Persist the last-synced cursor (used by Replica banks).
     pub async fn write_last_cursor(&self, cursor: &str) -> Result<()> {
         let path = self.mount_root.join(LAST_CURSOR_REL);
         if let Some(parent) = path.parent() {
@@ -970,7 +970,7 @@ impl ContentStore {
     /// Walk existing files and seed the changelog with `C` entries.
     ///
     /// Called during `adopt` when a populated directory is being brought
-    /// under management. This gives Dormant replicas a baseline to sync from.
+    /// under management. This gives Replica banks a baseline to sync from.
     ///
     /// Skips `.zen-garden/` internals and the `Zen Garden` symlink.
     /// Returns the number of files cataloged.

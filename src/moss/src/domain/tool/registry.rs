@@ -766,6 +766,7 @@ mod tests {
                 ip: None,
                 port: None,
                 uri_template: None,
+                role: None,
             },
             capabilities: vec![Capability {
                 cap_type: "model".to_string(),
@@ -1022,7 +1023,7 @@ mod tests {
         bank2.storage = Some(StorageMetadata {
             replica_set_id: String::new(),
             replica_set_name: String::new(),
-            role: Some("dormant".to_string()),
+            role: Some("replica".to_string()),
             capacity_bytes: 1_000_000_000,
             used_bytes: 500_000_000,
             visibility: "open".to_string(),

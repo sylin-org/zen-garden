@@ -1,6 +1,6 @@
 //! Seed bank replication background task (STORAGE-0006 Phase 4e)
 //!
-//! Runs on stones that host **Dormant** seed banks. For each Dormant bank,
+//! Runs on stones that host **Replica** seed banks. For each Replica bank,
 //! the task pulls changes from the Primary's changelog endpoint and applies
 //! them locally — downloading new/modified files and deleting removed ones.
 //!
@@ -15,8 +15,8 @@
 //! ## Flow
 //!
 //! ```text
-//! 1. Identify local Dormant seed banks (from seed_bank_roles)
-//! 2. For each Dormant:
+//! 1. Identify local Replica seed banks (from seed_bank_roles)
+//! 2. For each Replica:
 //!    a. Resolve Primary stone + bank ID from storage_cache
 //!    b. Read local last_cursor
 //!    c. GET /changes?since={cursor} from Primary
@@ -67,7 +67,7 @@ fn api_relative_path(changelog_path: &str) -> Option<&str> {
 /// Background task — spawned at daemon startup.
 ///
 /// Runs for the daemon's entire lifetime. Each tick it checks local
-/// Dormant seed banks and syncs them from their respective Primaries.
+/// Replica seed banks and syncs them from their respective Primaries.
 pub async fn storage_replication_task(state: Moss, token: CancellationToken) -> Result<()> {
     info!("Seed bank replication task starting");
 
@@ -119,15 +119,15 @@ pub async fn storage_replication_task(state: Moss, token: CancellationToken) -> 
 // Replication tick
 // ============================================================================
 
-/// Run one replication cycle for all local Dormant seed banks.
+/// Run one replication cycle for all local Replica seed banks.
 async fn replication_tick(state: &Moss) -> Result<()> {
-    // Collect Dormant volumes from unified collection
+    // Collect Replica volumes from unified collection
     let map = state.current.storage.volumes.read().await;
-    let dormant_banks: Vec<(String, String, std::path::PathBuf)> = map
+    let replica_banks: Vec<(String, String, std::path::PathBuf)> = map
         .values()
         .filter_map(|vol| {
             let mgmt = vol.management()?;
-            if mgmt.role != StorageRole::Dormant {
+            if mgmt.role != StorageRole::Replica {
                 return None;
             }
             Some((mgmt.name.clone(), mgmt.id.clone(), vol.mount_path().clone()))
@@ -135,17 +135,17 @@ async fn replication_tick(state: &Moss) -> Result<()> {
         .collect();
     drop(map);
 
-    if dormant_banks.is_empty() {
+    if replica_banks.is_empty() {
         return Ok(());
     }
 
-    for (name, id, mount_path) in &dormant_banks {
-        if let Err(e) = sync_dormant_bank(state, name, id, mount_path.as_path()).await {
+    for (name, id, mount_path) in &replica_banks {
+        if let Err(e) = sync_replica_bank(state, name, id, mount_path.as_path()).await {
             warn!(
                 bank = %name,
                 bank_id = %id,
                 error = ?e,
-                "Failed to sync Dormant seed bank"
+                "Failed to sync Replica seed bank"
             );
         }
     }
@@ -157,8 +157,8 @@ async fn replication_tick(state: &Moss) -> Result<()> {
 // Per-bank sync
 // ============================================================================
 
-/// Sync a single Dormant seed bank from its Primary.
-async fn sync_dormant_bank(
+/// Sync a single Replica seed bank from its Primary.
+async fn sync_replica_bank(
     state: &Moss,
     name: &str,
     local_bank_id: &str,
@@ -234,7 +234,7 @@ async fn sync_dormant_bank(
             local_bank_id = %local_bank_id,
             "Cursor compacted away — starting full directory reconciliation"
         );
-        full_sync_dormant_bank(state, name, &peer, &local_store, mount_path).await?;
+        full_sync_replica_bank(state, name, &peer, &local_store, mount_path).await?;
         // After full sync, persist the Primary's current cursor so future
         // syncs resume incrementally from this point.
         if !changes_resp.cursor.is_empty() {
@@ -348,7 +348,7 @@ async fn sync_dormant_bank(
 /// 2. Walk local objects directory
 /// 3. Download missing or modified files from Primary
 /// 4. Delete local files that no longer exist on Primary
-async fn full_sync_dormant_bank(
+async fn full_sync_replica_bank(
     state: &Moss,
     name: &str,
     peer: &PeerAddress,

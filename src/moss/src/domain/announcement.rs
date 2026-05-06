@@ -70,7 +70,7 @@ mod tests {
         ));
         assert!(should_announce(
             &CoordinationMode::Independent,
-            &OfferingRole::Dormant
+            &OfferingRole::Replica
         ));
     }
 
@@ -82,7 +82,7 @@ mod tests {
         ));
         assert!(!should_announce(
             &CoordinationMode::Elected,
-            &OfferingRole::Dormant
+            &OfferingRole::Replica
         ));
         assert!(!should_announce(
             &CoordinationMode::Elected,

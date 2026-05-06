@@ -1,7 +1,7 @@
 //! Offering orchestration background task (ORCH-0001 Phase 3)
 //!
 //! Single background task managing the full offering orchestration lifecycle:
-//! - Role assignment (Primary / Dormant / Joining / Degraded)
+//! - Role assignment (Primary / Replica / Joining / Degraded)
 //! - Primary heartbeat monitoring via topology cache (chirps)
 //! - Dual-primary resolution (deterministic: lower stone_id yields)
 //! - Election triggering on primary absence
@@ -131,7 +131,7 @@ async fn startup_reconciliation(state: &Moss, token: &CancellationToken) -> Resu
                 other_primary = %other_primary_id,
                 "Startup reconciliation: yielding Primary to existing holder"
             );
-            transition_role(state, &offering.offering_id, &fqn, OfferingRole::Dormant).await?;
+            transition_role(state, &offering.offering_id, &fqn, OfferingRole::Replica).await?;
         }
     }
 
@@ -302,15 +302,15 @@ async fn orchestration_tick(state: &Moss) -> Result<()> {
             OfferingRole::Primary => {
                 dispatch_primary(state, offering_id, &fqn, orch).await?;
             }
-            OfferingRole::Dormant => {
-                dispatch_dormant(state, offering_id, &fqn, orch).await?;
+            OfferingRole::Replica => {
+                dispatch_replica(state, offering_id, &fqn, orch).await?;
             }
             OfferingRole::Joining => {
                 // No-op until Phase 5 (sync). Joining implies the offering is
                 // bootstrapping and not yet ready to participate.
             }
             OfferingRole::Degraded => {
-                // Degraded stone waits. A dormant replica will detect the
+                // Degraded stone waits. A replica will detect the
                 // degradation via chirps and trigger a fitness election.
                 // No action needed here — the election result handler promotes
                 // the winner.
@@ -342,7 +342,7 @@ async fn dispatch_primary(
                 other_id = %other_primary_id,
                 "Dual-primary detected: yielding (lower stone_id)"
             );
-            transition_role(state, offering_id, fqn, OfferingRole::Dormant).await?;
+            transition_role(state, offering_id, fqn, OfferingRole::Replica).await?;
         } else {
             tracing::debug!(
                 offering = %fqn,
@@ -354,8 +354,8 @@ async fn dispatch_primary(
     Ok(())
 }
 
-/// Dormant: watch primary heartbeat via topology cache.
-async fn dispatch_dormant(
+/// Replica: watch primary heartbeat via topology cache.
+async fn dispatch_replica(
     state: &Moss,
     offering_id: &str,
     fqn: &str,
@@ -487,9 +487,9 @@ async fn handle_election_result(
         tracing::info!(
             offering = %fqn,
             winner_id = %winner.stone_id,
-            "Election lost — transitioning to Dormant"
+            "Election lost — transitioning to Replica"
         );
-        transition_role(state, offering_id, fqn, OfferingRole::Dormant).await?;
+        transition_role(state, offering_id, fqn, OfferingRole::Replica).await?;
         update_primary_stone_id(state, offering_id, &winner.stone_id).await?;
     }
     Ok(())

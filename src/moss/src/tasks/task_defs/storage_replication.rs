@@ -1,6 +1,6 @@
 //! BackgroundTask: storage-replication (ARCH-0015, STORAGE-0006 Phase 4e)
 //!
-//! Long-running task that syncs Dormant seed banks from their Primaries.
+//! Long-running task that syncs Replica seed banks from their Primaries.
 
 use std::future::Future;
 use std::pin::Pin;

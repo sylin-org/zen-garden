@@ -29,7 +29,7 @@
 //! plant flow checks the store before honouring the event. We
 //! tolerate this gap because the alternative (event last) means
 //! a successful capture isn't visible to peers until the next
-//! event, which is worse for the dormant-replica catch-up story
+//! event, which is worse for the replica catch-up story
 //! M3 wants. See [ORCH-0039] §M2 cut.
 //!
 //! [ORCH-0039]: ../../../../docs/decisions/ORCH-0039-seed-based-offering-replication.md

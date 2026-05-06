@@ -104,6 +104,41 @@ interface PlantSnapshotResult {
   digest_drift: string
 }
 
+/// One member of an offering set, in the shape returned by the
+/// Tauri `get_offering_sets` command (which is itself a projection
+/// over Moss's `/api/v1/sets/offerings/{fqn}` per ARCH-0038).
+interface OfferingSetMember {
+  stone_id: string
+  stone_name: string
+  endpoint: string
+  /// `"primary" | "replica" | "joining" | "degraded"`, or `null` when
+  /// orchestration hasn't reported yet.
+  role: string | null
+  status: string
+  ready: boolean
+}
+
+interface OfferingSet {
+  name: string
+  primary_stone: string | null
+  members: OfferingSetMember[]
+}
+
+/// Per-stone offering badge — what we show on the stone card and
+/// what `garden-sphere`'s `computeEdges` needs in `stone.offerings`.
+interface StoneOfferingEntry {
+  /// FQN of the set this stone is a member of (drives edge identity).
+  offering: string
+  /// Optional instance qualifier (FQN's instance segment when present).
+  instance_name?: string
+  /// This stone's role within the set.
+  role: string | null
+  /// True when this stone is the set's primary.
+  is_primary: boolean
+  /// Other stones in the same set (peers).
+  peer_stones: string[]
+}
+
 const DRAG_MIME = "application/zen-garden+json"
 
 interface CanvasProps {
@@ -132,6 +167,12 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
   const [stones, setStones] = useState<AwareStone[]>([])
   const [banks, setBanks] = useState<GardenBankSummary[]>([])
   const [tended, setTended] = useState<TendedStone | null>(null)
+  /// Logical sets fetched from `/api/v1/sets/offerings`. The canvas
+  /// uses these for two things:
+  ///   - Inter-stone edges: same-FQN members get connected on the sphere.
+  ///   - Per-stone role badges: stone card shows which sets this stone
+  ///     is in and what role it plays.
+  const [offeringSets, setOfferingSets] = useState<OfferingSet[]>([])
   const [error, setError] = useState<string | null>(null)
 
   /// Services on the *currently selected stone* (only fetched when
@@ -263,14 +304,16 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
   // ── Initial load + topology subscription ─────────────────────
   const refresh = useCallback(async () => {
     try {
-      const [s, t, storage] = await Promise.all([
+      const [s, t, storage, sets] = await Promise.all([
         invoke<AwareStone[]>("get_topology"),
         invoke<TendedStone | null>("get_tended"),
         invoke<StoragePayload | null>("get_storage"),
+        invoke<OfferingSet[]>("get_offering_sets"),
       ])
       setStones(s)
       setTended(t)
       setBanks(storage?.banks ?? [])
+      setOfferingSets(sets)
       setError(null)
     } catch (e) {
       setError(String(e))
@@ -520,6 +563,55 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
     // the CSS class on the canvas-mount handles the color shift.
   }, [dragOver])
 
+  /// Map stone_name → list of `{offering, role, peer_stones, ...}` entries
+  /// derived from `offeringSets`. Used both to populate
+  /// `garden-sphere`'s per-stone `offerings` array (drives edges) and
+  /// to render role badges on the stone card.
+  ///
+  /// Keyed by stone_name (not stone_id) because set members from the
+  /// API carry stone_name directly. Topology is also keyed by
+  /// stone_name in awareness; the canvas reconciles both.
+  const stoneOfferings = useMemo(() => {
+    const map = new Map<string, StoneOfferingEntry[]>()
+    for (const set of offeringSets) {
+      // Parse FQN into offering + instance for serviceKey() match.
+      const [offering, instance] = parseFqn(set.name)
+      const peerSet = set.members.map((m) => m.stone_name)
+      for (const member of set.members) {
+        const entry: StoneOfferingEntry = {
+          offering,
+          instance_name: instance,
+          role: member.role,
+          is_primary: set.primary_stone === member.stone_name,
+          peer_stones: peerSet.filter((s) => s !== member.stone_name),
+        }
+        const existing = map.get(member.stone_name) ?? []
+        existing.push(entry)
+        map.set(member.stone_name, existing)
+      }
+    }
+    return map
+  }, [offeringSets])
+
+  /// Push the latest per-stone offerings into the sphere whenever the
+  /// derived map changes. The sphere's `updateStone(id, { offerings })`
+  /// triggers `_rebuildEdges` only when the `offerings` field is in
+  /// the patch, so the cost is bounded.
+  useEffect(() => {
+    const sphere = sphereRef.current
+    if (!sphere) return
+    for (const stone of stones) {
+      const entries = stoneOfferings.get(stone.stone_name) ?? []
+      // Sphere's computeEdges reads `{offering, instance_name}` per entry.
+      sphere.updateStone(stone.stone_id, {
+        offerings: entries.map((e) => ({
+          offering: e.offering,
+          instance_name: e.instance_name ?? null,
+        })),
+      })
+    }
+  }, [stoneOfferings, stones])
+
   const selectedStone = useMemo(
     () =>
       selectedKind === "stone"
@@ -588,6 +680,9 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
             tendedName={tended?.stone_name}
             position={tracked.selected.pos}
             services={selectedServices}
+            setMemberships={
+              stoneOfferings.get(selectedStone.stone_name) ?? []
+            }
             onDismiss={() => {
               sphereRef.current?.resetView()
               setSelectedId(null)
@@ -694,6 +789,10 @@ interface CanvasStoneCardProps {
   tendedName: string | undefined
   position: { x: number; y: number }
   services: ServiceLite[]
+  /// Sets this stone is a member of (per ARCH-0038). Drives the
+  /// role-and-peers section under the basic info; absent for stones
+  /// that aren't in any elected-offering set.
+  setMemberships: StoneOfferingEntry[]
   onDismiss: () => void
 }
 
@@ -702,6 +801,7 @@ function CanvasStoneCard({
   tendedName,
   position,
   services,
+  setMemberships,
   onDismiss,
 }: CanvasStoneCardProps): JSX.Element {
   const isTended = tendedName === stone.stone_name
@@ -741,6 +841,48 @@ function CanvasStoneCard({
         </div>
       </dl>
       {isTended && <div className="canvas-card-tended-pill">tended</div>}
+
+      {setMemberships.length > 0 && (
+        <section className="canvas-card-sets">
+          <div className="canvas-card-section-title">Sets</div>
+          <ul className="canvas-card-set-list">
+            {setMemberships.map((m) => (
+              <li
+                key={`${m.offering}${m.instance_name ?? ""}`}
+                className="canvas-card-set-row"
+              >
+                <span className="canvas-card-set-fqn">
+                  {m.offering}
+                  {m.instance_name && (
+                    <span className="canvas-card-set-instance">
+                      {"::"}
+                      {m.instance_name}
+                    </span>
+                  )}
+                </span>
+                <span
+                  className={`canvas-card-set-role canvas-card-set-role-${
+                    m.role ?? "unknown"
+                  }`}
+                  title={`Role on this set: ${m.role ?? "unknown"}`}
+                >
+                  {m.role ?? "—"}
+                </span>
+                {m.peer_stones.length > 0 && (
+                  <span
+                    className="canvas-card-set-peers"
+                    title={`Peers: ${m.peer_stones
+                      .map(displayName)
+                      .join(", ")}`}
+                  >
+                    +{m.peer_stones.length}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {services.length > 0 && (
         <section className="canvas-card-offerings">
@@ -923,6 +1065,16 @@ function CanvasHoverChip({
 
 function displayName(stoneName: string): string {
   return stoneName.startsWith("stone-") ? stoneName.slice(6) : stoneName
+}
+
+/// Split an FQN into `[offering, instance?]`. Accepts both
+/// `mongodb` (bare type) and `mongodb::prd` (V2 with instance). The
+/// older `mongodb:prd` legacy shape is normalised by Moss before the
+/// FQN reaches this client, so we don't handle it here.
+function parseFqn(fqn: string): [string, string | undefined] {
+  const idx = fqn.indexOf("::")
+  if (idx < 0) return [fqn, undefined]
+  return [fqn.slice(0, idx), fqn.slice(idx + 2)]
 }
 
 function healthDotClass(health: string): string {

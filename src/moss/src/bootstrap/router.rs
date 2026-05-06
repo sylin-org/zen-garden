@@ -199,6 +199,24 @@ pub fn configure_public(state: Moss) -> Router {
             "/api/v1/garden/banks/{moniker}/volumes",
             get(api::v1::banks::list_garden_bank_volumes),
         )
+        // ── Logical sets (ARCH-0038) ──────────────────────────────────────
+        .route("/api/v1/sets", get(api::v1::sets::list_kinds))
+        .route(
+            "/api/v1/sets/offerings",
+            get(api::v1::sets::offerings::list_offering_sets),
+        )
+        .route(
+            "/api/v1/sets/offerings/{fqn}",
+            get(api::v1::sets::offerings::get_offering_set),
+        )
+        .route(
+            "/api/v1/sets/banks",
+            get(api::v1::sets::banks::list_bank_sets),
+        )
+        .route(
+            "/api/v1/sets/banks/{moniker}",
+            get(api::v1::sets::banks::get_bank_set),
+        )
         .route(
             "/api/v1/stone/presence/stream",
             get(api::v1::presence::stream_stone_presence),
@@ -795,6 +813,24 @@ pub fn configure(state: Moss) -> Router {
         .route(
             "/api/v1/stone/banks/{moniker}/unpin",
             post(api::v1::banks::unpin_bank),
+        )
+        // ── Logical sets (ARCH-0038) ──────────────────────────────────────
+        .route("/api/v1/sets", get(api::v1::sets::list_kinds))
+        .route(
+            "/api/v1/sets/offerings",
+            get(api::v1::sets::offerings::list_offering_sets),
+        )
+        .route(
+            "/api/v1/sets/offerings/{fqn}",
+            get(api::v1::sets::offerings::get_offering_set),
+        )
+        .route(
+            "/api/v1/sets/banks",
+            get(api::v1::sets::banks::list_bank_sets),
+        )
+        .route(
+            "/api/v1/sets/banks/{moniker}",
+            get(api::v1::sets::banks::get_bank_set),
         )
         // Stone storage (seed banks on THIS stone) — STORAGE-0009
         .route(

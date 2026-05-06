@@ -1,6 +1,6 @@
 //! Seed bank orchestration background task (STORAGE-0006)
 //!
-//! Assigns Primary / Dormant roles to seed banks based on garden-wide
+//! Assigns Primary / Replica roles to seed banks based on garden-wide
 //! storage beacons. Mirrors the offering orchestration pattern:
 //!
 //! - Startup reconciliation: wait 3 s before asserting Primary
@@ -29,7 +29,7 @@ const ORCHESTRATION_TICK_SECS: u64 = 3;
 const COMPACTION_INTERVAL_SECS: u64 = 3_600;
 
 /// Changelog retention window. Entries older than this are pruned.
-/// A Dormant whose cursor falls behind this window triggers full sync.
+/// A Replica whose cursor falls behind this window triggers full sync.
 const CHANGELOG_RETENTION: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
 
 // ============================================================================
@@ -39,7 +39,7 @@ const CHANGELOG_RETENTION: std::time::Duration = std::time::Duration::from_secs(
 /// Background task — spawned at daemon startup.
 ///
 /// Runs for the daemon's entire lifetime. Every tick it scans local seed banks,
-/// compares against garden-wide beacons, and assigns Primary/Dormant per FQN.
+/// compares against garden-wide beacons, and assigns Primary/Replica per FQN.
 pub async fn storage_orchestration_task(state: Moss, token: CancellationToken) -> Result<()> {
     info!("Seed bank orchestration task starting");
 
@@ -86,7 +86,7 @@ pub async fn storage_orchestration_task(state: Moss, token: CancellationToken) -
 ///
 /// During this window, beacons from other stones may arrive declaring
 /// themselves Primary for a given seed bank name. If that happens, the
-/// local bank yields to Dormant.
+/// local bank yields to Replica.
 async fn startup_reconciliation(state: &Moss, token: &CancellationToken) -> Result<()> {
     info!(
         window_ms = STARTUP_RECONCILIATION_MS,
@@ -118,7 +118,7 @@ async fn startup_reconciliation(state: &Moss, token: &CancellationToken) -> Resu
 /// For each local seed bank name:
 /// 1. Check if any remote stone already claims Primary for that name.
 /// 2. If no remote Primary → assert Primary.
-/// 3. If remote Primary exists → become Dormant.
+/// 3. If remote Primary exists → become Replica.
 /// 4. If both local and remote claim Primary (dual-primary) → lower stone_id yields.
 /// 5. Pinned Primary always wins — never reassigned by orchestration.
 async fn orchestration_tick(state: &Moss) -> Result<()> {
@@ -183,7 +183,7 @@ async fn orchestration_tick(state: &Moss) -> Result<()> {
         // Auto-unpin: if we had a pin but lost to a higher remote pin_id,
         // clear the local pin so the winner is undisputed.
         if let Some(ref local_pid) = local_pin_id
-            && new_role == StorageRole::Dormant
+            && new_role == StorageRole::Replica
             && let Some((_, _, Some(ref remote_pid))) = remote_primary
             && remote_pid > local_pid
         {
@@ -317,7 +317,7 @@ async fn compact_primary_changelogs(state: &Moss) {
 /// 4. Only remote pinned → remote wins.
 /// 5. Neither pinned → current Primary with higher stone_id wins.
 ///
-/// A locally-pinned Dormant will promote to Primary (branches 2-3),
+/// A locally-pinned Replica will promote to Primary (branches 2-3),
 /// enabling "claim Primary from any replica" semantics.
 ///
 /// Arguments:
@@ -340,19 +340,19 @@ fn resolve_role(
                     if lp > rp {
                         StorageRole::Primary
                     } else {
-                        StorageRole::Dormant
+                        StorageRole::Replica
                     }
                 }
                 // Only local pinned → local wins (claim Primary)
                 (Some(_), None) => StorageRole::Primary,
                 // Only remote pinned → remote wins
-                (None, Some(_)) => StorageRole::Dormant,
+                (None, Some(_)) => StorageRole::Replica,
                 // Neither pinned → current Primary with higher stone_id wins
                 (None, None) => {
                     if current_role == StorageRole::Primary && my_stone_id > remote_stone_id {
                         StorageRole::Primary
                     } else {
-                        StorageRole::Dormant
+                        StorageRole::Replica
                     }
                 }
             }
@@ -438,9 +438,9 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_role_no_remote_even_if_dormant() {
-        // Was Dormant but remote disappeared → promote to Primary.
-        let role = resolve_role(None, StorageRole::Dormant, None, "stone-aaa");
+    fn test_resolve_role_no_remote_even_if_replica() {
+        // Was Replica but remote disappeared → promote to Primary.
+        let role = resolve_role(None, StorageRole::Replica, None, "stone-aaa");
         assert_eq!(role, StorageRole::Primary);
     }
 
@@ -465,7 +465,7 @@ mod tests {
             Some(("stone-zzz", Some("019c6d5a-0000-7000-8000-000000000002"))),
             "stone-aaa",
         );
-        assert_eq!(role, StorageRole::Dormant);
+        assert_eq!(role, StorageRole::Replica);
     }
 
     #[test]
@@ -489,7 +489,7 @@ mod tests {
             Some(("stone-aaa", Some("019c6d5a-0000-7000-8000-000000000001"))),
             "stone-zzz",
         );
-        assert_eq!(role, StorageRole::Dormant);
+        assert_eq!(role, StorageRole::Replica);
     }
 
     #[test]
@@ -501,7 +501,7 @@ mod tests {
             Some(("stone-zzz", None)),
             "stone-aaa",
         );
-        assert_eq!(role, StorageRole::Dormant);
+        assert_eq!(role, StorageRole::Replica);
     }
 
     #[test]
@@ -517,24 +517,24 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_role_dormant_stays_dormant_unpinned() {
-        // Already Dormant with remote Primary, neither pinned → stay Dormant.
+    fn test_resolve_role_replica_stays_replica_unpinned() {
+        // Already Replica with remote Primary, neither pinned → stay Replica.
         let role = resolve_role(
             None,
-            StorageRole::Dormant,
+            StorageRole::Replica,
             Some(("stone-aaa", None)),
             "stone-zzz",
         );
-        assert_eq!(role, StorageRole::Dormant);
+        assert_eq!(role, StorageRole::Replica);
     }
 
     #[test]
-    fn test_resolve_role_dormant_pinned_promotes() {
-        // Dormant + locally pinned, remote not pinned → promote to Primary.
+    fn test_resolve_role_replica_pinned_promotes() {
+        // Replica + locally pinned, remote not pinned → promote to Primary.
         // This is the "claim Primary from any replica" use case.
         let role = resolve_role(
             Some("019c6d5a-0000-7000-8000-000000000001"),
-            StorageRole::Dormant,
+            StorageRole::Replica,
             Some(("stone-aaa", None)),
             "stone-zzz",
         );
@@ -542,11 +542,11 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_role_dormant_pinned_newer_promotes() {
-        // Dormant + locally pinned with newer pin_id → promote to Primary.
+    fn test_resolve_role_replica_pinned_newer_promotes() {
+        // Replica + locally pinned with newer pin_id → promote to Primary.
         let role = resolve_role(
             Some("019c6d5a-0000-7000-8000-000000000002"),
-            StorageRole::Dormant,
+            StorageRole::Replica,
             Some(("stone-aaa", Some("019c6d5a-0000-7000-8000-000000000001"))),
             "stone-zzz",
         );
@@ -554,15 +554,15 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_role_dormant_pinned_older_stays() {
-        // Dormant + locally pinned but older pin_id → stay Dormant.
+    fn test_resolve_role_replica_pinned_older_stays() {
+        // Replica + locally pinned but older pin_id → stay Replica.
         let role = resolve_role(
             Some("019c6d5a-0000-7000-8000-000000000001"),
-            StorageRole::Dormant,
+            StorageRole::Replica,
             Some(("stone-aaa", Some("019c6d5a-0000-7000-8000-000000000002"))),
             "stone-zzz",
         );
-        assert_eq!(role, StorageRole::Dormant);
+        assert_eq!(role, StorageRole::Replica);
     }
 
     // -- build_cutoff_cursor --------------------------------------------------
@@ -634,6 +634,7 @@ mod tests {
                 ip: None,
                 port: None,
                 uri_template: None,
+                role: None,
             },
             capabilities: Vec::new(),
             storage: Some(StorageMetadata {
@@ -708,9 +709,9 @@ mod tests {
     }
 
     #[test]
-    fn test_find_remote_primary_ignores_dormant() {
+    fn test_find_remote_primary_ignores_replica() {
         let mut reg = GardenRegistryInner::default();
-        let tool = make_storage_tool("stone-2", "sb-2", "mybank", StorageRole::Dormant, None);
+        let tool = make_storage_tool("stone-2", "sb-2", "mybank", StorageRole::Replica, None);
         reg.upsert(
             tool,
             EntryOrigin::Announced {

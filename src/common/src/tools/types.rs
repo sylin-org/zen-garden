@@ -102,6 +102,17 @@ pub struct ServiceInfo {
     /// URI template before substitution (e.g. `"mongodb://{host}:{port}/?replicaSet=zen-garden"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uri_template: Option<String>,
+
+    /// Orchestration role for elected offerings: `"primary"`, `"replica"`,
+    /// `"joining"`, `"degraded"`. `None` for independent offerings or when
+    /// orchestration state hasn't been resolved yet (ARCH-0038).
+    ///
+    /// Stored as a string so beacons from peers running newer/older code
+    /// don't break the registry on receive — see `OfferingRole`'s lenient
+    /// `Deserialize`. Consumers comparing this value should match against
+    /// the canonical strings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }
 
 /// Typed capability entry.
@@ -127,7 +138,7 @@ pub struct StorageMetadata {
     /// Replica set display name (STORAGE-0013).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub replica_set_name: String,
-    /// Replication role: `"primary"`, `"dormant"`, or `None` if unassigned.
+    /// Replication role: `"primary"`, `"replica"`, or `None` if unassigned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     /// Total capacity in bytes.
@@ -569,6 +580,7 @@ mod tests {
                 ip: None,
                 port: None,
                 uri_template: None,
+                role: None,
             },
             capabilities: Vec::new(),
             storage: None,

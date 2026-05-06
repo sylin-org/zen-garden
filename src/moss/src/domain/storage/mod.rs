@@ -109,7 +109,7 @@ impl Storage {
 
 /// Coordination signals for the storage domain (ARCH-0029).
 ///
-/// Drives the background storage orchestration loop (Primary/Dormant
+/// Drives the background storage orchestration loop (Primary/Replica
 /// role assignment, tick aggregation, S3 listener lifecycle).
 ///
 /// Formerly `StorageOrchestration` in `domain::orchestration::storage`.

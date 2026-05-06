@@ -1,6 +1,6 @@
 //! BackgroundTask: offering-orchestration (ARCH-0015, ORCH-0001)
 //!
-//! Long-running task that manages Primary/Dormant/Joining/Degraded lifecycle
+//! Long-running task that manages Primary/Replica/Joining/Degraded lifecycle
 //! for replicated offerings.
 
 use std::future::Future;

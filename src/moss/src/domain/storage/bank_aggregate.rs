@@ -571,7 +571,7 @@ mod tests {
                     "/mnt/b",
                     "personal",
                     "rs-1",
-                    StorageRole::Dormant,
+                    StorageRole::Replica,
                 ),
             );
             map.insert(
@@ -626,7 +626,7 @@ mod tests {
                     "/mnt/a",
                     "photos",
                     "rs-1",
-                    StorageRole::Dormant,
+                    StorageRole::Replica,
                 ),
             );
             map.insert(
@@ -669,7 +669,7 @@ mod tests {
                     "/mnt/b",
                     "photos",
                     "rs-1",
-                    StorageRole::Dormant,
+                    StorageRole::Replica,
                 ),
             );
             map.insert(
@@ -707,7 +707,7 @@ mod tests {
                     "/mnt/b",
                     "photos",
                     "rs-1",
-                    StorageRole::Dormant,
+                    StorageRole::Replica,
                 ),
             );
         }
@@ -961,7 +961,7 @@ mod tests {
                     "/mnt/a",
                     "photos",
                     "rs-1",
-                    StorageRole::Dormant,
+                    StorageRole::Replica,
                 ),
             );
         }
@@ -1010,7 +1010,7 @@ mod tests {
                     "/mnt/a",
                     "photos",
                     "rs-1",
-                    StorageRole::Dormant,
+                    StorageRole::Replica,
                 ),
             );
         }

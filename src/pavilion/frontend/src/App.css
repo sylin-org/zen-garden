@@ -1835,6 +1835,86 @@
   50%      { box-shadow: inset 0 0 0 2px var(--gold), inset 0 0 70px rgba(196, 176, 96, 0.30); }
 }
 
+/* ── Set memberships (stone card → ARCH-0038 role badges) ───── */
+
+.canvas-card-sets {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--vh);
+}
+
+.canvas-card-set-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.canvas-card-set-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--s9);
+}
+
+.canvas-card-set-fqn {
+  flex: 1;
+  font-family: "IBM Plex Mono", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-card-set-instance {
+  color: var(--s5);
+}
+
+.canvas-card-set-role {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--vb);
+  border: 1px solid var(--vh);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--s7);
+}
+
+.canvas-card-set-role-primary {
+  color: #84a59d; /* sage — matches stone health "thriving" */
+  border-color: rgba(132, 165, 157, 0.4);
+}
+
+.canvas-card-set-role-replica {
+  color: var(--s7);
+}
+
+.canvas-card-set-role-joining {
+  color: #d4a373; /* clay — bootstrapping */
+  border-color: rgba(212, 163, 115, 0.4);
+}
+
+.canvas-card-set-role-degraded {
+  color: #c45050; /* red — stepped down */
+  border-color: rgba(196, 80, 80, 0.4);
+}
+
+.canvas-card-set-role-unknown {
+  color: var(--s5);
+  font-style: italic;
+}
+
+.canvas-card-set-peers {
+  color: var(--s5);
+  font-size: 10px;
+  font-family: "IBM Plex Mono", monospace;
+}
+
 /* ── Offering chips (stone card → drag source) ────────────── */
 
 .canvas-card-offerings {

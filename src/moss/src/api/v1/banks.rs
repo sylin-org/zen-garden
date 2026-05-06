@@ -332,7 +332,7 @@ async fn build_bank_volumes(moniker: &str, state: &Moss) -> Vec<BankVolume> {
             role: if sm.is_some_and(|s| s.role.as_deref() == Some("Primary")) {
                 StorageRole::Primary
             } else {
-                StorageRole::Dormant
+                StorageRole::Replica
             },
             endpoint: storage_entry.tool.stone.endpoint.clone(),
             roles: sm.map(|s| s.roles.clone()).unwrap_or_default(),

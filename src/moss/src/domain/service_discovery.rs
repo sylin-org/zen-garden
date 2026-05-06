@@ -963,6 +963,7 @@ mod tests {
                 ip: None,
                 port: Some(27017),
                 uri_template: None,
+                role: None,
             },
             capabilities: Vec::new(),
             storage: None,
@@ -1003,6 +1004,7 @@ mod tests {
                 ip: None,
                 port: Some(11434),
                 uri_template: None,
+                role: None,
             },
             capabilities: vec![Capability {
                 cap_type: "model".to_string(),
@@ -1046,6 +1048,7 @@ mod tests {
                 ip: Some("192.168.1.10".to_string()),
                 port: Some(27017),
                 uri_template: None,
+                role: None,
             },
             capabilities: vec![Capability {
                 cap_type: "collection".to_string(),

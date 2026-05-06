@@ -569,6 +569,151 @@ where
     data: T,
 }
 
+// ── Logical sets (ARCH-0038) ─────────────────────────────────
+
+/// One member of an offering set, in the shape Pavilion's canvas
+/// consumes. Mirrors `OfferingSetMember` from Moss but the field
+/// list is what the frontend actually renders.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfferingSetMember {
+    pub stone_id: String,
+    pub stone_name: String,
+    pub endpoint: String,
+    /// `"primary" | "replica" | "joining" | "degraded"`, or `None`
+    /// before the first orchestration tick reports a role.
+    pub role: Option<String>,
+    pub status: String,
+    pub ready: bool,
+}
+
+/// One offering set with its full member list. The Pavilion canvas
+/// uses these to populate per-stone `offerings: []` arrays for
+/// edge rendering and per-stone role badges. The shape is the
+/// detail response from `/api/v1/sets/offerings/{fqn}` minus a few
+/// fields the canvas doesn't render.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfferingSet {
+    pub name: String,
+    pub primary_stone: Option<String>,
+    pub members: Vec<OfferingSetMember>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OfferingSetSummary {
+    name: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    coordination: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    member_count: usize,
+    #[serde(default)]
+    #[allow(dead_code)]
+    primary_stone: Option<String>,
+}
+
+/// Fetch every elected-offering set from the tended stone, including
+/// per-stone members. Issues one list call followed by N parallel
+/// detail calls — the canvas uses the per-member role to drive both
+/// inter-stone edges and the role badges on stone cards.
+///
+/// Returns `Ok(Vec::new())` when no stone is tended. A list call that
+/// succeeds but returns zero sets is normal in a garden with no
+/// elected offerings running; the canvas just doesn't render edges.
+#[tauri::command]
+pub async fn get_offering_sets(
+    tending: State<'_, Arc<Tending>>,
+) -> Result<Vec<OfferingSet>, String> {
+    let Some(tended) = tending.current().await else {
+        return Ok(Vec::new());
+    };
+    let client = connection::raw_client_for_capture();
+    let base = tended.endpoint.trim_end_matches('/').to_string();
+
+    // 1. List set summaries (just FQNs we need to drill into).
+    let list_url = format!("{}/api/v1/sets/offerings", base);
+    let list_resp = client
+        .get(&list_url)
+        .send()
+        .await
+        .map_err(|e| format!("offering-sets list GET {list_url}: {e}"))?;
+    if !list_resp.status().is_success() {
+        let status = list_resp.status();
+        let text = list_resp.text().await.unwrap_or_default();
+        return Err(format!("offering-sets list {status}: {text}"));
+    }
+    let summaries: ApiEnvelope<Vec<OfferingSetSummary>> = list_resp
+        .json()
+        .await
+        .map_err(|e| format!("offering-sets list parse: {e}"))?;
+
+    // 2. Fan out one detail call per set in parallel.
+    let mut futures = Vec::with_capacity(summaries.data.len());
+    for summary in summaries.data {
+        let client = client.clone();
+        let url = format!(
+            "{}/api/v1/sets/offerings/{}",
+            base,
+            encode_uri_segment(&summary.name),
+        );
+        futures.push(async move {
+            let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                return Err(format!("{status}: {text}"));
+            }
+            let parsed: ApiEnvelope<OfferingSetDetailWire> =
+                resp.json().await.map_err(|e| e.to_string())?;
+            Ok::<_, String>(parsed.data)
+        });
+    }
+    let details: Vec<OfferingSetDetailWire> = futures_util::future::try_join_all(futures)
+        .await
+        .map_err(|e| format!("offering-set detail fetch: {e}"))?;
+
+    Ok(details
+        .into_iter()
+        .map(|d| OfferingSet {
+            name: d.name,
+            primary_stone: d.primary_stone,
+            members: d
+                .members
+                .into_iter()
+                .map(|m| OfferingSetMember {
+                    stone_id: m.stone_id,
+                    stone_name: m.stone_name,
+                    endpoint: m.endpoint,
+                    role: m.role,
+                    status: m.status,
+                    ready: m.ready,
+                })
+                .collect(),
+        })
+        .collect())
+}
+
+/// Wire shape of `GET /api/v1/sets/offerings/{fqn}`. We don't expose
+/// every field to the frontend — `OfferingSet` is the trimmed shape
+/// the canvas actually renders.
+#[derive(Debug, Deserialize)]
+struct OfferingSetDetailWire {
+    name: String,
+    primary_stone: Option<String>,
+    members: Vec<OfferingSetMemberWire>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OfferingSetMemberWire {
+    stone_id: String,
+    stone_name: String,
+    endpoint: String,
+    #[serde(default)]
+    role: Option<String>,
+    status: String,
+    ready: bool,
+}
+
 /// Percent-encode the characters that matter inside a URL path
 /// segment for the FQN — `:`, `/`, space, etc. The full RFC 3986
 /// encoder lives in `urlencoding` but pavilion doesn't pull that

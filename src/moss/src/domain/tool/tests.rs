@@ -60,6 +60,7 @@ fn sample_tool(fqid: &str, category: &str, stone_id: &str) -> GardenTool {
             ip: None,
             port: None,
             uri_template: None,
+            role: None,
         },
         capabilities: Vec::new(),
         storage: None,

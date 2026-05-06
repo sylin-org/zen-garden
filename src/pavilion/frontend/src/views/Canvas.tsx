@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "rea
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import { GardenSphere, type TrackData } from "../lib/garden-sphere"
+import { useJobProgress } from "../hooks/useJobProgress"
 
 /// Pavilion's view of a stone — what `get_topology` returns from
 /// the Awareness aggregate. Lantern's Stone shape is richer
@@ -191,10 +192,26 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
   /// the sphere can highlight it as a valid drop target. Set on
   /// dragover, cleared on dragleave/drop.
   const [dragOver, setDragOver] = useState<string | null>(null)
-  /// Active forming-snapshot indicators per bank (real values,
-  /// updated by the capture command's progress + completion).
+  /// Active forming-snapshot indicators per bank.
+  ///
+  /// Keyed by an ad-hoc correlation id (stone + fqn + bank) so the
+  /// drop handler can create the entry before the server has assigned
+  /// a job id. Once the server-side `job:started` event arrives with
+  /// the matching `fqn`, the entry's `jobId` is filled in and the
+  /// `SeedFormingChip` subcomponent's `useJobProgress(jobId)` hook
+  /// drives a real progress fill rather than the placeholder pulse.
   const [forming, setForming] = useState<
-    Record<string, { fqn: string; bankName: string }>
+    Record<
+      string,
+      {
+        fqn: string
+        bankName: string
+        /// The Moss-side job id once observed. Until it's set, the
+        /// chip pulses indeterminately (the operation is genuinely
+        /// in flight, just not yet correlated).
+        jobId: string | null
+      }
+    >
   >({})
   /// Most recent backup result for the optimistic toast.
   const [lastCapture, setLastCapture] = useState<CaptureSnapshotResult | null>(
@@ -345,6 +362,50 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
     }
   }, [refresh])
 
+  /// Listen for `job:started` Tauri events emitted by the
+  /// Pavilion-side capture/plant Tauri commands, and back-fill
+  /// `jobId` on the matching forming-chip entry. Match on
+  /// `fqn` — there's at most one in-flight capture/plant per FQN
+  /// in the current canvas UX, so the match is unambiguous.
+  ///
+  /// Once `jobId` is set, the chip's `useJobProgress(jobId)` hook
+  /// kicks in and the seed-chip starts filling with real per-step
+  /// progress.
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: UnlistenFn | undefined
+    void (async () => {
+      unlisten = await listen<{
+        job_id: string
+        operation: string
+        stone: string
+        fqn: string
+      }>("job:started", (e) => {
+        if (cancelled) return
+        const { job_id, fqn } = e.payload
+        setForming((prev) => {
+          // Find the forming entry whose fqn matches and has no
+          // jobId yet (i.e. waiting for correlation).
+          let claimed = false
+          const next: typeof prev = {}
+          for (const [id, entry] of Object.entries(prev)) {
+            if (!claimed && entry.fqn === fqn && entry.jobId === null) {
+              next[id] = { ...entry, jobId: job_id }
+              claimed = true
+            } else {
+              next[id] = entry
+            }
+          }
+          return next
+        })
+      })
+    })()
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
+
   // ── Fetch the selected stone's services when it's the tended stone ──
   // The Pavilion API surface today only exposes services for the
   // tended stone (`get_services`). Selecting a non-tended stone
@@ -475,7 +536,7 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
         const formingId = `${payload.source_stone}::${payload.fqn}->${bankName}`
         setForming((prev) => ({
           ...prev,
-          [formingId]: { fqn: payload.fqn, bankName },
+          [formingId]: { fqn: payload.fqn, bankName, jobId: null },
         }))
         try {
           const result = await invoke<CaptureSnapshotResult>("capture_snapshot", {
@@ -521,6 +582,7 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
           [formingId]: {
             fqn: payload.source_fqn,
             bankName: payload.bank_name,
+            jobId: null,
           },
         }))
         try {
@@ -738,18 +800,7 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
       {Object.keys(forming).length > 0 && (
         <div className="canvas-forming-rail">
           {Object.entries(forming).map(([id, info]) => (
-            <div
-              key={id}
-              className="seed seed-forming"
-              title={`${info.fqn} → ${info.bankName}`}
-            >
-              <span className="seed-glyph" aria-hidden>
-                ◆
-              </span>
-              <span className="seed-label">
-                {info.fqn} → {info.bankName}
-              </span>
-            </div>
+            <SeedFormingChip key={id} info={info} />
           ))}
         </div>
       )}
@@ -758,6 +809,50 @@ export function CanvasView({ onClose }: CanvasProps): JSX.Element {
         Right-drag to rotate · scroll to zoom · drag an offering to a bank to back it up
       </footer>
     </main>
+  )
+}
+
+/// Forming-snapshot chip on the canvas rail. Shows real per-step
+/// progress sourced from `useJobProgress(jobId)` once the job_id is
+/// known; pulses as a placeholder while waiting for the
+/// `job:started` event to backfill the id.
+///
+/// CSS-driven: the `--seed-progress` custom property (0..=1) is set
+/// inline; `App.css` reads it to compose the linear-gradient fill.
+interface SeedFormingChipProps {
+  info: { fqn: string; bankName: string; jobId: string | null }
+}
+
+function SeedFormingChip({ info }: SeedFormingChipProps): JSX.Element {
+  const progress = useJobProgress(info.jobId)
+  const message = progress.message ?? `${info.fqn} → ${info.bankName}`
+  const percent = progress.percent ?? 0
+  const hasProgress = progress.percent !== null
+  return (
+    <div
+      className={`seed seed-forming${hasProgress ? " seed-forming-with-progress" : ""}`}
+      title={`${info.fqn} → ${info.bankName} (${
+        hasProgress ? `${Math.round(percent * 100)}%` : "starting"
+      }): ${message}`}
+      style={
+        {
+          "--seed-progress": String(percent),
+        } as React.CSSProperties
+      }
+    >
+      <span className="seed-glyph" aria-hidden>
+        ◆
+      </span>
+      <span className="seed-label">
+        {info.fqn} → {info.bankName}
+        {hasProgress && (
+          <span className="seed-progress-pct">
+            {" · "}
+            {Math.round(percent * 100)}%
+          </span>
+        )}
+      </span>
+    </div>
   )
 }
 

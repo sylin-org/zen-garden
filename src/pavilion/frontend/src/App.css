@@ -2015,15 +2015,16 @@
 }
 
 .seed-forming {
-  /* Forming uses --seed-progress (0..1) as its filled-bar
-     proxy; with no JS-driven progress yet, animate a sweep so
-     the user knows something is in flight. */
+  /* `--seed-progress` (0..1) drives a real fill bar once
+     useJobProgress reports per-step progress. Until then the
+     sweep animation runs so the user sees activity. */
   position: relative;
   overflow: hidden;
-  --seed-progress: 0.5;
+  --seed-progress: 0;
 }
 
-.seed-forming::after {
+/* Indeterminate state: no real progress yet — sweep animation. */
+.seed-forming:not(.seed-forming-with-progress)::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -2034,6 +2035,30 @@
     transparent 100%
   );
   animation: seed-form-sweep 1.4s var(--ease) infinite;
+}
+
+/* Real-progress state: deterministic fill bar driven by
+   --seed-progress (0..1). The fill grows left-to-right as the
+   per-step capture/plant emits JobEvents. */
+.seed-forming-with-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(196, 176, 96, 0.32) 0%,
+    rgba(196, 176, 96, 0.32) calc(var(--seed-progress) * 100%),
+    transparent calc(var(--seed-progress) * 100%),
+    transparent 100%
+  );
+  transition: background 0.18s var(--ease);
+}
+
+.seed-progress-pct {
+  color: var(--gold);
+  font-family: var(--mono);
+  font-size: 10px;
+  margin-left: 2px;
 }
 
 @keyframes seed-form-sweep {

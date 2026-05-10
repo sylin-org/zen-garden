@@ -141,7 +141,7 @@ d-i preseed/late_command string \
     in-target systemctl enable systemd-networkd.service; \
     in-target systemctl enable systemd-resolved.service; \
     in-target mkdir -p /etc/systemd/network; \
-    in-target sh -c 'printf "%s\n" "[Match]" "Name=en* eth*" "Type=ether" "" "[Network]" "DHCP=yes" "IPv6AcceptRA=yes" "LLMNR=no" "MulticastDNS=no" > /etc/systemd/network/10-wired.network'; \
+    in-target sh -c 'printf "%s\n" "[Match]" "Name=en* eth*" "Type=ether" "" "[Network]" "DHCP=yes" "IPv6AcceptRA=yes" "LLMNR=no" "MulticastDNS=no" "" "[DHCPv4]" "ClientIdentifier=mac" > /etc/systemd/network/10-wired.network'; \
     in-target ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf; \
     in-target usermod -aG docker {{USERNAME}}; \
     in-target usermod -aG sudo {{USERNAME}}; \

@@ -50,6 +50,9 @@ DHCP=yes
 IPv6AcceptRA=yes
 LLMNR=no
 MulticastDNS=no
+
+[DHCPv4]
+ClientIdentifier=mac
 ```
 
 Notes on the `.network` config:
@@ -58,6 +61,7 @@ Notes on the `.network` config:
 - `Type=ether` keeps wireless out of scope (intentional — wireless on a stone is an explicit configuration).
 - `DHCP=yes` enables both v4 and v6.
 - `LLMNR=no` and `MulticastDNS=no` on the link itself disable systemd-networkd's own LLMNR/mDNS — `avahi-daemon` is the mDNS responder per the stack as a whole, and we don't want two daemons answering the same multicast.
+- `[DHCPv4] ClientIdentifier=mac` tells networkd to send no ClientID option, so the DHCP server falls back to MAC-based matching. Without this, networkd's default DUID-based ClientID differs from `dhcpcd`'s DUID even on the same MAC. Routers that key leases by `(MAC, ClientID)` would otherwise hand the stone a *different* IP after the dhcpcd → networkd migration. With this setting and a router that keys by MAC alone, the IP stays stable across the migration; ClientID-strict routers will still hand out a fresh IP on first networkd boot but stay stable thereafter.
 
 ### What this gives us
 

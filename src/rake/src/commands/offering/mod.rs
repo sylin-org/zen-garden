@@ -797,7 +797,15 @@ async fn stream_job_progress(
                             failed,
                             total,
                         );
-                        break;
+                        // Propagate as Err so the CLI exits non-zero. Without this,
+                        // every failed install would still report success at the
+                        // process level, which silently hides failures from CI and
+                        // shell pipelines.
+                        anyhow::bail!(
+                            "Installation of '{}' failed: {}",
+                            service_name,
+                            error_detail
+                        );
                     }
 
                     // Elapsed time update every 2 seconds while still running
@@ -1471,20 +1479,25 @@ impl Command for OfferCommand {
                                 let fmt = CliFormatter::new();
                                 let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
 
-                                let response_service_name = body
+                                // Response is wrapped in ApiResponse: { data: { ... }, suggestions: [...] }.
+                                // Fall back to the top-level body for older moss versions or test fixtures
+                                // that may not have used the envelope.
+                                let data = body.get("data").unwrap_or(&body);
+
+                                let response_service_name = data
                                     .get("service")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or(&service_name);
-                                let action = body
+                                let action = data
                                     .get("action")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("create");
-                                let api_status = body
+                                let api_status = data
                                     .get("status")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("pending");
                                 let message =
-                                    body.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                                    data.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
                                 // Display: lowercase name with status on same line
                                 // mongodb      [pending create]
@@ -1500,17 +1513,23 @@ impl Command for OfferCommand {
                                 );
                                 println!("{}{}", indent, fmt.divider(&"─".repeat(47)));
 
-                                // Extract job_id from message if present
-                                let job_id = if message.contains("Job ID:") || message.contains("job:")
-                                {
-                                    message
-                                        .split_whitespace()
-                                        .skip_while(|s| !s.contains("ID") && !s.contains("job"))
-                                        .nth(1)
-                                        .map(|s| s.trim_end_matches(&['.', ',', '!'][..]).to_string())
-                                } else {
-                                    None
-                                };
+                                // Prefer the structured job_id field; fall back to extracting
+                                // it from the prose message for older moss versions which only
+                                // embedded the job URL in `message` (e.g. "...check /api/jobs/<uuid>...").
+                                let job_id = data
+                                    .get("job_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .or_else(|| {
+                                        message
+                                            .split("/api/jobs/")
+                                            .nth(1)
+                                            .and_then(|s| s.split_whitespace().next())
+                                            .map(|s| {
+                                                s.trim_end_matches(&['.', ',', '!', '/'][..])
+                                                    .to_string()
+                                            })
+                                    });
 
                                 if let Some(job_id) = job_id {
                                     stream_job_progress(

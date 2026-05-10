@@ -16,6 +16,11 @@ pub struct ServiceActionResponse {
     pub action: String,
     pub status: String,
     pub message: String,
+    /// Background job identifier when the action is asynchronous (install
+    /// flows). Absent for synchronous actions (rest, wake, delete, ...).
+    /// Clients should use this to follow `/api/v1/jobs/{job_id}` for status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
 /// Garden overview response

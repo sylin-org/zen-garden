@@ -269,12 +269,14 @@ pub async fn create_service_v1(
                 "Image-direct installation started, check /api/jobs/{} for status",
                 job_id
             ),
+            job_id: Some(job_id),
         },
         InstallOutcome::Adopted { service_name } => ServiceActionResponse {
             service: service_name,
             action: "create".to_string(),
             status: "adopted".to_string(),
             message: "Existing container adopted into registry".to_string(),
+            job_id: None,
         },
         InstallOutcome::InstallStarted {
             service_name,
@@ -287,12 +289,14 @@ pub async fn create_service_v1(
                 "Installation started, check /api/jobs/{} for status",
                 job_id
             ),
+            job_id: Some(job_id),
         },
         InstallOutcome::Maintenance { service_name } => ServiceActionResponse {
             service: service_name,
             action: "create".to_string(),
             status: "maintenance".to_string(),
             message: "Service under maintenance, retry later".to_string(),
+            job_id: None,
         },
     };
 
@@ -322,6 +326,7 @@ pub async fn rest_service_v1(
             action: "rest".to_string(),
             status: "stopped".to_string(),
             message: "Service stopped successfully".to_string(),
+            job_id: None,
         },
         suggestions,
     )
@@ -347,6 +352,7 @@ pub async fn wake_service_v1(
             action: "wake".to_string(),
             status: "running".to_string(),
             message: "Service started successfully".to_string(),
+            job_id: None,
         },
         suggestions,
     )
@@ -380,6 +386,7 @@ pub async fn nourish_service_v1(
             action: "nourish".to_string(),
             status: status.to_string(),
             message: message.to_string(),
+            job_id: None,
         },
         suggestions,
     }))
@@ -408,6 +415,7 @@ pub async fn delete_service_v1(
             status: "removed".to_string(),
             message: "Service removed (container stopped and removed, volumes preserved)"
                 .to_string(),
+            job_id: None,
         },
         suggestions,
     )
@@ -433,6 +441,7 @@ pub async fn destroy_service_v1(
             action: "destroy".to_string(),
             status: "uprooted".to_string(),
             message: "Service destroyed (container removed)".to_string(),
+            job_id: None,
         },
         suggestions,
     )
@@ -747,6 +756,7 @@ pub async fn cordon_service_v1(
             action: "cordon".to_string(),
             status: "cordoned".to_string(),
             message: "Service cordoned (non-schedulable)".to_string(),
+            job_id: None,
         },
         suggestions,
     )

@@ -116,7 +116,13 @@ d-i partman/confirm_nooverwrite boolean true
 
 #### Package selection
 tasksel tasksel/first multiselect standard, ssh-server
-d-i pkgsel/include string sudo docker.io docker-compose avahi-daemon systemd-resolved fwupd
+# isc-dhcp-client is the DHCP client whose state files /etc/network/if-up.d/resolved
+# (shipped with systemd-resolved) reads to push DNS into resolved. On Debian 13
+# (trixie), ifupdown defaults to dhcpcd-base instead, which has no integration
+# with systemd-resolved -- the host then has no DNS server registered with
+# resolved and every public lookup fails. Pinning isc-dhcp-client here gives
+# the canonical Debian-12-style stack that works out of the box.
+d-i pkgsel/include string sudo docker.io docker-compose avahi-daemon systemd-resolved isc-dhcp-client fwupd
 d-i pkgsel/upgrade select full-upgrade
 
 # Do not report installed packages
@@ -135,14 +141,7 @@ d-i finish-install/reboot_in_progress note
 d-i preseed/late_command string \
     in-target systemctl enable docker; \
     in-target systemctl enable avahi-daemon; \
-    in-target systemctl disable networking.service || true; \
-    in-target systemctl disable dhcpcd.service 2>/dev/null || true; \
-    in-target systemctl mask dhcpcd.service 2>/dev/null || true; \
-    in-target systemctl enable systemd-networkd.service; \
-    in-target systemctl enable systemd-resolved.service; \
-    in-target mkdir -p /etc/systemd/network; \
-    in-target sh -c 'printf "%s\n" "[Match]" "Name=en* eth*" "Type=ether" "" "[Network]" "DHCP=yes" "IPv6AcceptRA=yes" "LLMNR=no" "MulticastDNS=no" "" "[DHCPv4]" "ClientIdentifier=mac" > /etc/systemd/network/10-wired.network'; \
-    in-target ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf; \
+    in-target apt-get -y purge dhcpcd-base 2>/dev/null || true; \
     in-target usermod -aG docker {{USERNAME}}; \
     in-target usermod -aG sudo {{USERNAME}}; \
     in-target sh -c 'echo "{{USERNAME}} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/{{USERNAME}}'; \

@@ -4,9 +4,51 @@
 //! then mounts them at their canonical path. VolumeMonitor detects the
 //! mount and calls VolumeIngestor to classify and register.
 
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
+
 use tracing::{debug, info, warn};
 
 use super::ports::StoragePlatform;
+
+/// How long to remember that a device has *no* Zen Garden manifest.
+///
+/// The probe at [`StoragePlatform::probe_device_manifest`] mounts the device
+/// read-only, reads `.zen-garden/manifest.json`, and unmounts again. For
+/// devices that aren't managed Zen Garden storage that's a wasted
+/// mount/umount cycle on every tick of the storage-lifecycle task (every
+/// 10 s) — visible as a constant `mount` / `ntfs-3g` / `umount` flood in
+/// the journal on stones with an attached non-Zen drive.
+///
+/// We cache the negative verdict for this duration. Devices that *did*
+/// have a manifest are mounted and tracked elsewhere, so they fall out of
+/// `list_unmounted_removable` naturally. A 5-minute TTL means we still
+/// re-probe occasionally to catch the case where a user repartitions or
+/// writes a manifest to a previously-unmanaged device.
+const PROBE_NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(300);
+
+static PROBE_NEGATIVE_CACHE: LazyLock<Mutex<HashMap<String, Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Returns true if `device` was probed within the negative-cache TTL and
+/// found to have no manifest.
+fn recently_probed_negative(device: &str) -> bool {
+    let cache = PROBE_NEGATIVE_CACHE.lock().expect("probe cache poisoned");
+    cache
+        .get(device)
+        .is_some_and(|last| last.elapsed() < PROBE_NEGATIVE_CACHE_TTL)
+}
+
+/// Record that `device` has no Zen Garden manifest, so future probe ticks
+/// skip the mount/umount cycle until the TTL expires.
+fn record_negative_probe(device: &str) {
+    let mut cache = PROBE_NEGATIVE_CACHE.lock().expect("probe cache poisoned");
+    cache.insert(device.to_string(), Instant::now());
+    // Opportunistically expire stale entries so the map doesn't grow
+    // unboundedly across the process lifetime.
+    cache.retain(|_, last| last.elapsed() < PROBE_NEGATIVE_CACHE_TTL);
+}
 
 /// Auto-mount unmounted removable devices that have a Zen Garden manifest.
 ///
@@ -28,10 +70,21 @@ pub async fn auto_mount_unmounted(platform: &(impl StoragePlatform + ?Sized)) ->
     let mut mounted = 0usize;
 
     for device in &unmounted {
+        // Skip devices we've already probed and found unmanaged. Without
+        // this, every 10s tick mounts and unmounts every non-Zen drive
+        // attached to the stone — a noisy waste of subprocess time and
+        // journal space.
+        if recently_probed_negative(&device.device) {
+            continue;
+        }
+
         // Probe for manifest
         let manifest = match platform.probe_device_manifest(&device.device).await {
             Ok(Some(m)) => m,
-            Ok(None) => continue, // not managed
+            Ok(None) => {
+                record_negative_probe(&device.device);
+                continue; // not managed
+            }
             Err(e) => {
                 warn!(device = %device.device, error = %e, "Failed to probe device");
                 continue;

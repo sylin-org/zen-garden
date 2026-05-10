@@ -105,12 +105,12 @@ Two options, in order of preference:
 
 **Re-image (preferred)**: rebuild the installer USB and reinstall the stone. Cleanest, removes any drift from prior debugging.
 
-**In-place migration**: ssh in and run:
+**In-place migration**: must be done with a planned reboot, not a live SSH cutover. Attempting to cut over the active interface (e.g., `dhcpcd -k enp1s0` followed by `networkctl reconfigure`) creates a race window where the DHCP lease is released before networkd takes over. Observed in development: the stone either fails to re-acquire (interface ends up with no IP) or acquires a different lease while the router still has ARP cached for the old address — in either case the SSH session and the stone's reachability are lost without console access.
+
+The safe sequence is to *stage* the changes, then reboot:
 
 ```bash
-sudo systemctl disable --now networking.service
-sudo systemctl disable --now dhcpcd.service 2>/dev/null || true
-sudo systemctl mask dhcpcd.service 2>/dev/null || true
+# Stage: write config and unit changes only — do not stop the running stack.
 sudo tee /etc/systemd/network/10-wired.network <<'EOF'
 [Match]
 Name=en* eth*
@@ -122,13 +122,20 @@ IPv6AcceptRA=yes
 LLMNR=no
 MulticastDNS=no
 EOF
-sudo systemctl enable --now systemd-networkd.service
-sudo systemctl enable --now systemd-resolved.service
+sudo systemctl disable networking.service
+sudo systemctl disable dhcpcd.service 2>/dev/null || true
+sudo systemctl mask dhcpcd.service 2>/dev/null || true
+sudo systemctl enable systemd-networkd.service
+sudo systemctl enable systemd-resolved.service
 sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-sudo systemctl restart systemd-resolved
+
+# Apply: reboot from a clean state. The stone will come up under networkd.
+sudo reboot
 ```
 
-Stones that previously had any of the workarounds we tried during DNS-0002 development (custom dhcpcd hook, openresolv install, `resolvectl docker0` runtime state) should reboot after the migration to clear leftover state.
+After the reboot, the stone re-DHCPs under networkd. mDNS advertises the hostname again. SSH-via-`.local` works normally.
+
+Stones that previously had any workarounds from DNS-0002 development (custom dhcpcd hook, openresolv install, `resolvectl docker0` runtime state) are cleared by the reboot.
 
 ## Scope
 

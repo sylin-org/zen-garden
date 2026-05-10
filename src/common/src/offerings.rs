@@ -320,15 +320,15 @@ impl OfferingFqn {
     ///
     /// Curated: `mongodb--prod` (unchanged from V1).
     /// Image-direct: `img-nginx-latest--staging` (new).
-    /// Derive a DNS/mDNS announcement name from the FQN.
+    /// Derive an mDNS announcement name from the FQN.
     ///
-    /// Uses dot separator for instances — maps naturally to DNS subdomains:
+    /// Uses dot separator for instances:
     ///
-    /// | FQN | Announcement | DNS (under `.zengarden`) |
-    /// |-----|-------------|--------------------------|
-    /// | `searxng` | `searxng` | `searxng.zengarden` |
-    /// | `searxng::prod` | `searxng.prod` | `searxng.prod.zengarden` |
-    /// | `pihole::backup` | `pihole.backup` | `pihole.backup.zengarden` |
+    /// | FQN | Announcement |
+    /// |-----|-------------|
+    /// | `searxng` | `searxng` |
+    /// | `searxng::prod` | `searxng.prod` |
+    /// | `pihole::backup` | `pihole.backup` |
     pub fn announcement_name(&self) -> String {
         match &self.instance {
             Some(instance) => format!("{}.{}", self.offering, instance),

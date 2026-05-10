@@ -135,8 +135,10 @@ impl ContainerRuntime {
     /// Build container networking configuration.
     ///
     /// Every managed container gets:
-    /// - DNS pointing to systemd-resolved (via Docker bridge gateway)
-    /// - Search domain `zengarden` (Koi DNS zone, forwarded by resolved)
+    /// - DNS pointing to systemd-resolved (via Docker bridge gateway), with
+    ///   8.8.8.8 as a fallback so containers can resolve public names if
+    ///   the bridge listener is unavailable. mDNS `.local` resolution flows
+    ///   through resolved → avahi.
     /// - Environment variables for reaching host services (Koi HTTP, Moss API)
     /// - `host.docker.internal` extra host mapping
     pub(super) async fn container_networking(&self, name: &str) -> ContainerNetworking {
@@ -155,7 +157,7 @@ impl ContainerRuntime {
 
         ContainerNetworking {
             dns: vec![dns_ip, "8.8.8.8".to_string()],
-            dns_search: vec!["zengarden".to_string()],
+            dns_search: Vec::new(),
             extra_hosts: vec![format!("host.docker.internal:{}", host_ip)],
             env_inject: vec![
                 format!(

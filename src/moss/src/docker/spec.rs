@@ -2,7 +2,8 @@
 pub(crate) struct ContainerNetworking {
     /// DNS servers (bridge gateway for resolved, plus fallback).
     pub dns: Vec<String>,
-    /// Search domains (e.g., `["zengarden"]`).
+    /// DNS search domains. Empty by default; a manifest may set offering-specific
+    /// search domains in the future.
     pub dns_search: Vec<String>,
     /// Extra host mappings (e.g., `host.docker.internal:<ip>`).
     pub extra_hosts: Vec<String>,

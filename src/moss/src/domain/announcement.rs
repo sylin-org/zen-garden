@@ -1,7 +1,7 @@
 //! Active/passive announcement management.
 //!
 //! For offerings with `CoordinationMode::Elected`, only the Primary instance
-//! is announced via mDNS/DNS. When the Primary role moves (election, failover,
+//! is announced via mDNS. When the Primary role moves (election, failover,
 //! manual promotion), the announcement follows.
 //!
 //! ## Flow
@@ -13,9 +13,9 @@
 //!
 //! ## Announcement names
 //!
-//! FQN → announcement name uses dot separator for DNS subdomain alignment:
-//! - `pihole` → `pihole` → `pihole.zengarden`
-//! - `pihole::backup` → `pihole.backup` → `pihole.backup.zengarden`
+//! FQN → announcement name uses dot separator (matches mDNS instance naming):
+//! - `pihole` → `pihole`
+//! - `pihole::backup` → `pihole.backup`
 
 use garden_common::offerings::OfferingFqn;
 use garden_common::types::orchestration::{CoordinationMode, OfferingRole};

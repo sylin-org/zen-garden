@@ -535,28 +535,14 @@ async fn build_state(
     // observe the same value. Handlers flip this after init/unlock/destroy.
     let pond_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    // Probe DNS upstreams once at startup. Owning this list explicitly means
-    // koi-dns no longer depends on the host's `/etc/resolv.conf` chain — a
-    // misconfigured systemd-resolved stub or a missing dhcpcd→resolved bridge
-    // can no longer take down image pulls and offering installs.
-    let dns_upstreams = discover_dns_upstreams();
-
     let koi_handle = {
-        let upstreams_for_koi = dns_upstreams.clone();
         let koi = koi_embedded::Builder::new()
             .data_dir(koi_data_dir)
             .service_mode(koi_embedded::ServiceMode::EmbeddedOnly)
             .http(true)
             .http_port(garden_common::constants::KOI_HTTP)
             .mdns(true)
-            .dns_enabled(true)
-            .dns_auto_start(true)
-            .dns(move |cfg| {
-                cfg.port(garden_common::constants::KOI_DNS)
-                    .zone("zengarden")
-                    .local_zone(true)
-                    .upstream_servers(upstreams_for_koi)
-            })
+            .dns_enabled(false)
             .health(false)
             .certmesh(true)
             .proxy(false)
@@ -588,7 +574,7 @@ async fn build_state(
             .map_err(|e| anyhow::anyhow!("Failed to start Koi embedded: {}", e))?;
 
         tracing::info!(
-            "Koi embedded started (mDNS + certmesh + HTTP + DNS + UDP + dashboard + browser active)"
+            "Koi embedded started (mDNS + certmesh + HTTP + UDP + dashboard + browser active)"
         );
         Arc::new(handle)
     };
@@ -714,36 +700,20 @@ async fn build_state(
     // Phase 7: Docker connection
     let docker = connect_docker(&console_printer, &*runtime, DockerConfig::default()).await?;
 
-    // Phase 7.1: Configure systemd-resolved for container DNS
-    // resolved owns port 53; Koi DNS serves .zengarden on port 5642.
-    // We configure resolved to:
-    //   1. Listen on the Docker bridge gateway (so containers can reach it)
-    //   2. Route .zengarden queries to Koi DNS
-    //   3. Use the discovered upstreams as FallbackDNS so any host process
-    //      that doesn't go through Koi (e.g. apt, package upgrades, dhcpcd
-    //      hooks that haven't run yet) still has a working resolver chain.
+    // Phase 7.1: Make systemd-resolved reachable from containers and enable
+    // mDNS resolution. We write a minimal drop-in: DNSStubListenerExtra so
+    // containers can query resolved at the Docker bridge gateway, and
+    // MulticastDNS=resolve so resolved answers `.local` queries via avahi.
+    //
+    // No DNS= override, no docker0 routing, no zone forwarding. The host's
+    // upstream DNS chain is whatever the OS already configured; moss does
+    // not touch it. See DNS-0002.
     if let Some(gw) = docker.bridge_gateway().await {
-        if let Err(e) = configure_resolved_for_containers(&gw, &dns_upstreams).await {
-            tracing::warn!(error = %e, "could not configure systemd-resolved (containers may not resolve stone names)");
+        if let Err(e) = configure_resolved_for_containers(&gw).await {
+            tracing::warn!(error = %e, "could not configure systemd-resolved (containers may not resolve .local names)");
         }
     } else {
-        tracing::warn!("could not determine Docker bridge gateway -- container DNS may not work");
-    }
-
-    // Phase 7.2: Reconcile DNS on existing managed containers
-    // Containers created before systemd-resolved integration still point at the
-    // router. Patch their /etc/resolv.conf in-place (no restart needed).
-    match docker.list_zen_containers().await {
-        Ok(containers) => {
-            for name in &containers {
-                if let Err(e) = docker.reconcile_container_dns(name).await {
-                    tracing::debug!(service = %name, error = %e, "DNS reconciliation skipped");
-                }
-            }
-        }
-        Err(e) => {
-            tracing::debug!(error = %e, "could not list containers for DNS reconciliation");
-        }
+        tracing::warn!("could not determine Docker bridge gateway -- container .local resolution may not work");
     }
 
     // Phase 7.5: Docker monitoring
@@ -1171,43 +1141,28 @@ async fn serve(state: Moss, api_endpoint: &str) -> anyhow::Result<()> {
     .await
 }
 
-/// Configure systemd-resolved for Zen Garden container DNS.
+/// Configure systemd-resolved so containers can use the host's resolver.
 ///
-/// 1. `DNSStubListenerExtra=<bridge_gw>` --" resolved listens on Docker bridge
-///    gateway so containers can use it for DNS.
-/// 2. `DNS=<upstreams>` --" the system-wide DNS servers. Used by resolved for
-///    any query that doesn't match a per-link routing domain. Necessary
-///    because `FallbackDNS=` only activates when *no* DNS is configured at
-///    all — and our docker0 routing for `~zengarden` counts as configured,
-///    which silently disables Fallback. Setting `DNS=` here gives the host
-///    a working resolver chain even when no per-link DHCP DNS is registered.
-/// 3. `resolvectl dns docker0 <koi_dns>` + `resolvectl domain docker0 ~zengarden`
-///    --" routes `.zengarden` queries to Koi DNS (port 5642).
-///    Uses `docker0` because `lo` (loopback) is rejected by resolvectl.
+/// Writes a minimal drop-in with two settings:
+///
+///   - `DNSStubListenerExtra=<bridge_gw>` — resolved listens on the Docker
+///     bridge gateway, so containers (whose resolv.conf points at that IP)
+///     can reach it.
+///   - `MulticastDNS=resolve` — resolved answers `.local` queries by
+///     forwarding to avahi. This is how containers resolve other stones
+///     by their mDNS hostname (`stone-X.local`).
+///
+/// The host's upstream DNS for public names is whatever the OS already
+/// configured (DHCP, NetworkManager, dhcpcd, etc.) — moss does not set
+/// `DNS=` and does not own that chain. See DNS-0002 for the rationale.
 #[cfg(target_os = "linux")]
-async fn configure_resolved_for_containers(
-    bridge_gw: &str,
-    upstreams: &[std::net::IpAddr],
-) -> anyhow::Result<()> {
+async fn configure_resolved_for_containers(bridge_gw: &str) -> anyhow::Result<()> {
     use anyhow::Context;
 
-    // 1. Ensure resolved listens on Docker bridge gateway and has the
-    //    discovered upstreams as global DNS so non-koi-aware host
-    //    processes (apt, fwupdmgr, dhcpcd hooks) get a working resolver.
     let conf_path = "/etc/systemd/resolved.conf.d/zen-garden.conf";
-    let dns_line = if upstreams.is_empty() {
-        String::new()
-    } else {
-        let joined = upstreams
-            .iter()
-            .map(|a| a.to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
-        format!("DNS={}\n", joined)
-    };
     let desired = format!(
-        "[Resolve]\nMulticastDNS=resolve\nDNSStubListenerExtra={}\n{}",
-        bridge_gw, dns_line
+        "[Resolve]\nMulticastDNS=resolve\nDNSStubListenerExtra={}\n",
+        bridge_gw
     );
 
     let needs_restart = match tokio::fs::read_to_string(conf_path).await {
@@ -1215,170 +1170,32 @@ async fn configure_resolved_for_containers(
         Err(_) => true,
     };
 
-    if needs_restart {
-        tokio::fs::create_dir_all("/etc/systemd/resolved.conf.d").await?;
-        tokio::fs::write(conf_path, &desired).await?;
-
-        let output = tokio::process::Command::new("systemctl")
-            .args(["restart", "systemd-resolved"])
-            .output()
-            .await
-            .context("restart systemd-resolved")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::warn!(%stderr, "systemctl restart systemd-resolved returned non-zero");
-        } else {
-            tracing::info!(bridge_gw = %bridge_gw, "configured resolved bridge listener");
-        }
-    }
-
-    // 2. Route .zengarden queries to Koi DNS via docker0 interface.
-    //    resolvectl rejects loopback (lo), so we use docker0 which is the
-    //    Docker bridge interface. Wait for it to appear (Docker may still
-    //    be initializing the bridge network on slow hardware).
-    let koi_dns = format!("127.0.0.1:{}", garden_common::constants::KOI_DNS);
-
-    // Wait for docker0 to exist (up to 5s)
-    let mut docker0_ready = false;
-    for attempt in 1..=10 {
-        let check = tokio::process::Command::new("ip")
-            .args(["link", "show", "docker0"])
-            .output()
-            .await;
-        if check.map(|o| o.status.success()).unwrap_or(false) {
-            docker0_ready = true;
-            break;
-        }
-        if attempt < 10 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
-    }
-
-    if !docker0_ready {
-        tracing::warn!("docker0 interface not found after 5s -- .zengarden DNS routing skipped");
+    if !needs_restart {
         return Ok(());
     }
 
-    let dns_output = tokio::process::Command::new("resolvectl")
-        .args(["dns", "docker0", &koi_dns])
+    tokio::fs::create_dir_all("/etc/systemd/resolved.conf.d").await?;
+    tokio::fs::write(conf_path, &desired).await?;
+
+    let output = tokio::process::Command::new("systemctl")
+        .args(["restart", "systemd-resolved"])
         .output()
         .await
-        .context("resolvectl dns")?;
-    if !dns_output.status.success() {
-        let stderr = String::from_utf8_lossy(&dns_output.stderr);
-        tracing::warn!(%stderr, "resolvectl dns docker0 failed -- .zengarden routing unavailable");
-        return Ok(());
+        .context("restart systemd-resolved")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::warn!(%stderr, "systemctl restart systemd-resolved returned non-zero");
+    } else {
+        tracing::info!(bridge_gw = %bridge_gw, "configured resolved bridge listener");
     }
 
-    let domain_output = tokio::process::Command::new("resolvectl")
-        .args(["domain", "docker0", "~zengarden"])
-        .output()
-        .await
-        .context("resolvectl domain")?;
-    if !domain_output.status.success() {
-        let stderr = String::from_utf8_lossy(&domain_output.stderr);
-        tracing::warn!(%stderr, "resolvectl domain docker0 failed -- .zengarden routing unavailable");
-        return Ok(());
-    }
-
-    tracing::info!(
-        port = garden_common::constants::KOI_DNS,
-        "configured .zengarden routing to Koi DNS"
-    );
     Ok(())
 }
 
 /// No-op on non-Linux platforms.
 #[cfg(not(target_os = "linux"))]
-async fn configure_resolved_for_containers(
-    _bridge_gw: &str,
-    _upstreams: &[std::net::IpAddr],
-) -> anyhow::Result<()> {
+async fn configure_resolved_for_containers(_bridge_gw: &str) -> anyhow::Result<()> {
     Ok(())
-}
-
-/// Determine the upstream DNS servers Koi DNS should forward non-zengarden
-/// queries to.
-///
-/// The historical behaviour was for koi-dns to inherit `/etc/resolv.conf`
-/// from the host. On stones where the host's resolver chain is broken
-/// (Debian + dhcpcd without an openresolv bridge to systemd-resolved, for
-/// example), that produced a koi-dns with no working upstream — every
-/// public lookup failed and image pulls broke silently.
-///
-/// We now own the upstream choice explicitly so DNS works regardless of
-/// the host network manager. Resolution order:
-///
-///   1. `ZG_DNS_UPSTREAM` env var (comma-separated IPs).
-///   2. Non-loopback nameservers parsed from `/etc/resolv.conf`.
-///   3. Cloudflare + Google public DNS as a known-good fallback.
-///
-/// Always returns a non-empty list, so koi-dns always has somewhere to
-/// forward.
-fn discover_dns_upstreams() -> Vec<std::net::IpAddr> {
-    if let Ok(env) = std::env::var("ZG_DNS_UPSTREAM") {
-        let parsed: Vec<std::net::IpAddr> = env
-            .split(',')
-            .filter_map(|s| s.trim().parse().ok())
-            .collect();
-        if !parsed.is_empty() {
-            tracing::info!(upstreams = ?parsed, "DNS upstreams from ZG_DNS_UPSTREAM");
-            return parsed;
-        }
-        tracing::warn!(
-            value = %env,
-            "ZG_DNS_UPSTREAM was set but no valid IPs parsed — falling through"
-        );
-    }
-
-    let from_resolv = parse_resolv_conf_upstreams();
-    if !from_resolv.is_empty() {
-        tracing::info!(upstreams = ?from_resolv, "DNS upstreams from /etc/resolv.conf");
-        return from_resolv;
-    }
-
-    let fallback = vec![
-        std::net::IpAddr::from([1, 1, 1, 1]),
-        std::net::IpAddr::from([1, 0, 0, 1]),
-        std::net::IpAddr::from([8, 8, 8, 8]),
-    ];
-    tracing::info!(
-        upstreams = ?fallback,
-        "DNS upstreams: public fallback (no host-provided servers found)"
-    );
-    fallback
-}
-
-/// Parse non-loopback `nameserver` entries from `/etc/resolv.conf`.
-///
-/// Loopback addresses (typically the systemd-resolved stub at 127.0.0.53)
-/// are skipped because forwarding through them would create a cycle when
-/// resolved in turn forwards to Koi DNS — exactly the pathology we are
-/// trying to avoid.
-fn parse_resolv_conf_upstreams() -> Vec<std::net::IpAddr> {
-    let content = match std::fs::read_to_string("/etc/resolv.conf") {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    let mut servers = Vec::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut parts = line.split_whitespace();
-        if parts.next() != Some("nameserver") {
-            continue;
-        }
-        if let Some(addr_str) = parts.next() {
-            if let Ok(addr) = addr_str.parse::<std::net::IpAddr>() {
-                if !addr.is_loopback() {
-                    servers.push(addr);
-                }
-            }
-        }
-    }
-    servers
 }
 
 /// Start first-boot initialization task (Linux only)

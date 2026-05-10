@@ -1175,10 +1175,12 @@ async fn serve(state: Moss, api_endpoint: &str) -> anyhow::Result<()> {
 ///
 /// 1. `DNSStubListenerExtra=<bridge_gw>` --" resolved listens on Docker bridge
 ///    gateway so containers can use it for DNS.
-/// 2. `FallbackDNS=<upstreams>` --" anything not handled by a per-link DNS
-///    falls back to the same upstreams Koi DNS forwards to. This rescues
-///    host-side processes (apt, fwupdmgr, etc.) on stones whose network
-///    manager doesn't push DHCP-provided DNS into resolved.
+/// 2. `DNS=<upstreams>` --" the system-wide DNS servers. Used by resolved for
+///    any query that doesn't match a per-link routing domain. Necessary
+///    because `FallbackDNS=` only activates when *no* DNS is configured at
+///    all — and our docker0 routing for `~zengarden` counts as configured,
+///    which silently disables Fallback. Setting `DNS=` here gives the host
+///    a working resolver chain even when no per-link DHCP DNS is registered.
 /// 3. `resolvectl dns docker0 <koi_dns>` + `resolvectl domain docker0 ~zengarden`
 ///    --" routes `.zengarden` queries to Koi DNS (port 5642).
 ///    Uses `docker0` because `lo` (loopback) is rejected by resolvectl.
@@ -1189,10 +1191,11 @@ async fn configure_resolved_for_containers(
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
-    // 1. Ensure resolved listens on Docker bridge gateway and has a
-    //    fallback DNS (in case no per-link DNS is configured).
+    // 1. Ensure resolved listens on Docker bridge gateway and has the
+    //    discovered upstreams as global DNS so non-koi-aware host
+    //    processes (apt, fwupdmgr, dhcpcd hooks) get a working resolver.
     let conf_path = "/etc/systemd/resolved.conf.d/zen-garden.conf";
-    let fallback_line = if upstreams.is_empty() {
+    let dns_line = if upstreams.is_empty() {
         String::new()
     } else {
         let joined = upstreams
@@ -1200,11 +1203,11 @@ async fn configure_resolved_for_containers(
             .map(|a| a.to_string())
             .collect::<Vec<_>>()
             .join(" ");
-        format!("FallbackDNS={}\n", joined)
+        format!("DNS={}\n", joined)
     };
     let desired = format!(
         "[Resolve]\nMulticastDNS=resolve\nDNSStubListenerExtra={}\n{}",
-        bridge_gw, fallback_line
+        bridge_gw, dns_line
     );
 
     let needs_restart = match tokio::fs::read_to_string(conf_path).await {

@@ -315,6 +315,92 @@ impl LocalSnapshotStore {
             .replace('\\', "/");
         trimmed.replace('/', "--").replace(':', "_")
     }
+
+    /// Remove every snapshot directory that lacks a `manifest.json`.
+    ///
+    /// A snapshot directory without a manifest is an aborted capture:
+    /// the manifest is the *last* artifact written (after image and
+    /// volume archives), so its absence means the capture failed
+    /// partway and left orphaned bytes — typically a multi-hundred-MB
+    /// `image.tar` with no way to plant from it ([`list_ids`] already
+    /// skips these). Returns the reaped ids for logging.
+    ///
+    /// Caller responsibility: only invoke when no capture is in
+    /// flight for this offering (e.g. the startup sweep, before the
+    /// periodic loop begins capturing). A concurrent capture's
+    /// not-yet-finalised directory would otherwise be eligible for
+    /// reaping.
+    ///
+    /// [`list_ids`]: SnapshotStore::list_ids
+    pub async fn reap_orphans(&self) -> Result<Vec<String>> {
+        let mut reaped = Vec::new();
+        let mut entries = match tokio::fs::read_dir(&self.root).await {
+            Ok(e) => e,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => {
+                return Err(anyhow::Error::from(e)
+                    .context(format!("read snapshot root: {}", self.root.display())));
+            }
+        };
+        while let Some(entry) = entries.next_entry().await? {
+            if !entry.file_type().await?.is_dir() {
+                continue;
+            }
+            let dir = entry.path();
+            // A manifest means a complete, plantable snapshot — keep it.
+            // On a stat error, err on the side of keeping: never delete a
+            // directory we couldn't confirm is an orphan.
+            if tokio::fs::try_exists(dir.join("manifest.json"))
+                .await
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            tokio::fs::remove_dir_all(&dir)
+                .await
+                .with_context(|| format!("reap orphaned snapshot dir: {}", dir.display()))?;
+            if let Some(name) = entry.file_name().to_str() {
+                reaped.push(name.to_string());
+            }
+        }
+        Ok(reaped)
+    }
+}
+
+/// Prune a store down to its `keep` most-recent snapshots, deleting
+/// the rest. Snapshot ids are GUIDV7 (time-ordered), so
+/// [`SnapshotStore::list_ids`]'s lexicographic sort is chronological —
+/// the oldest ids sort first and are the ones removed. Returns the
+/// deleted ids.
+///
+/// Trait-level (works for any store) because it relies only on
+/// `list_ids` + `delete`. The local-disk-specific orphan cleanup is
+/// [`LocalSnapshotStore::reap_orphans`]; the two are complementary —
+/// `list_ids` only sees manifest-bearing snapshots, so retention never
+/// touches (nor cleans up) aborted captures.
+pub async fn prune_snapshots<S: SnapshotStore + ?Sized>(
+    store: &S,
+    keep: usize,
+) -> Result<Vec<String>> {
+    let ids = store.list_ids().await?;
+    if ids.len() <= keep {
+        return Ok(Vec::new());
+    }
+    let cutoff = ids.len() - keep;
+    let mut deleted = Vec::with_capacity(cutoff);
+    for id in &ids[..cutoff] {
+        // Best-effort: a stuck deletion (e.g. an open file handle) must
+        // not block pruning the remaining older snapshots.
+        match store.delete(id).await {
+            Ok(()) => deleted.push(id.clone()),
+            Err(e) => tracing::warn!(
+                error = %e,
+                snapshot_id = %id,
+                "prune: failed to delete old snapshot, skipping"
+            ),
+        }
+    }
+    Ok(deleted)
 }
 
 impl SnapshotStore for LocalSnapshotStore {
@@ -359,8 +445,12 @@ impl SnapshotStore for LocalSnapshotStore {
                 continue;
             }
             // Only count directories that actually contain a manifest —
-            // skips half-written or unrelated dirs.
-            if !entry.path().join("manifest.json").exists() {
+            // skips half-written or unrelated dirs. A stat error means we
+            // can't confirm a manifest, so we skip (don't list) it.
+            if !tokio::fs::try_exists(entry.path().join("manifest.json"))
+                .await
+                .unwrap_or(false)
+            {
                 continue;
             }
             if let Some(name) = entry.file_name().to_str() {
@@ -506,6 +596,96 @@ mod tests {
         assert!(dir.path().join("snap-1").exists());
         store.delete("snap-1").await.unwrap();
         assert!(!dir.path().join("snap-1").exists());
+    }
+
+    /// Helper: create a manifest-less snapshot directory holding a
+    /// stand-in `image.tar`, mimicking a capture that died before
+    /// writing its manifest.
+    async fn write_orphan(root: &Path, id: &str) {
+        let dir = root.join(id);
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("image.tar"), b"partial").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reap_orphans_removes_manifestless_dirs_and_keeps_valid() {
+        let dir = TempDir::new().unwrap();
+        let store = LocalSnapshotStore::new(dir.path().to_path_buf());
+
+        // Two complete snapshots (have manifests) + two aborted captures.
+        store.save_manifest(&manifest("01-valid-a")).await.unwrap();
+        store.save_manifest(&manifest("01-valid-b")).await.unwrap();
+        write_orphan(dir.path(), "01-orphan-a").await;
+        write_orphan(dir.path(), "01-orphan-b").await;
+
+        let mut reaped = store.reap_orphans().await.unwrap();
+        reaped.sort();
+        assert_eq!(reaped, vec!["01-orphan-a", "01-orphan-b"]);
+
+        // Orphans gone, valid snapshots untouched.
+        assert!(!dir.path().join("01-orphan-a").exists());
+        assert!(!dir.path().join("01-orphan-b").exists());
+        assert!(dir.path().join("01-valid-a").join("manifest.json").exists());
+        assert!(dir.path().join("01-valid-b").join("manifest.json").exists());
+        assert_eq!(store.list_ids().await.unwrap(), vec!["01-valid-a", "01-valid-b"]);
+    }
+
+    #[tokio::test]
+    async fn reap_orphans_is_noop_when_all_snapshots_are_valid() {
+        let dir = TempDir::new().unwrap();
+        let store = LocalSnapshotStore::new(dir.path().to_path_buf());
+        store.save_manifest(&manifest("01-aa")).await.unwrap();
+        assert!(store.reap_orphans().await.unwrap().is_empty());
+        assert_eq!(store.list_ids().await.unwrap(), vec!["01-aa"]);
+    }
+
+    #[tokio::test]
+    async fn reap_orphans_returns_empty_when_root_missing() {
+        let dir = TempDir::new().unwrap();
+        let store = LocalSnapshotStore::new(dir.path().join("never-created"));
+        assert!(store.reap_orphans().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn prune_snapshots_keeps_the_n_most_recent() {
+        let dir = TempDir::new().unwrap();
+        let store = LocalSnapshotStore::new(dir.path().to_path_buf());
+        // Seven snapshots, ids ascending = oldest → newest.
+        for id in ["01-a", "01-b", "01-c", "01-d", "01-e", "01-f", "01-g"] {
+            store.save_manifest(&manifest(id)).await.unwrap();
+        }
+
+        let mut deleted = prune_snapshots(&store, 5).await.unwrap();
+        deleted.sort();
+        // The two oldest are pruned.
+        assert_eq!(deleted, vec!["01-a", "01-b"]);
+        assert_eq!(
+            store.list_ids().await.unwrap(),
+            vec!["01-c", "01-d", "01-e", "01-f", "01-g"]
+        );
+    }
+
+    #[tokio::test]
+    async fn prune_snapshots_is_noop_when_within_keep() {
+        let dir = TempDir::new().unwrap();
+        let store = LocalSnapshotStore::new(dir.path().to_path_buf());
+        for id in ["01-a", "01-b", "01-c"] {
+            store.save_manifest(&manifest(id)).await.unwrap();
+        }
+        assert!(prune_snapshots(&store, 5).await.unwrap().is_empty());
+        assert_eq!(store.list_ids().await.unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn prune_snapshots_at_exact_keep_boundary_deletes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let store = LocalSnapshotStore::new(dir.path().to_path_buf());
+        for id in ["01-a", "01-b", "01-c", "01-d", "01-e"] {
+            store.save_manifest(&manifest(id)).await.unwrap();
+        }
+        // len == keep: nothing to prune.
+        assert!(prune_snapshots(&store, 5).await.unwrap().is_empty());
+        assert_eq!(store.list_ids().await.unwrap().len(), 5);
     }
 
     #[tokio::test]

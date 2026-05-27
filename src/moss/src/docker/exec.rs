@@ -223,6 +223,75 @@ impl ContainerRuntime {
         Ok(image_id)
     }
 
+    // ========================================================================
+    // Snapshot consistency & disposal (ORCH-0039)
+    // ========================================================================
+
+    /// Pause a running container by its full container name.
+    ///
+    /// Snapshot capture pauses the container around the volume-archive
+    /// step so a live process (e.g. a database flushing its data files)
+    /// can't mutate bytes mid-`tar`. Without this, `tar` exits non-zero
+    /// ("file changed as we read it") and the capture fails — the failure
+    /// mode that filled a stone's disk under ORCH-0039. The image commit
+    /// already pauses (see [`commit_container`](Self::commit_container));
+    /// this extends the same guarantee to the volume archive.
+    ///
+    /// Takes the raw container name (e.g. `zen-offering-mongodb`), matching
+    /// `commit_container`, because the snapshot flow already derived it.
+    pub async fn pause_container(&self, container_name: &str) -> Result<()> {
+        self.docker
+            .pause_container(container_name)
+            .await
+            .with_context(|| format!("pause container {container_name}"))?;
+        tracing::debug!(container = %container_name, "Container paused for snapshot consistency");
+        Ok(())
+    }
+
+    /// Unpause a previously paused container.
+    ///
+    /// The counterpart to [`pause_container`](Self::pause_container). The
+    /// snapshot flow calls this on every exit path after a successful
+    /// pause — including archive failure — so a paused container is never
+    /// left stuck.
+    pub async fn unpause_container(&self, container_name: &str) -> Result<()> {
+        self.docker
+            .unpause_container(container_name)
+            .await
+            .with_context(|| format!("unpause container {container_name}"))?;
+        tracing::debug!(container = %container_name, "Container unpaused");
+        Ok(())
+    }
+
+    /// Remove a Docker image by reference (`repo:tag` or image id).
+    ///
+    /// Snapshot capture disposes of the transient
+    /// `zen-harvest/<offering>:<tag>` image once `docker save` has copied
+    /// its bytes into the snapshot tarball: the Docker image is redundant
+    /// afterward (plant loads from the tarball; the manifest keeps the ref
+    /// only for diagnostics). Skipping this leaks one tagged image per
+    /// capture into the Docker image store.
+    ///
+    /// Idempotent: a 404 (image already absent) is treated as success.
+    /// `force` removes the tag even when the underlying layers are shared.
+    pub async fn remove_image(&self, image_ref: &str, force: bool) -> Result<()> {
+        use bollard::query_parameters::RemoveImageOptionsBuilder;
+
+        let options = RemoveImageOptionsBuilder::default().force(force).build();
+        match self.docker.remove_image(image_ref, Some(options), None).await {
+            Ok(_) => {
+                tracing::debug!(image = %image_ref, "Removed Docker image");
+                Ok(())
+            }
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => Ok(()),
+            Err(e) => {
+                Err(anyhow::Error::from(e).context(format!("remove image {image_ref}")))
+            }
+        }
+    }
+
     /// Save a Docker image to a tarball on disk via the Docker
     /// daemon's `image export` endpoint.
     ///

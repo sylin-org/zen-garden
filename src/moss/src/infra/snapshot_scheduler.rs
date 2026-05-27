@@ -34,6 +34,7 @@
 //!
 //! [ORCH-0039]: ../../../../docs/decisions/ORCH-0039-seed-based-offering-replication.md
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -44,6 +45,7 @@ use tokio::task::JoinHandle;
 use crate::Moss;
 use crate::domain::offering_events::{EventActor, EventKind, EventLog};
 use crate::domain::snapshot::LocalSnapshotStore;
+use crate::infra::snapshot::{RETENTION_KEEP, reconcile_all_snapshots};
 
 /// How often the scheduler wakes up to evaluate the offering
 /// pool. 30 minutes is a reasonable balance between freshness
@@ -57,6 +59,23 @@ pub const PERIODIC_TICK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// `BackupTaken` event is older than this, *or* when no
 /// `BackupTaken` event exists at all.
 pub const PERIODIC_DEFAULT: Duration = Duration::from_secs(4 * 60 * 60);
+
+/// Base failure-backoff delay (one tick). After a capture fails, the
+/// offering is skipped at least this long before the next attempt,
+/// doubling per consecutive failure up to [`BACKOFF_MAX`]. Without it a
+/// perpetually-failing capture retries every tick, burning a container
+/// commit + image save each time (the load half of the runaway that
+/// transactional cleanup fixed the disk half of).
+const BACKOFF_BASE: Duration = PERIODIC_TICK_INTERVAL;
+
+/// Cap on the failure-backoff delay — a persistently-failing offering is
+/// retried at most once per day.
+const BACKOFF_MAX: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Bounded wait for Docker readiness before the startup reconcile. The
+/// reconcile is filesystem-only and safe regardless, so on timeout we
+/// run it anyway rather than block the scheduler indefinitely.
+const STARTUP_READY_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Spawn the periodic snapshot scheduler. Returns the
 /// `JoinHandle` so the caller (typically `bootstrap::run`) can
@@ -74,22 +93,46 @@ pub fn spawn_scheduler_with(
     cadence: Duration,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        // Startup self-heal: reconcile the local snapshot store once the
+        // offering subsystem's dependency (Docker) is up, before the
+        // periodic loop begins capturing. Corrects debris a prior run
+        // left behind — orphaned captures and over-retention.
+        startup_reconcile(&state).await;
+
         let mut interval = tokio::time::interval(tick);
         // First tick fires immediately; we want to start the
         // first sweep one full interval after launch so the
         // scheduler doesn't compete with bootstrap I/O.
         interval.tick().await;
+
+        // Per-offering failure backoff, owned by the loop so it persists
+        // across ticks. In-memory only: a restart clears it, which is
+        // fine — the startup reconcile and first sweep re-attempt anyway.
+        let mut backoff: HashMap<String, FailureBackoff> = HashMap::new();
         loop {
             interval.tick().await;
-            run_periodic_sweep(&state, cadence).await;
+            run_periodic_sweep_with_backoff(&state, cadence, &mut backoff).await;
         }
     })
 }
 
 /// One full sweep of the active Managed offering pool. Exposed
 /// publicly so a sysadmin endpoint or a test can trigger an
-/// immediate evaluation without waiting for the next tick.
+/// immediate evaluation without waiting for the next tick. Manual
+/// triggers ignore failure backoff — they always attempt.
 pub async fn run_periodic_sweep(state: &Moss, cadence: Duration) {
+    let mut no_backoff = HashMap::new();
+    run_periodic_sweep_with_backoff(state, cadence, &mut no_backoff).await;
+}
+
+/// Sweep that consults and updates per-offering [`FailureBackoff`]. The
+/// periodic loop uses this so a persistently-failing capture backs off
+/// instead of retrying every tick. A success clears the offering's entry.
+async fn run_periodic_sweep_with_backoff(
+    state: &Moss,
+    cadence: Duration,
+    backoff: &mut HashMap<String, FailureBackoff>,
+) {
     if !state.subsystems.is_ready("docker") {
         tracing::debug!("snapshot scheduler: docker not ready, skipping tick");
         return;
@@ -110,14 +153,105 @@ pub async fn run_periodic_sweep(state: &Moss, cadence: Duration) {
         if offering.managed_data().is_none() {
             continue; // Adopted / Borrowed offerings aren't snapshottable
         }
-        if let Err(e) = maybe_capture(state, &offering, now, cadence_chrono).await {
-            tracing::warn!(
-                offering = %offering.name,
-                error = %e,
-                "snapshot scheduler: maybe_capture failed"
+        let fqn_key = offering.name.fqn();
+
+        // Skip offerings still inside their failure-backoff window.
+        if let Some(entry) = backoff.get(&fqn_key)
+            && now < entry.not_before
+        {
+            tracing::debug!(
+                offering = %fqn_key,
+                retry_at = %entry.not_before,
+                "snapshot scheduler: offering in failure backoff, skipping"
             );
+            continue;
+        }
+
+        match maybe_capture(state, &offering, now, cadence_chrono).await {
+            Ok(()) => {
+                // Healthy (captured or not yet due) — clear any prior backoff.
+                backoff.remove(&fqn_key);
+            }
+            Err(e) => {
+                let entry = backoff.entry(fqn_key.clone()).or_insert(FailureBackoff {
+                    consecutive: 0,
+                    not_before: now,
+                });
+                entry.consecutive += 1;
+                entry.not_before = now + backoff_delay(entry.consecutive);
+                tracing::warn!(
+                    offering = %fqn_key,
+                    error = %e,
+                    consecutive = entry.consecutive,
+                    retry_at = %entry.not_before,
+                    "snapshot scheduler: maybe_capture failed; backing off"
+                );
+            }
         }
     }
+}
+
+/// Per-offering failure backoff, held in memory by the scheduler loop. A
+/// capture that keeps failing is skipped until `not_before`, the delay
+/// doubling per consecutive failure. A success clears the entry.
+#[derive(Debug, Clone)]
+struct FailureBackoff {
+    consecutive: u32,
+    not_before: DateTime<Utc>,
+}
+
+/// Backoff delay after `consecutive` failures: `BACKOFF_BASE * 2^(n-1)`,
+/// capped at [`BACKOFF_MAX`]. Pure — unit tested.
+fn backoff_delay(consecutive: u32) -> chrono::Duration {
+    // Cap the shift so `1 << shift` can't overflow; saturating_mul +
+    // the BACKOFF_MAX clamp bound the result regardless.
+    let shift = consecutive.saturating_sub(1).min(20);
+    let secs = BACKOFF_BASE
+        .as_secs()
+        .saturating_mul(1u64 << shift)
+        .min(BACKOFF_MAX.as_secs());
+    chrono::Duration::seconds(secs as i64)
+}
+
+/// Reconcile the local snapshot store on startup: reap orphaned captures
+/// and enforce retention across every offering. Waits for Docker
+/// readiness (the offering subsystem's dependency) so it runs as a
+/// defined step in offering bring-up, then proceeds regardless — bounded
+/// by [`STARTUP_READY_TIMEOUT`] so a slow or absent Docker can't block
+/// it, since the reconcile is filesystem-only and safe to run anytime.
+async fn startup_reconcile(state: &Moss) {
+    match tokio::time::timeout(STARTUP_READY_TIMEOUT, state.subsystems.wait_ready("docker")).await
+    {
+        Ok(true) => {}
+        Ok(false) => tracing::warn!(
+            "snapshot scheduler: docker subsystem unavailable; running startup reconcile anyway"
+        ),
+        Err(_) => tracing::warn!(
+            timeout_secs = STARTUP_READY_TIMEOUT.as_secs(),
+            "snapshot scheduler: timed out awaiting docker readiness; running startup reconcile anyway"
+        ),
+    }
+
+    let root = local_snapshots_root();
+    match reconcile_all_snapshots(&root, RETENTION_KEEP).await {
+        Ok(report) => tracing::info!(
+            offerings = report.offerings_seen,
+            orphans_reaped = report.orphans_reaped,
+            snapshots_pruned = report.snapshots_pruned,
+            "snapshot scheduler: startup reconcile complete"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            root = %root.display(),
+            "snapshot scheduler: startup reconcile failed"
+        ),
+    }
+}
+
+/// Root of the local snapshot store — the parent of every offering's
+/// [`local_snapshot_root`].
+fn local_snapshots_root() -> PathBuf {
+    PathBuf::from(garden_common::constants::paths::data_dir()).join("snapshots")
 }
 
 /// Decide whether to capture and do it if so. Failure here
@@ -234,6 +368,33 @@ mod tests {
         let last = t(0);
         let now = t(4 * 3600);
         assert!(should_snapshot(now, Some(last), cadence));
+    }
+
+    #[test]
+    fn backoff_delay_doubles_per_consecutive_failure() {
+        let base = BACKOFF_BASE.as_secs() as i64;
+        // First failure → one base interval; then doubling.
+        assert_eq!(backoff_delay(1).num_seconds(), base);
+        assert_eq!(backoff_delay(2).num_seconds(), base * 2);
+        assert_eq!(backoff_delay(3).num_seconds(), base * 4);
+        assert_eq!(backoff_delay(4).num_seconds(), base * 8);
+    }
+
+    #[test]
+    fn backoff_delay_is_capped_at_max() {
+        let max = BACKOFF_MAX.as_secs() as i64;
+        // A high failure count saturates at the cap, never overflows.
+        assert_eq!(backoff_delay(100).num_seconds(), max);
+        assert_eq!(backoff_delay(u32::MAX).num_seconds(), max);
+    }
+
+    #[test]
+    fn backoff_delay_handles_degenerate_zero() {
+        // Defensive: callers always pass ≥1, but 0 must not panic.
+        assert_eq!(
+            backoff_delay(0).num_seconds(),
+            BACKOFF_BASE.as_secs() as i64
+        );
     }
 
     #[tokio::test]

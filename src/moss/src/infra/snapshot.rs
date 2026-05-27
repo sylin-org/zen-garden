@@ -44,9 +44,16 @@ use garden_common::offerings::OfferingFqn;
 use crate::Moss;
 use crate::domain::offering_events::{EventActor, EventKind, EventLog, new_event};
 use crate::domain::snapshot::{
-    ImageTransport, SnapshotExternalMount, SnapshotImage, SnapshotManifest, SnapshotStore,
-    SnapshotVolume, VolumeClass, classify_volume, sha256_bytes, sha512_file,
+    ImageTransport, LocalSnapshotStore, SnapshotExternalMount, SnapshotImage, SnapshotManifest,
+    SnapshotStore, SnapshotVolume, VolumeClass, classify_volume, prune_snapshots, sha256_bytes,
+    sha512_file,
 };
+
+/// Local periodic snapshots retain the most-recent N per offering,
+/// pruned after each successful capture. Matches the seed-bank
+/// retention default so both backup paths bound disk the same way —
+/// see [`garden_common::nurturing::DEFAULT_RETENTION_SLOTS`].
+pub(crate) const RETENTION_KEEP: usize = garden_common::nurturing::DEFAULT_RETENTION_SLOTS;
 
 /// What [`capture_snapshot`] returns on success — the persisted
 /// manifest and the event_id that records the capture in the
@@ -62,30 +69,25 @@ pub struct CapturedSnapshot {
 /// `store`, recording a `BackupTaken` event in `log`.
 ///
 /// Side effects:
-/// - Commits the running container to a new image tag
-///   `zen-harvest/<encoded_fqn>:<timestamp>` (the same naming
-///   convention as the existing harvest)
-/// - Writes `<store>/<id>/image.tar`, one volume per file under
-///   `<store>/<id>/volumes/`, and one external-mount archive
-///   per file under `<store>/<id>/external_mounts/`
-/// - Appends `BackupTaken` to `log` and truncates the log to
-///   that event's id (truncate-since-snapshot retention)
+/// - Commits the running container to a transient image
+///   `zen-harvest/<encoded_fqn>:<timestamp>`, `docker save`s it into
+///   `<store>/<id>/image.tar`, then removes the Docker image — the
+///   tarball is the durable copy; the image would otherwise leak.
+/// - Writes one archive per volume under `<store>/<id>/volumes/` and
+///   per external mount under `<store>/<id>/external_mounts/`, with the
+///   container paused for the duration so a live process can't tear the
+///   archive.
+/// - Appends `BackupTaken` to `log` and truncates the log to that
+///   event's id (truncate-since-snapshot retention).
 ///
-/// On failure between steps the partial state is left for a
-/// gardener to clean up (or for the next capture to overwrite
-/// via the snapshot id namespace). The function does not
-/// implement transactional rollback today.
-/// Number of fixed steps before + after the variable per-volume
-/// archive loop in `capture_snapshot`. The total step count for a
-/// capture is `FIXED_STEPS_BEFORE + volume_count + FIXED_STEPS_AFTER`
-/// = `4 + N + 4` where N is the number of volume mounts.
+/// Resilience contract (this wrapper):
+/// - **On failure** the partial snapshot directory is removed, so an
+///   aborted capture leaves no orphaned bytes on disk.
+/// - **On success** the store is pruned to [`RETENTION_KEEP`] most-recent
+///   snapshots.
 ///
-/// - Before: commit container, save image, hash image, list volumes
-/// - After: compute manifest digest, record BackupTaken event,
-///   save manifest, truncate event log
-const CAPTURE_STEPS_BEFORE_VOLUMES: u32 = 4;
-const CAPTURE_STEPS_AFTER_VOLUMES: u32 = 4;
-
+/// Both post-actions are best-effort and logged; neither masks the
+/// capture's own `Result`.
 pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
     state: &Moss,
     fqn: &OfferingFqn,
@@ -95,6 +97,70 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
     job_id: Option<&str>,
 ) -> Result<CapturedSnapshot> {
     let snapshot_id = garden_common::utils::ids::generate_guidv7();
+    match capture_into(state, fqn, store, log, actor, job_id, &snapshot_id).await {
+        Ok(captured) => {
+            // Retention: bound on-disk snapshots after a successful capture.
+            match prune_snapshots(store, RETENTION_KEEP).await {
+                Ok(pruned) if !pruned.is_empty() => tracing::info!(
+                    offering = %fqn.fqn(),
+                    pruned = pruned.len(),
+                    keep = RETENTION_KEEP,
+                    "Pruned old snapshots to retention limit"
+                ),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    offering = %fqn.fqn(),
+                    "Snapshot retention prune failed (non-fatal)"
+                ),
+            }
+            Ok(captured)
+        }
+        Err(e) => {
+            // Disposal: a failed capture must not leave a partial directory
+            // (typically a multi-hundred-MB image.tar with no manifest).
+            match store.delete(&snapshot_id).await {
+                Ok(()) => tracing::info!(
+                    snapshot_id = %snapshot_id,
+                    offering = %fqn.fqn(),
+                    "Removed partial snapshot directory after capture failure"
+                ),
+                Err(cleanup_err) => tracing::warn!(
+                    error = %cleanup_err,
+                    snapshot_id = %snapshot_id,
+                    offering = %fqn.fqn(),
+                    "Failed to remove partial snapshot after capture failure (non-fatal)"
+                ),
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Number of fixed steps before + after the variable per-volume archive
+/// loop. Total = `CAPTURE_STEPS_BEFORE_VOLUMES + volume_count +
+/// CAPTURE_STEPS_AFTER_VOLUMES` = `4 + N + 4` where N is the mount count.
+///
+/// - Before: commit container, save image, hash image, list volumes
+/// - After: compute manifest digest, record BackupTaken event, save
+///   manifest, truncate event log
+const CAPTURE_STEPS_BEFORE_VOLUMES: u32 = 4;
+const CAPTURE_STEPS_AFTER_VOLUMES: u32 = 4;
+
+/// Inner capture flow. Produces `<store>/<snapshot_id>/` and its
+/// artifacts, bailing on the first error (possibly leaving a partial
+/// directory — [`capture_snapshot`] owns that cleanup). Disposes the
+/// committed Docker image and unpauses the container on every exit path,
+/// so a mid-capture failure never leaks those resources.
+async fn capture_into<S: SnapshotStore + ?Sized>(
+    state: &Moss,
+    fqn: &OfferingFqn,
+    store: &S,
+    log: &EventLog,
+    actor: EventActor,
+    job_id: Option<&str>,
+    snapshot_id: &str,
+) -> Result<CapturedSnapshot> {
     let encoded_fqn = fqn.encoded_for_container();
     let fqn_string = fqn.fqn();
     let container_name = crate::docker::zen_offering_container_name(&fqn_string)
@@ -106,44 +172,66 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         "Starting snapshot capture"
     );
 
-    // Step 1 — commit container.
+    // Step 1 — commit container to a transient harvest image. Derive the
+    // image ref *before* the commit: a late commit failure (the daemon
+    // committed the image but the response was lost) can still leave the
+    // tagged image behind, so we must be able to dispose of it on error.
     state
         .jobs
         .record_step_opt(job_id, &fqn_string, 1, 0, "committing container")
         .await;
-    let original_image = state
-        .platform
-        .container
-        .get_service_image(&fqn_string)
-        .await
-        .context("get current container image")?;
     let repo = format!("zen-harvest/{}", encoded_fqn);
     let tag = Utc::now().format("%Y%m%dT%H%M%S").to_string();
-    let _committed_id = state
+    let image_ref = format!("{}:{}", repo, tag);
+    if let Err(e) = state
         .platform
         .container
         .commit_container(&container_name, &repo, &tag, true)
         .await
-        .context("commit container for snapshot")?;
-    let image_ref = format!("{}:{}", repo, tag);
+    {
+        // Dispose of any image the commit may have produced before failing
+        // (remove_image treats a 404 as success, so this is safe whether or
+        // not the image exists).
+        if let Err(rm) = state.platform.container.remove_image(&image_ref, true).await {
+            tracing::warn!(
+                error = %rm,
+                image = %image_ref,
+                "Failed to remove harvest image after commit failure (non-fatal)"
+            );
+        }
+        return Err(e.context("commit container for snapshot"));
+    }
 
-    // Step 2 — save image to tar.
+    // Step 2 — save image to tar, then dispose of the committed image.
     state
         .jobs
         .record_step_opt(job_id, &fqn_string, 2, 0, "saving image to tar")
         .await;
-    let image_path = store.image_path(&snapshot_id);
+    let image_path = store.image_path(snapshot_id);
     if let Some(parent) = image_path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .with_context(|| format!("create snapshot image dir: {}", parent.display()))?;
     }
-    let image_size = state
+    let save_result = state
         .platform
         .container
         .save_image(&image_ref, &image_path)
-        .await
-        .context("save Docker image to snapshot tarball")?;
+        .await;
+
+    // The committed image has served its purpose the moment `docker save`
+    // runs: on success its bytes are in the tarball; on failure the
+    // tarball is discarded by the caller's cleanup. Either way the Docker
+    // image is redundant — remove it here so no path leaks a tagged image.
+    if let Err(e) = state.platform.container.remove_image(&image_ref, true).await {
+        tracing::warn!(
+            error = %e,
+            image = %image_ref,
+            "Failed to remove committed harvest image after save (non-fatal)"
+        );
+    }
+
+    let image_size = save_result.context("save Docker image to snapshot tarball")?;
 
     // Step 3 — hash image tarball.
     state
@@ -168,63 +256,53 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         .context("list container volume mounts")?;
     let managed_root = PathBuf::from(garden_common::constants::paths::volumes_dir())
         .join(&encoded_fqn);
-    let total_steps =
-        CAPTURE_STEPS_BEFORE_VOLUMES + volumes.len() as u32 + CAPTURE_STEPS_AFTER_VOLUMES;
+    let volume_count = volumes.len() as u32;
+    let total_steps = CAPTURE_STEPS_BEFORE_VOLUMES + volume_count + CAPTURE_STEPS_AFTER_VOLUMES;
 
-    let mut snapshot_volumes: Vec<SnapshotVolume> = Vec::new();
-    let mut snapshot_external_mounts: Vec<SnapshotExternalMount> = Vec::new();
-
-    // Steps 5..=4+N — archive + hash each volume / external mount.
-    let mut step = CAPTURE_STEPS_BEFORE_VOLUMES;
-    for (host_path, container_path) in volumes {
-        step += 1;
-        state
-            .jobs
-            .record_step_opt(
-                job_id,
-                &fqn_string,
-                step,
-                total_steps,
-                &format!("archiving {host_path}"),
-            )
-            .await;
-        let host_path_buf = PathBuf::from(&host_path);
-        let class = classify_volume(&host_path_buf, &managed_root);
-        let archive_dest = match class {
-            VolumeClass::Managed => {
-                let name = derive_volume_name(&container_path);
-                store.volume_path(&snapshot_id, &name)
-            }
-            VolumeClass::External => store.external_mount_path(&snapshot_id, &host_path),
-        };
-        if let Some(parent) = archive_dest.parent() {
-            tokio::fs::create_dir_all(parent).await.with_context(|| {
-                format!("create snapshot artifact dir: {}", parent.display())
-            })?;
+    // Steps 5..=4+N — archive volumes with the container paused so a live
+    // process (e.g. a database flushing data files) can't mutate bytes
+    // mid-`tar`. Pause failure is non-fatal — we proceed, accepting a
+    // possibly-less-consistent archive rather than blocking the backup.
+    // Unpause runs on every path after a successful pause so the
+    // container is never left stuck paused, even when archiving fails.
+    let paused = match state.platform.container.pause_container(&container_name).await {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                container = %container_name,
+                "Failed to pause container for volume archive; proceeding without pause"
+            );
+            false
         }
-        let info = archive::create_archive(Path::new(&host_path), &archive_dest)
-            .await
-            .with_context(|| format!("archive volume {} for snapshot", host_path))?;
-        let sha = sha512_file(&archive_dest)
-            .await
-            .with_context(|| format!("hash volume archive {}", archive_dest.display()))?;
-        match class {
-            VolumeClass::Managed => snapshot_volumes.push(SnapshotVolume {
-                name: derive_volume_name(&container_path),
-                container_path,
-                size_bytes: info.size_bytes,
-                sha512: sha,
-            }),
-            VolumeClass::External => snapshot_external_mounts.push(SnapshotExternalMount {
-                host_path,
-                container_path,
-                size_bytes: info.size_bytes,
-                sha512: sha,
-            }),
+    };
+
+    let archive_result = archive_volumes(
+        state,
+        store,
+        snapshot_id,
+        &fqn_string,
+        volumes,
+        &managed_root,
+        job_id,
+        total_steps,
+    )
+    .await;
+
+    if paused {
+        if let Err(e) = state.platform.container.unpause_container(&container_name).await {
+            tracing::error!(
+                error = %e,
+                container = %container_name,
+                "Failed to unpause container after volume archive — it may be stuck paused"
+            );
         }
     }
 
+    let (snapshot_volumes, snapshot_external_mounts) = archive_result?;
+
     // Step 5+N — manifest digest.
+    let mut step = CAPTURE_STEPS_BEFORE_VOLUMES + volume_count;
     step += 1;
     state
         .jobs
@@ -268,7 +346,7 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
     let mut details = serde_json::Map::new();
     details.insert(
         "snapshot_id".into(),
-        serde_json::Value::String(snapshot_id.clone()),
+        serde_json::Value::String(snapshot_id.to_string()),
     );
     details.insert(
         "size_bytes".into(),
@@ -293,7 +371,7 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         .record_step_opt(job_id, &fqn_string, step, total_steps, "saving manifest")
         .await;
     let mut manifest = SnapshotManifest {
-        id: snapshot_id.clone(),
+        id: snapshot_id.to_string(),
         source_fqn: fqn_string.clone(),
         source_stone: state.current.stone.name.clone(),
         source_event_id: event.event_id.clone(),
@@ -348,11 +426,80 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
         "Snapshot capture complete"
     );
 
-    let _ = original_image; // diagnostic only — captured above for future use
     Ok(CapturedSnapshot {
         manifest,
         event_id: event.event_id,
     })
+}
+
+/// Archive every volume / external mount of a capture into the store,
+/// returning the manifest entries. Split out of [`capture_into`] so the
+/// caller can bracket it with container pause/unpause: any error here
+/// propagates only *after* the caller unpauses, so a failed archive
+/// never leaves the container stuck paused.
+#[allow(clippy::too_many_arguments)]
+async fn archive_volumes<S: SnapshotStore + ?Sized>(
+    state: &Moss,
+    store: &S,
+    snapshot_id: &str,
+    fqn_string: &str,
+    volumes: Vec<(String, String)>,
+    managed_root: &Path,
+    job_id: Option<&str>,
+    total_steps: u32,
+) -> Result<(Vec<SnapshotVolume>, Vec<SnapshotExternalMount>)> {
+    let mut snapshot_volumes: Vec<SnapshotVolume> = Vec::new();
+    let mut snapshot_external_mounts: Vec<SnapshotExternalMount> = Vec::new();
+
+    let mut step = CAPTURE_STEPS_BEFORE_VOLUMES;
+    for (host_path, container_path) in volumes {
+        step += 1;
+        state
+            .jobs
+            .record_step_opt(
+                job_id,
+                fqn_string,
+                step,
+                total_steps,
+                &format!("archiving {host_path}"),
+            )
+            .await;
+        let host_path_buf = PathBuf::from(&host_path);
+        let class = classify_volume(&host_path_buf, managed_root);
+        let archive_dest = match class {
+            VolumeClass::Managed => {
+                let name = derive_volume_name(&container_path);
+                store.volume_path(snapshot_id, &name)
+            }
+            VolumeClass::External => store.external_mount_path(snapshot_id, &host_path),
+        };
+        if let Some(parent) = archive_dest.parent() {
+            tokio::fs::create_dir_all(parent).await.with_context(|| {
+                format!("create snapshot artifact dir: {}", parent.display())
+            })?;
+        }
+        let info = archive::create_archive(Path::new(&host_path), &archive_dest)
+            .await
+            .with_context(|| format!("archive volume {} for snapshot", host_path))?;
+        let sha = sha512_file(&archive_dest)
+            .await
+            .with_context(|| format!("hash volume archive {}", archive_dest.display()))?;
+        match class {
+            VolumeClass::Managed => snapshot_volumes.push(SnapshotVolume {
+                name: derive_volume_name(&container_path),
+                container_path,
+                size_bytes: info.size_bytes,
+                sha512: sha,
+            }),
+            VolumeClass::External => snapshot_external_mounts.push(SnapshotExternalMount {
+                host_path,
+                container_path,
+                size_bytes: info.size_bytes,
+                sha512: sha,
+            }),
+        }
+    }
+    Ok((snapshot_volumes, snapshot_external_mounts))
 }
 
 /// Compute the total step count for a capture given the volume mount
@@ -373,6 +520,70 @@ fn derive_volume_name(container_path: &str) -> String {
         .unwrap_or_else(|| "data".to_string())
 }
 
+/// Outcome of a [`reconcile_all_snapshots`] pass, for logging.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ReconcileReport {
+    /// Per-offering subdirectories examined under the root.
+    pub offerings_seen: usize,
+    /// Orphaned (manifest-less) directories removed across all offerings.
+    pub orphans_reaped: usize,
+    /// Complete snapshots pruned to honour the retention limit.
+    pub snapshots_pruned: usize,
+}
+
+/// Reconcile every offering's local snapshot store under `root`: reap
+/// orphaned (aborted-capture) directories, then prune each offering to
+/// its `keep` most-recent complete snapshots.
+///
+/// Filesystem-driven — it discovers offerings from the directory layout
+/// (`<root>/<encoded_offering>/<snapshot_id>/`), so it corrects debris
+/// even for offerings not currently in the registry. Invoked once at
+/// startup, before the periodic loop begins capturing, to self-heal
+/// accumulated state (e.g. the orphaned `image.tar`s a pre-retention
+/// build left behind).
+///
+/// Resilient by design: a failure for one offering is logged and
+/// skipped so it never blocks the rest of the sweep.
+pub async fn reconcile_all_snapshots(root: &Path, keep: usize) -> Result<ReconcileReport> {
+    let mut report = ReconcileReport::default();
+    let mut entries = match tokio::fs::read_dir(root).await {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(report),
+        Err(e) => {
+            return Err(anyhow::Error::from(e)
+                .context(format!("read snapshots root: {}", root.display())));
+        }
+    };
+    while let Some(entry) = entries.next_entry().await? {
+        if !entry.file_type().await?.is_dir() {
+            continue;
+        }
+        report.offerings_seen += 1;
+        let offering_dir = entry.file_name();
+        let store = LocalSnapshotStore::new(entry.path());
+
+        // Reap aborted captures first so retention counts only complete
+        // snapshots.
+        match store.reap_orphans().await {
+            Ok(reaped) => report.orphans_reaped += reaped.len(),
+            Err(e) => tracing::warn!(
+                error = %e,
+                offering = %offering_dir.to_string_lossy(),
+                "snapshot reconcile: reaping orphans failed (skipping offering)"
+            ),
+        }
+        match prune_snapshots(&store, keep).await {
+            Ok(pruned) => report.snapshots_pruned += pruned.len(),
+            Err(e) => tracing::warn!(
+                error = %e,
+                offering = %offering_dir.to_string_lossy(),
+                "snapshot reconcile: retention prune failed (skipping offering)"
+            ),
+        }
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     //! Unit-level coverage for the orchestrator's pure helpers.
@@ -382,6 +593,7 @@ mod tests {
     //! added — the existing harvest precedent.
 
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn derive_volume_name_uses_basename_of_container_path() {
@@ -422,6 +634,64 @@ mod tests {
         // 4 + 5 + 4 = 13 steps.
         assert_eq!(capture_total_steps(5), 13);
         assert_eq!(capture_total_steps(10), 18);
+    }
+
+    /// Create a snapshot directory under `<root>/<offering>/<id>`.
+    /// With a manifest it counts as a complete snapshot; without, it's
+    /// an orphan (aborted capture) carrying a stand-in `image.tar`.
+    async fn touch_snapshot(root: &Path, offering: &str, id: &str, complete: bool) {
+        let dir = root.join(offering).join(id);
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        if complete {
+            tokio::fs::write(dir.join("manifest.json"), b"{}").await.unwrap();
+        } else {
+            tokio::fs::write(dir.join("image.tar"), b"partial").await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn reconcile_all_snapshots_reaps_orphans_and_prunes_per_offering() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // mongodb: 7 complete snapshots + 2 aborted captures (orphans).
+        for id in ["01-a", "01-b", "01-c", "01-d", "01-e", "01-f", "01-g"] {
+            touch_snapshot(root, "mongodb", id, true).await;
+        }
+        touch_snapshot(root, "mongodb", "01-orphan1", false).await;
+        touch_snapshot(root, "mongodb", "01-orphan2", false).await;
+
+        // searxng: 3 complete snapshots, within retention, no orphans.
+        for id in ["01-a", "01-b", "01-c"] {
+            touch_snapshot(root, "searxng", id, true).await;
+        }
+
+        let report = reconcile_all_snapshots(root, 5).await.unwrap();
+        assert_eq!(report.offerings_seen, 2);
+        assert_eq!(report.orphans_reaped, 2);
+        assert_eq!(report.snapshots_pruned, 2, "mongodb 7 → keep 5 = prune 2");
+
+        // mongodb: orphans gone; the 5 most-recent complete snapshots remain.
+        let mongo = LocalSnapshotStore::new(root.join("mongodb"));
+        assert_eq!(
+            mongo.list_ids().await.unwrap(),
+            vec!["01-c", "01-d", "01-e", "01-f", "01-g"]
+        );
+        assert!(!root.join("mongodb").join("01-orphan1").exists());
+        assert!(!root.join("mongodb").join("01-orphan2").exists());
+
+        // searxng: untouched (within retention, no orphans).
+        let searx = LocalSnapshotStore::new(root.join("searxng"));
+        assert_eq!(searx.list_ids().await.unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn reconcile_all_snapshots_returns_default_when_root_missing() {
+        let tmp = TempDir::new().unwrap();
+        let report = reconcile_all_snapshots(&tmp.path().join("nope"), 5)
+            .await
+            .unwrap();
+        assert_eq!(report, ReconcileReport::default());
     }
 }
 

@@ -34,7 +34,7 @@ use garden_common::offerings::OfferingFqn;
 use crate::Moss;
 use crate::docker::ContainerSpec;
 use crate::domain::offering_events::{EventActor, EventKind, EventLog, new_event};
-use crate::domain::snapshot::{SnapshotManifest, SnapshotStore, sha256_bytes};
+use crate::domain::snapshot::{ImageTransport, SnapshotManifest, SnapshotStore, sha256_bytes};
 use crate::infra::cross_stone::{self, CrossStoneError};
 use crate::infra::harvest::{VolumeRestorePlan, apply_volumes_with_staging};
 
@@ -176,7 +176,10 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
             .context("remove existing container before plant")?;
     }
 
-    // Step 3 — load image into Docker.
+    // Step 3 — make the image available. Reference-first snapshots
+    // (ORCH-0040) carry no bytes: the container is recreated from the
+    // offering manifest's image at step 5, so there is nothing to load.
+    // DockerSave snapshots carry a self-contained tarball we load here.
     state
         .jobs
         .record_step_opt(
@@ -187,13 +190,24 @@ pub async fn plant_from_local_snapshot<S: SnapshotStore + ?Sized>(
             "loading image into Docker",
         )
         .await;
-    let image_path = store.image_path(snapshot_id);
-    state
-        .platform
-        .container
-        .load_image(&image_path)
-        .await
-        .with_context(|| format!("load snapshot image {}", image_path.display()))?;
+    match manifest.image.transport {
+        ImageTransport::DockerSave => {
+            let image_path = store.image_path(snapshot_id);
+            state
+                .platform
+                .container
+                .load_image(&image_path)
+                .await
+                .with_context(|| format!("load snapshot image {}", image_path.display()))?;
+        }
+        ImageTransport::Registry => {
+            tracing::debug!(
+                target_fqn = %target_name,
+                image = %manifest.image.ref_string,
+                "Snapshot image captured by reference; recreating from offering manifest image"
+            );
+        }
+    }
 
     // Step 4 — restore volumes via the staging path.
     state
@@ -365,19 +379,24 @@ pub async fn fetch_snapshot_from_stone<S: SnapshotStore + ?Sized>(
         .await
         .context("save fetched snapshot manifest")?;
 
-    // Image.
-    fetch_artifact(
-        &client,
-        &endpoint,
-        source_stone,
-        source_fqn,
-        snapshot_id,
-        "image",
-        "image.tar",
-        &store.image_path(snapshot_id),
-    )
-    .await
-    .context("fetch snapshot image")?;
+    // Image — only DockerSave snapshots carry an image.tar. Registry
+    // snapshots (ORCH-0040) store no bytes; the source stone never wrote
+    // image.tar, so fetching it would 404. The image is reproduced from
+    // the offering manifest at plant time.
+    if manifest.image.transport == ImageTransport::DockerSave {
+        fetch_artifact(
+            &client,
+            &endpoint,
+            source_stone,
+            source_fqn,
+            snapshot_id,
+            "image",
+            "image.tar",
+            &store.image_path(snapshot_id),
+        )
+        .await
+        .context("fetch snapshot image")?;
+    }
 
     // Volumes.
     for vol in &manifest.volumes {

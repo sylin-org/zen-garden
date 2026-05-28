@@ -69,6 +69,23 @@ impl ContainerRuntime {
             .context(format!("Container '{}' has no image ID", container_name))
     }
 
+    /// Resolve the registry digest of the image a service's container
+    /// runs on, if it has one.
+    ///
+    /// Returns the first `RepoDigests` entry — a `repo@sha256:…` pin that
+    /// `docker pull` can reproduce — when the image came from a registry,
+    /// or `None` for a locally built / committed / tarball-loaded image
+    /// with no registry provenance. ORCH-0040 uses this to decide whether
+    /// a snapshot can capture the image by reference instead of saving
+    /// its bytes.
+    pub async fn service_image_repo_digest(&self, name: &str) -> Result<Option<String>> {
+        let image = self.get_service_image(name).await?;
+        let inspect = self.inspect_image_metadata(&image).await?;
+        Ok(inspect
+            .repo_digests
+            .and_then(|digests| digests.into_iter().next()))
+    }
+
     /// Get the status of a service by checking its Docker container
     pub async fn get_service_status(&self, name: &str) -> Result<ServiceStatus> {
         let container_name = zen_offering_container_name(name)?;

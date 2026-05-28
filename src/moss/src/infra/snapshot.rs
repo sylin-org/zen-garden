@@ -9,9 +9,11 @@
 //! types) all live in [`crate::domain::snapshot`] and have unit
 //! coverage; this module is the I/O-heavy glue.
 //!
-//! Per ORCH-0039 §"Seed metadata schema":
-//! 1. Commit the running container to a new image tag
-//! 2. `docker save` the image to `<store>/<id>/image.tar`
+//! Per ORCH-0039 §"Seed metadata schema", refined by ORCH-0040:
+//! 1. Capture the image. Reference-first: if the running image has a
+//!    registry digest, record it (no bytes). Otherwise fall back to
+//!    committing the container to a new image tag and
+//! 2. `docker save`-ing it to `<store>/<id>/image.tar`.
 //! 3. For each `(host_path, container_path)` mount Docker
 //!    reports, classify it (managed volume / external mount)
 //!    and archive it into the corresponding store path
@@ -172,75 +174,66 @@ async fn capture_into<S: SnapshotStore + ?Sized>(
         "Starting snapshot capture"
     );
 
-    // Step 1 — commit container to a transient harvest image. Derive the
-    // image ref *before* the commit: a late commit failure (the daemon
-    // committed the image but the response was lost) can still leave the
-    // tagged image behind, so we must be able to dispose of it on error.
+    // Steps 1-3 — capture the image. Reference-first (ORCH-0040): when the
+    // running image has a registry digest, record the digest and store no
+    // bytes; otherwise fall back to commit + `docker save` so the snapshot
+    // is self-contained. Failing to resolve the digest is non-fatal — we
+    // capture by value rather than abort the snapshot.
     state
         .jobs
-        .record_step_opt(job_id, &fqn_string, 1, 0, "committing container")
+        .record_step_opt(job_id, &fqn_string, 1, 0, "resolving image")
         .await;
-    let repo = format!("zen-harvest/{}", encoded_fqn);
-    let tag = Utc::now().format("%Y%m%dT%H%M%S").to_string();
-    let image_ref = format!("{}:{}", repo, tag);
-    if let Err(e) = state
+    let repo_digest = state
         .platform
         .container
-        .commit_container(&container_name, &repo, &tag, true)
+        .service_image_repo_digest(&fqn_string)
         .await
-    {
-        // Dispose of any image the commit may have produced before failing
-        // (remove_image treats a 404 as success, so this is safe whether or
-        // not the image exists).
-        if let Err(rm) = state.platform.container.remove_image(&image_ref, true).await {
+        .unwrap_or_else(|e| {
             tracing::warn!(
-                error = %rm,
-                image = %image_ref,
-                "Failed to remove harvest image after commit failure (non-fatal)"
+                error = %e,
+                offering = %fqn_string,
+                "Could not resolve image registry digest; capturing image by value"
             );
+            None
+        });
+
+    let image_artifact = match repo_digest {
+        Some(digest) => {
+            tracing::info!(
+                offering = %fqn_string,
+                image = %digest,
+                "Capturing image by reference (registry digest); no bytes stored"
+            );
+            state
+                .jobs
+                .record_step_opt(job_id, &fqn_string, 2, 0, "image captured by reference")
+                .await;
+            state
+                .jobs
+                .record_step_opt(job_id, &fqn_string, 3, 0, "image captured by reference")
+                .await;
+            SnapshotImage {
+                ref_string: digest,
+                transport: ImageTransport::Registry,
+                size_bytes: 0,
+                sha512: String::new(),
+            }
         }
-        return Err(e.context("commit container for snapshot"));
-    }
-
-    // Step 2 — save image to tar, then dispose of the committed image.
-    state
-        .jobs
-        .record_step_opt(job_id, &fqn_string, 2, 0, "saving image to tar")
-        .await;
-    let image_path = store.image_path(snapshot_id);
-    if let Some(parent) = image_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("create snapshot image dir: {}", parent.display()))?;
-    }
-    let save_result = state
-        .platform
-        .container
-        .save_image(&image_ref, &image_path)
-        .await;
-
-    // The committed image has served its purpose the moment `docker save`
-    // runs: on success its bytes are in the tarball; on failure the
-    // tarball is discarded by the caller's cleanup. Either way the Docker
-    // image is redundant — remove it here so no path leaks a tagged image.
-    if let Err(e) = state.platform.container.remove_image(&image_ref, true).await {
-        tracing::warn!(
-            error = %e,
-            image = %image_ref,
-            "Failed to remove committed harvest image after save (non-fatal)"
-        );
-    }
-
-    let image_size = save_result.context("save Docker image to snapshot tarball")?;
-
-    // Step 3 — hash image tarball.
-    state
-        .jobs
-        .record_step_opt(job_id, &fqn_string, 3, 0, "hashing image tarball")
-        .await;
-    let image_sha = sha512_file(&image_path)
-        .await
-        .context("hash snapshot image tarball")?;
+        None => {
+            state
+                .jobs
+                .record_step_opt(job_id, &fqn_string, 2, 0, "committing and saving image")
+                .await;
+            let artifact =
+                capture_image_by_value(state, store, snapshot_id, &encoded_fqn, &container_name)
+                    .await?;
+            state
+                .jobs
+                .record_step_opt(job_id, &fqn_string, 3, 0, "image saved")
+                .await;
+            artifact
+        }
+    };
 
     // Step 4 — list container volumes. Once the count is known, the
     // job's total_steps gets pinned to 4 + volumes.len() + 4.
@@ -351,7 +344,7 @@ async fn capture_into<S: SnapshotStore + ?Sized>(
     details.insert(
         "size_bytes".into(),
         serde_json::Value::Number(serde_json::Number::from(
-            image_size
+            image_artifact.size_bytes
                 + snapshot_volumes.iter().map(|v| v.size_bytes).sum::<u64>()
                 + snapshot_external_mounts
                     .iter()
@@ -377,12 +370,7 @@ async fn capture_into<S: SnapshotStore + ?Sized>(
         source_event_id: event.event_id.clone(),
         created_at: event.at,
         manifest_digest,
-        image: SnapshotImage {
-            ref_string: image_ref,
-            transport: ImageTransport::DockerSave,
-            size_bytes: image_size,
-            sha512: image_sha,
-        },
+        image: image_artifact,
         volumes: snapshot_volumes,
         external_mounts: snapshot_external_mounts,
         size_total_bytes: 0,
@@ -429,6 +417,83 @@ async fn capture_into<S: SnapshotStore + ?Sized>(
     Ok(CapturedSnapshot {
         manifest,
         event_id: event.event_id,
+    })
+}
+
+/// Capture the image *by value* (ORCH-0040 DockerSave fallback): commit
+/// the container, `docker save` it into the store, dispose of the
+/// committed Docker image, and hash the tarball. Used for images without
+/// a registry digest (locally built / committed / image-direct), so the
+/// snapshot is self-contained for a cross-stone plant.
+///
+/// Disposes the committed image on every path — including a late commit
+/// failure and a save failure — so no path leaks a tagged image.
+async fn capture_image_by_value<S: SnapshotStore + ?Sized>(
+    state: &Moss,
+    store: &S,
+    snapshot_id: &str,
+    encoded_fqn: &str,
+    container_name: &str,
+) -> Result<SnapshotImage> {
+    // Derive the image ref before the commit: a late commit failure (the
+    // daemon committed but the response was lost) can still leave the
+    // tagged image behind, so we must be able to dispose of it on error.
+    let repo = format!("zen-harvest/{encoded_fqn}");
+    let tag = Utc::now().format("%Y%m%dT%H%M%S").to_string();
+    let image_ref = format!("{repo}:{tag}");
+
+    if let Err(e) = state
+        .platform
+        .container
+        .commit_container(container_name, &repo, &tag, true)
+        .await
+    {
+        // remove_image treats a 404 as success, so this is safe whether or
+        // not the commit produced an image.
+        if let Err(rm) = state.platform.container.remove_image(&image_ref, true).await {
+            tracing::warn!(
+                error = %rm,
+                image = %image_ref,
+                "Failed to remove harvest image after commit failure (non-fatal)"
+            );
+        }
+        return Err(e.context("commit container for snapshot"));
+    }
+
+    let image_path = store.image_path(snapshot_id);
+    if let Some(parent) = image_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create snapshot image dir: {}", parent.display()))?;
+    }
+    let save_result = state
+        .platform
+        .container
+        .save_image(&image_ref, &image_path)
+        .await;
+
+    // The committed image has served its purpose the moment `docker save`
+    // runs: on success its bytes are in the tarball; on failure the
+    // tarball is discarded by the caller's cleanup. Either way the Docker
+    // image is redundant — remove it so no path leaks a tagged image.
+    if let Err(e) = state.platform.container.remove_image(&image_ref, true).await {
+        tracing::warn!(
+            error = %e,
+            image = %image_ref,
+            "Failed to remove committed harvest image after save (non-fatal)"
+        );
+    }
+
+    let size_bytes = save_result.context("save Docker image to snapshot tarball")?;
+    let sha512 = sha512_file(&image_path)
+        .await
+        .context("hash snapshot image tarball")?;
+
+    Ok(SnapshotImage {
+        ref_string: image_ref,
+        transport: ImageTransport::DockerSave,
+        size_bytes,
+        sha512,
     })
 }
 

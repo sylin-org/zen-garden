@@ -7,11 +7,12 @@
 //!   listing every file in the snapshot with its SHA512 hash,
 //!   the source offering's FQN, the watermark event_id, and a
 //!   digest of the offering's compiled manifest at capture time.
-//! - An **image** — Docker image bytes, captured via
-//!   `docker save` (M2). Transport: a single tarball alongside
-//!   the manifest. Future M-stages may switch to a shared
-//!   registry; the [`ImageTransport`] field reserves the
-//!   discriminator.
+//! - An **image** — captured one of two ways, recorded by the
+//!   [`ImageTransport`] discriminator (ORCH-0040). Registry-backed
+//!   images are captured *by reference* (the `repo@sha256:…` digest;
+//!   no bytes stored). Images without a registry digest fall back to
+//!   a `docker save` tarball alongside the manifest, so the snapshot
+//!   stays self-contained.
 //! - **Volumes** — tar.gz archives of each Docker bind mount
 //!   (existing harvest format).
 //! - **External mounts** — tar.gz archives of every directory
@@ -34,26 +35,37 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 
-/// Image transport mechanism. M2 ships `DockerSave` (a tarball
-/// produced by `docker save`); future stages may add registry-
-/// mediated transfer. Keeping the enum reserves the discriminator
-/// in the manifest format from day one so older readers can
-/// fail-loud on unknown transports rather than silently
-/// misinterpret bytes.
+/// How a snapshot's image is carried (ORCH-0040). The variant
+/// determines whether bytes live in the store or the image is
+/// reproduced by reference at plant time. Keeping it an enum lets
+/// older readers fail loud on an unknown transport rather than
+/// silently misinterpret bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageTransport {
-    /// `docker save` tarball — a plain tar of layered fs +
-    /// metadata. Loadable on the target via `docker load`.
+    /// `docker save` tarball — a plain tar of layered fs + metadata,
+    /// loadable on the target via `docker load`. Self-contained;
+    /// used for images that aren't registry-reproducible (locally
+    /// built, committed, or image-direct loaded from a tarball).
     DockerSave,
+    /// Reproduced by registry reference at plant time — no bytes in
+    /// the store. Used when the running image has a registry digest
+    /// (`SnapshotImage::ref_string` holds the `repo@sha256:…` pin and
+    /// `size_bytes`/`sha512` are zero/empty). See [ORCH-0040].
+    ///
+    /// [ORCH-0040]: ../../../../docs/decisions/ORCH-0040-snapshot-image-by-reference.md
+    Registry,
 }
 
 /// Snapshot's image artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotImage {
-    /// Image reference at the source — e.g.
-    /// `zen-harvest/mongodb--prd:2026-05-05T10-30-00`. Used only
-    /// for diagnostics; load is by tarball, not by ref.
+    /// Image reference. For [`ImageTransport::Registry`] this is the
+    /// functional identity — the `repo@sha256:…` digest pin the image
+    /// is reproduced from at plant time. For [`ImageTransport::DockerSave`]
+    /// it is the committed source tag (e.g.
+    /// `zen-harvest/mongodb--prd:2026-05-05T10-30-00`), diagnostic only:
+    /// the load is from the tarball, not this ref.
     pub ref_string: String,
     /// Transport used to capture the image.
     pub transport: ImageTransport,
@@ -767,6 +779,23 @@ mod tests {
             json.contains("\"transport\":\"docker_save\""),
             "image transport must serialize as snake_case: {json}"
         );
+    }
+
+    #[test]
+    fn image_transport_variants_have_stable_wire_format() {
+        // The wire format is a cross-version contract (ORCH-0040): a peer
+        // running an older build must keep reading `docker_save`, and the
+        // new `registry` variant must round-trip.
+        assert_eq!(
+            serde_json::to_string(&ImageTransport::DockerSave).unwrap(),
+            "\"docker_save\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ImageTransport::Registry).unwrap(),
+            "\"registry\""
+        );
+        let back: ImageTransport = serde_json::from_str("\"registry\"").unwrap();
+        assert_eq!(back, ImageTransport::Registry);
     }
 
     #[test]

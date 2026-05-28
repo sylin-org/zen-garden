@@ -28,7 +28,7 @@ use bollard::query_parameters::{
 use futures_util::StreamExt;
 use garden_common::offerings::OfferingFqn;
 use garden_moss::domain::offering_events::{EventActor, EventKind, EventLog};
-use garden_moss::domain::snapshot::{LocalSnapshotStore, SnapshotStore};
+use garden_moss::domain::snapshot::{ImageTransport, LocalSnapshotStore, SnapshotStore};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -297,14 +297,33 @@ async fn capture_round_trips_image_and_volumes_and_external_mounts() {
         manifest.source_event_id, captured.event_id,
         "manifest's source_event_id must equal the returned event_id",
     );
-    assert!(
-        manifest.image.size_bytes > 0,
-        "captured image tarball must be non-empty"
-    );
-    assert!(
-        !manifest.image.sha512.is_empty(),
-        "image SHA512 must be set"
-    );
+    // Image transport (ORCH-0040): alpine:3.19 is registry-backed, so
+    // capture records it by reference and stores no bytes. A locally built
+    // image with no registry digest would take the DockerSave path.
+    match manifest.image.transport {
+        ImageTransport::Registry => {
+            assert_eq!(
+                manifest.image.size_bytes, 0,
+                "registry-transport image stores no bytes"
+            );
+            assert!(
+                manifest.image.sha512.is_empty(),
+                "registry-transport image has no local artifact to hash"
+            );
+            assert!(
+                manifest.image.ref_string.contains("@sha256:"),
+                "registry-transport ref must be a digest pin, got {:?}",
+                manifest.image.ref_string
+            );
+        }
+        ImageTransport::DockerSave => {
+            assert!(
+                manifest.image.size_bytes > 0,
+                "captured image tarball must be non-empty"
+            );
+            assert!(!manifest.image.sha512.is_empty(), "image SHA512 must be set");
+        }
+    }
 
     // One managed volume + one external mount — the harness
     // configured exactly this shape.
@@ -327,14 +346,24 @@ async fn capture_round_trips_image_and_volumes_and_external_mounts() {
 
     // ── Artifact files must exist on disk ───────────────────
     let image_path = store.image_path(&manifest.id);
-    assert!(image_path.exists(), "image.tar must exist after capture");
-    assert!(
-        image_path
-            .metadata()
-            .map(|m| m.len() == manifest.image.size_bytes)
-            .unwrap_or(false),
-        "image.tar size must match manifest"
-    );
+    match manifest.image.transport {
+        ImageTransport::DockerSave => {
+            assert!(image_path.exists(), "image.tar must exist for DockerSave");
+            assert!(
+                image_path
+                    .metadata()
+                    .map(|m| m.len() == manifest.image.size_bytes)
+                    .unwrap_or(false),
+                "image.tar size must match manifest"
+            );
+        }
+        ImageTransport::Registry => {
+            assert!(
+                !image_path.exists(),
+                "registry-transport snapshot must not write image.tar"
+            );
+        }
+    }
     let vol_path = store.volume_path(&manifest.id, &manifest.volumes[0].name);
     assert!(vol_path.exists(), "volume archive must exist after capture");
     let em_path = store.external_mount_path(

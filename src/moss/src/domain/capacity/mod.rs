@@ -106,13 +106,23 @@ impl Capacity {
 
     // ── Admission control ─────────────────────────────────────────────
 
-    /// Decide whether a large write may proceed.
+    /// Decide whether a large write to the **governed** filesystem (the one
+    /// holding `data_dir()` — snapshots, harvest) may proceed.
     ///
     /// Denies when the post-write free space would fall below the floor, or
     /// the filesystem is already `Critical`. **Fails open** if free space
     /// cannot be measured — a `df` hiccup must not block every backup.
     pub async fn reserve(&self, request: ReserveRequest) -> Verdict {
-        let Some(reading) = self.read().await else {
+        self.reserve_path(self.target.clone(), request).await
+    }
+
+    /// Like [`reserve`](Self::reserve), but for a write to an arbitrary
+    /// filesystem identified by `path` (e.g. a storage bank mount that a
+    /// multipart upload assembles onto, which is not the governed data
+    /// filesystem). The same watermarks and floor apply — they are
+    /// filesystem-agnostic.
+    pub async fn reserve_path(&self, path: String, request: ReserveRequest) -> Verdict {
+        let Some(reading) = self.read_path(path).await else {
             tracing::warn!(
                 purpose = %request.purpose,
                 "capacity: free space unavailable, allowing write (fail-open)"
@@ -256,10 +266,14 @@ impl Capacity {
         }
     }
 
-    /// Measure the governed filesystem off the async runtime (the `df`
-    /// subprocess is synchronous). Returns `None` on any failure.
+    /// Measure the governed filesystem (the one holding `data_dir()`).
     async fn read(&self) -> Option<Reading> {
-        let target = self.target.clone();
+        self.read_path(self.target.clone()).await
+    }
+
+    /// Measure the filesystem containing `target` off the async runtime (the
+    /// `df` subprocess is synchronous). Returns `None` on any failure.
+    async fn read_path(&self, target: String) -> Option<Reading> {
         let usage = tokio::task::spawn_blocking(move || disk_usage(&target))
             .await
             .ok()

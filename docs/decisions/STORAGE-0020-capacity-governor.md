@@ -68,7 +68,13 @@ pub enum Verdict { Allow, Deny { reason: String } }
 pub fn reserve(&self, request: ReserveRequest) -> Verdict;
 ```
 
-`reserve` denies when pressure is `Critical` **or** `available_bytes < MIN_FREE`. The first integration is the single choke point every snapshot capture funnels through — `capture_snapshot` (`infra/snapshot.rs:93`), checked before `capture_into` so a denial aborts cleanly with no partial directory written. A denied capture returns `Err`, which the scheduler's existing `FailureBackoff` already handles, and surfaces as degraded health. This one gate would have prevented all three incidents regardless of any retention bug downstream. Harvest (`infra/harvest.rs:101`) and the streaming multipart assembler (`infra/storage/multipart.rs:171`) are identified as follow-on admission sites; this ADR wires snapshots first because that is where the fires were.
+`reserve` denies when pressure is `Critical` **or** `available_bytes < MIN_FREE`. Three large-write paths are gated:
+
+- **Snapshot capture** — `capture_snapshot` (`infra/snapshot.rs`), checked before `capture_into` so a denial aborts cleanly with no partial directory. The returned `Err` flows into the scheduler's existing `FailureBackoff`.
+- **Harvest** (pre-nourishment backup) — gated in the ceremony collect phase (`domain/ceremony/phases/collect.rs`), *before* the container is quiesced so a denial never leaves it frozen. Failing collect aborts the update — refusing to update without a rollback point is the correct outcome under disk pressure.
+- **Multipart completion** — gated in the S3 gateway before assembly (`api/v1/s3_gateway.rs`), returning `503 ServiceUnavailable`.
+
+Snapshot capture and harvest write under `data_dir()`, so they use `reserve`. A multipart upload assembles onto its destination **storage bank**, usually a separate mount, so it uses `reserve_path(mount, …)` — the watermarks and floor are filesystem-agnostic, so the same `Budget` governs any filesystem. This admission layer would have prevented all three incidents regardless of any retention bug downstream.
 
 ### 3. Reclamation (policy orchestrates, domains execute)
 

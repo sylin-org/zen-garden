@@ -1521,6 +1521,23 @@ pub async fn complete_or_initiate_multipart(
         );
     }
 
+    // Admission control (STORAGE-0020): completion assembles every part into
+    // a temp file on the destination bank's filesystem before the final
+    // object write. Gate on that filesystem (not the data filesystem), since
+    // a bank is usually a separate mount.
+    if let crate::domain::Verdict::Deny { reason } = state
+        .capacity
+        .reserve_path(
+            mount_path.to_string_lossy().to_string(),
+            crate::domain::ReserveRequest::new(format!(
+                "multipart completion for {bucket}"
+            )),
+        )
+        .await
+    {
+        return xml_error(StatusCode::SERVICE_UNAVAILABLE, "InsufficientStorage", &reason);
+    }
+
     let mp = crate::infra::storage::multipart::MultipartStore::new(&mount_path);
     let (assembled, upload) = match mp.complete(&upload_id, &part_numbers).await {
         Ok(result) => result,

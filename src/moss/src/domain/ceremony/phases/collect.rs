@@ -5,6 +5,7 @@
 
 use crate::Moss;
 use crate::domain::traits::HarvestOps;
+use crate::domain::{ReserveRequest, Verdict};
 use anyhow::{Context, Result};
 use garden_common::manifests::{CeremonyMode, CeremonyPolicy};
 
@@ -30,6 +31,19 @@ pub async fn execute(
     // Determine if we should commit the container image
     // Stateless services don't need image commits (no persistent state in container)
     let commit_image = policy.mode != CeremonyMode::Stateless;
+
+    // Admission control (STORAGE-0020): a harvest writes a full volume
+    // archive (and optionally a committed image) under data_dir(). Refuse
+    // *before* quiescing the container, so a denial never leaves it frozen.
+    // Failing the collect phase aborts the nourishment — refusing to update
+    // without a rollback point is the correct outcome under disk pressure.
+    if let Verdict::Deny { reason } = state
+        .capacity
+        .reserve(ReserveRequest::new(format!("harvest of {offering}")))
+        .await
+    {
+        anyhow::bail!("capacity guard refused harvest: {reason}");
+    }
 
     // Quiesceable: freeze data before harvest, resume after
     if policy.mode == CeremonyMode::Quiesceable

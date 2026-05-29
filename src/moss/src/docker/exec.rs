@@ -517,6 +517,45 @@ impl ContainerRuntime {
         Ok((exit_code, output))
     }
 
+    /// List `zen-harvest/*` images present in the Docker store.
+    ///
+    /// Snapshot capture commits the running container to a transient
+    /// `zen-harvest/<encoded_fqn>:<timestamp>` image, `docker save`s it,
+    /// then removes it (`remove_image`). A `zen-harvest/*` image that
+    /// outlives its capture is therefore a leak — either an aborted
+    /// capture that never reached disposal, or a build before the
+    /// dispose-on-every-path fix. `prune_dangling_images` cannot reclaim
+    /// these because they are *tagged*, not dangling.
+    ///
+    /// Returns id, tags, and creation time (Unix seconds) per image so the
+    /// caller can age-filter: an image created seconds ago may be the
+    /// `docker save` source of a capture in flight, and removing it would
+    /// abort that capture. Reclaim only images comfortably older than a
+    /// capture's duration.
+    pub async fn list_harvest_images(&self) -> Result<Vec<super::ImageInfo>> {
+        use bollard::query_parameters::ListImagesOptions;
+
+        let images = self
+            .docker
+            .list_images(None::<ListImagesOptions>)
+            .await
+            .context("list Docker images")?;
+
+        Ok(images
+            .into_iter()
+            .filter(|i| {
+                i.repo_tags
+                    .iter()
+                    .any(|t| t.starts_with("zen-harvest/"))
+            })
+            .map(|i| super::ImageInfo {
+                id: i.id,
+                tags: i.repo_tags,
+                created_unix: i.created,
+            })
+            .collect())
+    }
+
     /// Prune dangling Docker images
     ///
     /// Returns (count_pruned, bytes_reclaimed).

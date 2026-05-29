@@ -283,6 +283,15 @@ pub async fn build_test_state() -> Moss {
             .await,
         ),
         subsystems: subsystems.clone(),
+        capacity: Arc::new(
+            domain::Capacity::new(
+                test_metrics.clone(),
+                garden_common::constants::paths::data_dir(),
+                domain::Budget::default(),
+                Vec::new(),
+            )
+            .await,
+        ),
         nurturing: Arc::new(domain::NurturingOrchestration {
             harvest_ops,
             store: nurturing_store,

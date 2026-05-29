@@ -121,6 +121,7 @@ canonical: true
 - **[STORAGE-0017](STORAGE-0017-volume-state-machine.md)**: Volume Domain Object with Encapsulated State Machine — Proposed (2026-04-04)
 - **[STORAGE-0018](STORAGE-0018-device-health-monitor.md)**: Device Health Monitor — Proposed (2026-04-04)
 - **[STORAGE-0019](STORAGE-0019-candidate-lifecycle-and-foreign-filesystem-adoption.md)**: Candidate Storage Lifecycle and Foreign-Filesystem Adoption — Proposed (2026-05-05)
+- **[STORAGE-0020](STORAGE-0020-capacity-governor.md)**: Capacity Governor — Free-Space Admission Control and Pressure-Driven Reclaim — Proposed (2026-05-29)
 
 ### Tools
 - **[TOOLS-0001](TOOLS-0001-garden-tools-domain.md)**: Unified Garden Tools Domain — Accepted (2026-02-06)

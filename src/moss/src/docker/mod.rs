@@ -12,6 +12,20 @@ pub use naming::{decode_zen_offering_container_name, zen_offering_container_name
 pub use port::check_and_remediate_ports;
 pub use spec::{ContainerSpec, LogLine};
 
+/// Summary of a Docker image, as the domain sees it.
+///
+/// A bollard-free projection of `bollard::models::ImageSummary` —
+/// the runtime seal (ARCH-0030) keeps bollard types inside `docker/`.
+#[derive(Debug, Clone)]
+pub struct ImageInfo {
+    /// Full image id (`sha256:…`).
+    pub id: String,
+    /// Repository tags (`zen-harvest/ollama:20260529T…`).
+    pub tags: Vec<String>,
+    /// Image creation time, Unix seconds.
+    pub created_unix: i64,
+}
+
 use anyhow::{Context, Result};
 use bollard::Docker as BollardDocker;
 use bollard::query_parameters::EventsOptionsBuilder;

@@ -69,6 +69,7 @@ pub fn build_task_registry(
         Box::new(StorageTickAggregatorTask),
         Box::new(StorageReplicationTask),
         Box::new(MaintenanceSweepTask),
+        Box::new(CapacityReclaimTask),
         Box::new(TaskSchedulerTask),
     ];
 

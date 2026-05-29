@@ -44,6 +44,7 @@ use garden_common::infra::archive;
 use garden_common::offerings::OfferingFqn;
 
 use crate::Moss;
+use crate::domain::{ReserveRequest, Verdict};
 use crate::domain::offering_events::{EventActor, EventKind, EventLog, new_event};
 use crate::domain::snapshot::{
     ImageTransport, LocalSnapshotStore, SnapshotExternalMount, SnapshotImage, SnapshotManifest,
@@ -98,6 +99,22 @@ pub async fn capture_snapshot<S: SnapshotStore + ?Sized>(
     actor: EventActor,
     job_id: Option<&str>,
 ) -> Result<CapturedSnapshot> {
+    // Admission control (STORAGE-0020): refuse to begin a capture when the
+    // data filesystem is at/over the survival floor. Denial aborts before any
+    // bytes are written, so there is no partial directory to reap; the
+    // scheduler's failure backoff governs retry. Fails open if free space
+    // cannot be measured — a `df` hiccup must not block every backup.
+    if let Verdict::Deny { reason } = state
+        .capacity
+        .reserve(ReserveRequest::new(format!(
+            "snapshot capture for {}",
+            fqn.fqn()
+        )))
+        .await
+    {
+        anyhow::bail!("capacity guard refused snapshot capture: {reason}");
+    }
+
     let snapshot_id = garden_common::utils::ids::generate_guidv7();
     match capture_into(state, fqn, store, log, actor, job_id, &snapshot_id).await {
         Ok(captured) => {

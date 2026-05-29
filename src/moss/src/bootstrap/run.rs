@@ -923,6 +923,31 @@ async fn build_state(
         .await,
     );
 
+    // Capacity governor (STORAGE-0020) — disk-space invariant + reclaim.
+    // Governs the data filesystem (where snapshots accumulate); reclaimers
+    // adapt the existing snapshot retention and remove leaked harvest images.
+    let capacity_aggregate = {
+        let data_dir = garden_common::constants::paths::data_dir();
+        let snapshots_root = std::path::Path::new(&data_dir).join("snapshots");
+        let reclaimers: Vec<Arc<dyn crate::domain::Reclaimable>> = vec![
+            Arc::new(
+                crate::domain::capacity::reclaimers::HarvestImageReclaimer::new(docker.clone()),
+            ),
+            Arc::new(crate::domain::capacity::reclaimers::SnapshotReclaimer::new(
+                snapshots_root,
+            )),
+        ];
+        Arc::new(
+            crate::domain::Capacity::new(
+                metrics_aggregate.clone(),
+                data_dir,
+                crate::domain::Budget::from_env(),
+                reclaimers,
+            )
+            .await,
+        )
+    };
+
     let state = Moss {
         current: Arc::new(crate::domain::Current {
             stone: Arc::new(crate::domain::current::Stone {
@@ -997,6 +1022,8 @@ async fn build_state(
         health: health_aggregate,
         // Subsystem readiness -- ARCH-0023 aggregate (Book VI)
         subsystems: subsystems.clone(),
+        // Capacity governor -- STORAGE-0020 (disk-space invariant + reclaim)
+        capacity: capacity_aggregate,
         // Nurturing + nourishment (ARCH-0029: dissolved from Orchestration).
         nurturing: Arc::new(crate::domain::NurturingOrchestration {
             harvest_ops: Arc::clone(&harvest_ops),

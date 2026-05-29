@@ -6,7 +6,7 @@
 //! `emit_storage_changed`, which coordinates across multiple aggregates.
 
 use crate::domain::{
-    Catalog, Health, Jobs, Metrics, Offerings, Security, Subsystems, Tool,
+    Capacity, Catalog, Health, Jobs, Metrics, Offerings, Security, Subsystems, Tool,
 };
 use crate::domain::orchestration::{NourishmentOrchestration, NurturingOrchestration};
 use crate::infra::{EventBus, PulseEvent};
@@ -121,6 +121,11 @@ pub struct Moss {
     /// Subsystem readiness — ARCH-0023 aggregate (Book VI of ARCH-0017)
     pub subsystems: Arc<Subsystems>,
 
+    /// Capacity governor (STORAGE-0020) — disk-space invariant: free space
+    /// on the data filesystem stays above the survival floor. Owns
+    /// admission control and pressure-driven reclamation.
+    pub capacity: Arc<Capacity>,
+
     /// Nurturing infrastructure — A/B backup scheduling and harvest
     /// archives (ARCH-0029: dissolved from Orchestration).
     pub nurturing: Arc<NurturingOrchestration>,
@@ -215,6 +220,12 @@ impl axum::extract::FromRef<Moss> for Arc<NourishmentOrchestration> {
 impl axum::extract::FromRef<Moss> for Arc<Catalog> {
     fn from_ref(state: &Moss) -> Self {
         state.catalog.clone()
+    }
+}
+
+impl axum::extract::FromRef<Moss> for Arc<Capacity> {
+    fn from_ref(state: &Moss) -> Self {
+        state.capacity.clone()
     }
 }
 

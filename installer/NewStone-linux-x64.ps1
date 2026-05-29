@@ -970,7 +970,6 @@ function Write-StoneFiles {
     
     # Prepare stone-root directory structure (mirrors target filesystem)
     Write-Step "Preparing stone-root filesystem..." "..."
-    $stoneRoot = Join-Path $PSScriptRoot "stone-root"
 
     # Clear and recreate stone-root structure
     $stoneRootUsb = Join-Path $UsbDrive "stone-root"
@@ -986,9 +985,7 @@ function Write-StoneFiles {
             throw "Cannot remove existing stone-root directory: $errorMsg`n`nThis usually means a file is locked by Explorer or antivirus.`nTry: Close any Explorer windows showing $UsbDrive, or eject and re-insert the USB."
         }
     }
-    # Create destination and copy template structure
     New-Item -ItemType Directory -Path $stoneRootUsb -Force | Out-Null
-    Copy-Item -Path "$stoneRoot\*" -Destination $stoneRootUsb -Recurse -Force
     
     # =========================================================================
     # Deploy from Linux package (single source of truth)

@@ -1,0 +1,25 @@
+image: qdrant/qdrant:v1.18.0
+container_name: qdrant
+ports:
+  default: [6333, 6333]
+  grpc: [6334, 6334]
+environment:
+  # gRPC is null/disabled in the bundled config; enable it on the documented port.
+  QDRANT__SERVICE__GRPC_PORT: "6334"
+  QDRANT__LOG_LEVEL: "INFO"
+  QDRANT__TELEMETRY_DISABLED: "true"
+volumes:
+  - qdrant-data:/qdrant/storage
+  - qdrant-snapshots:/qdrant/snapshots
+# The qdrant image is debian-slim with no curl/wget/nc by design (security posture).
+# bash IS present (essential package) and supports the /dev/tcp pseudo-device,
+# so we probe the REST port at TCP level. See qdrant.research.md for context.
+healthcheck:
+  test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' || exit 1"]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+restart: unless-stopped
+networks:
+  - zen-garden

@@ -151,3 +151,20 @@ ports:
       type: remap
       range_start: 11435
       range_end: 11499
+
+  # Vector databases
+  6333:
+    name: qdrant
+    description: "Qdrant REST API and dashboard"
+    default:
+      type: remap
+      range_start: 6335
+      range_end: 6399
+
+  6334:
+    name: qdrant-grpc
+    description: "Qdrant gRPC API"
+    default:
+      type: remap
+      range_start: 6400
+      range_end: 6464

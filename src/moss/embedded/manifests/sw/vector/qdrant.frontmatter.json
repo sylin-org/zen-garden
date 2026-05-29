@@ -1,0 +1,25 @@
+{
+  "name": "qdrant",
+  "description": "Qdrant high-performance vector search engine (Rust, Apache 2.0)",
+  "category": "vector",
+  "tags": [
+    "vector",
+    "database",
+    "embeddings",
+    "semantic-search",
+    "rag",
+    "ai",
+    "rust"
+  ],
+  "port": 6333,
+  "volumes": [
+    "qdrant-data",
+    "qdrant-snapshots"
+  ],
+  "homepage": "https://qdrant.tech/",
+  "documentation": "https://qdrant.tech/documentation/",
+  "connection": {
+    "uri_template": "http://{host}:{port}"
+  },
+  "coordination": "independent"
+}

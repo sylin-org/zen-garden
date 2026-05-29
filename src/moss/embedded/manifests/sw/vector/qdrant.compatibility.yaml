@@ -1,0 +1,65 @@
+# Qdrant Compatibility Rules
+# Architecture: amd64, arm64 (no armv7/armv6)
+# CPU features: no hard requirement — scalar fallbacks for all distance kernels
+# Memory: 1 GB minimum to start; 2 GB recommended for any non-trivial workload
+
+# Pre-flight compatibility checks (evaluated in order, first match wins)
+compatibility_rules:
+  # No official armv7/armv6 image — multi-arch manifest is amd64 + arm64 only
+  - name: "arm32-not-supported"
+    when:
+      - host.architecture IN (armv7l,armv6l)
+    reason: "Qdrant does not publish armv7/armv6 Docker images"
+    suggestion: "Use pgvector for 32-bit ARM hosts, or run Qdrant on an arm64 stone (Pi 4/5, M-series)"
+
+  # Hard memory floor — Qdrant's own stated minimum is 1 GB
+  - name: "insufficient-memory"
+    when:
+      - host.ram.total.mb < 1024
+    reason: "Qdrant requires at least 1 GB of RAM to start (per project maintainers)"
+    suggestion: "Increase stone memory or use pgvector for very small deployments"
+
+  # Below the practical floor for real vector workloads
+  - name: "marginal-memory-warning"
+    when:
+      - host.ram.total.mb < 2048
+    reason: "Qdrant runs with <2 GB RAM but vector workloads will rely heavily on swap"
+    suggestion: "Allocate 2 GB+ or enable on-disk segments per collection (on_disk: true)"
+    warn_only: true
+
+# Post-install healthcheck — scan logs for runtime issues
+post_install_healthcheck:
+  enabled: true
+  scan_log_lines: 200
+  timeout_seconds: 60
+
+  patterns:
+    # Out-of-memory — most common Qdrant failure on small stones
+    - pattern: "Cannot allocate memory|OOM|out of memory|memory allocation of \\d+ bytes failed"
+      reason: "Qdrant exhausted available memory during startup or index build"
+      suggestion: "Increase stone RAM, or set on_disk: true per collection to spill segments to disk"
+
+    # Port conflict on REST or gRPC
+    - pattern: "Address already in use.*633[34]|address.*in use.*::6333|address.*in use.*::6334"
+      reason: "Port 6333 (REST) or 6334 (gRPC) is already bound on this stone"
+      suggestion: "Free the port or let Moss remap via the well-known-ports catalog"
+
+    # Storage volume mounted but qdrant can't write to it
+    - pattern: "Permission denied.*storage|failed to create.*qdrant/storage"
+      reason: "Qdrant cannot write to /qdrant/storage (volume permission mismatch)"
+      suggestion: "chown the host volume to the qdrant container UID, or use the v1.18.0-unprivileged image tag"
+
+    # Segment/index corruption — usually a bad shutdown or full disk
+    - pattern: "failed to load.*segment|segment.*corrupted|wal.*corrupted|failed to restore collection"
+      reason: "On-disk segment or WAL corruption detected"
+      suggestion: "Restore the collection from a snapshot in /qdrant/snapshots, or check disk health and free space"
+
+    # Disk exhaustion during write/optimize
+    - pattern: "No space left on device|ENOSPC"
+      reason: "Storage volume is full"
+      suggestion: "Free space on the qdrant-data volume or attach a larger storage bank"
+
+    # Defensive — Qdrant compiles scalar fallbacks, but capture SIGILL if it ever happens
+    - pattern: "Illegal instruction|SIGILL|signal 4"
+      reason: "Unexpected CPU instruction failure — Qdrant ships scalar fallbacks so this should not occur"
+      suggestion: "Open an issue at https://github.com/qdrant/qdrant with your CPU model and image tag"

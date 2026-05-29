@@ -122,7 +122,7 @@ tasksel tasksel/first multiselect standard, ssh-server
 # with systemd-resolved -- the host then has no DNS server registered with
 # resolved and every public lookup fails. Pinning isc-dhcp-client here gives
 # the canonical Debian-12-style stack that works out of the box.
-d-i pkgsel/include string sudo docker.io docker-compose avahi-daemon systemd-resolved isc-dhcp-client fwupd
+d-i pkgsel/include string sudo docker.io docker-compose avahi-daemon systemd-resolved isc-dhcp-client fwupd libasound2t64
 d-i pkgsel/upgrade select full-upgrade
 
 # Do not report installed packages
@@ -133,6 +133,11 @@ d-i grub-installer/only_debian boolean true
 d-i grub-installer/with_other_os boolean true
 # bootdev is set dynamically by partman/early_command to match partman-auto/disk
 d-i grub-installer/bootdev string default
+# Write bootloader to EFI fallback path (EFI/BOOT/BOOTX64.EFI) in addition to the
+# vendor-specific path. Required for Lenovo ThinkCentre and other machines whose
+# firmware only scans the fallback path and does not honour NVRAM boot entries for
+# non-Windows bootloaders.
+d-i grub-installer/force-efi-extra-removable boolean true
 
 #### Finish installation
 d-i finish-install/reboot_in_progress note
@@ -157,4 +162,5 @@ d-i preseed/late_command string \
     in-target chown {{USERNAME}}:{{USERNAME}} /var/lib/zen-garden; \
     in-target timedatectl set-ntp true || true; \
     test -f /target/var/lib/zen-garden/garden.conf && in-target sh -c '. /var/lib/zen-garden/garden.conf && timedatectl set-timezone "$timezone"' || true; \
-    in-target systemctl enable garden-moss.service || true
+    in-target systemctl enable garden-moss.service || true; \
+    in-target sh -c 'echo "grub-efi-amd64 grub2/force_efi_extra_removable boolean true" | debconf-set-selections'

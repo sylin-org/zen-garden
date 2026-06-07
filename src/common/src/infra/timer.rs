@@ -152,10 +152,27 @@ impl PlatformTimer {
         }
     }
 
+    /// Whether systemd timers are usable here (HOST-0001 `scheduler` knob). On a host
+    /// without systemd the timer operations skip rather than failing on `systemctl` /
+    /// writing `/etc/systemd`.
+    #[cfg(target_os = "linux")]
+    fn systemd_scheduler() -> bool {
+        matches!(
+            crate::host::profile().runtime.scheduler,
+            crate::host::Scheduler::Systemd
+        )
+    }
+
     /// Create a nurturing timer for an offering
     pub async fn create(&self, offering_name: &str, config: &TimerConfig) -> Result<TimerResult> {
         #[cfg(target_os = "linux")]
         {
+            if !Self::systemd_scheduler() {
+                return Ok(TimerResult::failure(
+                    offering_name,
+                    "scheduled timers require systemd (scheduler disabled on this host)",
+                ));
+            }
             self.create_systemd_timer(offering_name, config).await
         }
 
@@ -177,6 +194,12 @@ impl PlatformTimer {
     pub async fn remove(&self, offering_name: &str) -> Result<TimerResult> {
         #[cfg(target_os = "linux")]
         {
+            if !Self::systemd_scheduler() {
+                return Ok(TimerResult::failure(
+                    offering_name,
+                    "no systemd timer to remove (scheduler disabled on this host)",
+                ));
+            }
             self.remove_systemd_timer(offering_name).await
         }
 
@@ -219,6 +242,9 @@ impl PlatformTimer {
     pub async fn exists(&self, offering_name: &str) -> Result<bool> {
         #[cfg(target_os = "linux")]
         {
+            if !Self::systemd_scheduler() {
+                return Ok(false);
+            }
             self.systemd_timer_exists(offering_name).await
         }
 
@@ -237,6 +263,9 @@ impl PlatformTimer {
     pub async fn list(&self) -> Result<Vec<String>> {
         #[cfg(target_os = "linux")]
         {
+            if !Self::systemd_scheduler() {
+                return Ok(Vec::new());
+            }
             self.list_systemd_timers().await
         }
 

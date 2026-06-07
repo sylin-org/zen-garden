@@ -2358,6 +2358,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "walkdir",
+ "webpki-roots 1.0.7",
  "windows 0.52.0",
  "windows-sys 0.52.0",
  "winreg 0.52.0",

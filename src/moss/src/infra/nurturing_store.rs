@@ -49,7 +49,7 @@ pub struct NurturingStore {
 impl NurturingStore {
     /// Create a new nurturing store
     pub fn new(harvest_store: HarvestStore, docker: std::sync::Arc<ContainerRuntime>) -> Self {
-        let config_dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
+        let config_dir = PathBuf::from(garden_common::constants::paths::config_dir());
         let index_path = config_dir.join("nurturing").join("index.json");
 
         Self {

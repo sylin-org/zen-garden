@@ -1,0 +1,27 @@
+# Build container for a fully-static aarch64 musl Zen Garden binary (native phone Stone).
+#
+# Moss is the HOST management daemon — it runs natively on the device, not in a container
+# (see STONE-0001 / installer/NewStone-linux-x64.ps1, where moss is a systemd binary at
+# /usr/local/bin). On Android/bionic there is no glibc, so the host binary must be a
+# fully-static musl ELF that runs directly on the Android kernel.
+#
+# Built musl-natively inside an Alpine arm64 container under QEMU (the host registers the
+# binfmt handlers). A native musl build sidesteps all aarch64-musl cross-toolchain pain;
+# aws-lc-sys (BoringSSL) builds with cmake + cc. moss is compiled with --no-default-features
+# to drop the optional `udev` feature (libudev is unavailable on Android); its storage
+# monitor falls back to polling. No third-party libudev shim is linked.
+FROM --platform=linux/arm64 rust:alpine AS builder
+
+WORKDIR /build
+
+RUN apk add --no-cache \
+    musl-dev gcc g++ make cmake perl pkgconf linux-headers \
+    bash file
+
+# aarch64-unknown-linux-musl is the native target in an arm64 Alpine container; ensure present.
+RUN rustup target add aarch64-unknown-linux-musl
+
+# Source (workspace + ../koi) is mounted at runtime, as in the other builders. moss drops the
+# udev feature; rake builds normally. Separate invocations because --no-default-features cannot
+# span two packages in one cargo call.
+CMD ["bash", "-c", "cargo build --target aarch64-unknown-linux-musl --no-default-features --bin garden-moss && cargo build --target aarch64-unknown-linux-musl --bin garden-rake"]

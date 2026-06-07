@@ -10,19 +10,24 @@
 use crate::domain::{NetworkError, StaticIpState};
 use std::path::{Path, PathBuf};
 
-/// Default state file path
-#[cfg(target_os = "linux")]
-const STATE_FILE_PATH: &str = "/etc/zen-garden/network-state.json";
-
+/// Windows state file path (unix resolves via the host profile's config dir).
 #[cfg(target_os = "windows")]
 const STATE_FILE_PATH: &str = ".zen-garden/network-state.json";
 
-#[cfg(target_os = "macos")]
-const STATE_FILE_PATH: &str = "/etc/zen-garden/network-state.json";
-
-/// Get the state file path
+/// Get the state file path.
+///
+/// unix: `{config_dir()}/network-state.json`, backed by the host profile
+/// (honors `ZG_/GARDEN_CONFIG_DIR` and the platform default — e.g. `/data` on
+/// Android). Windows: the relative `.zen-garden` path.
 pub fn state_file_path() -> PathBuf {
-    PathBuf::from(STATE_FILE_PATH)
+    #[cfg(target_os = "windows")]
+    {
+        PathBuf::from(STATE_FILE_PATH)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from(garden_common::constants::paths::config_dir()).join("network-state.json")
+    }
 }
 
 /// Load network state from disk

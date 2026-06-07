@@ -12,6 +12,9 @@ src/orchestrators/ai/web/dist/
 
 # ── Build outputs ──
 dist/
+# Exception: cross-compiled ARM64 Stone binaries consumed by Dockerfile.stone-arm64
+!dist/linux-arm64/garden-moss
+!dist/linux-arm64/garden-rake
 packages/
 staging/
 

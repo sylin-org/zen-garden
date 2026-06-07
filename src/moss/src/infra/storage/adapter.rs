@@ -221,8 +221,7 @@ impl StorageAdapter for NasAdapter {
             }
             args.extend([&*source, &mount_str]);
 
-            let output = tokio::process::Command::new("sudo")
-                .arg("mount")
+            let output = crate::infra::privilege::command("mount")
                 .args(&args)
                 .output()
                 .await?;

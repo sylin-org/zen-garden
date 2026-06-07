@@ -838,10 +838,10 @@ pub async fn mirror_offering_capabilities_v1(
             .into_api_error()
         })?;
 
-    let client = Client::builder()
+    let client = crate::http::client_builder()
         .timeout(garden_common::constants::timeouts::capability_check_timeout())
         .build()
-        .unwrap_or_else(|_| Client::new());
+        .unwrap_or_else(|_| crate::http::HTTP.clone());
 
     let source_caps =
         fetch_remote_capabilities(&client, &from_endpoint, from, &offering_fqn).await?;

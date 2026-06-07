@@ -28,8 +28,30 @@ impl ContainerRuntime {
         console: Option<&Arc<ConsolePrinter>>,
     ) -> Result<()> {
         use bollard::query_parameters::CreateImageOptions;
+        use garden_common::host::ImagePullPolicy;
 
         let stall_timeout = garden_common::constants::timeouts::docker_pull_stall_timeout();
+        let policy = garden_common::host::profile().runtime.image_pull_policy;
+
+        // Honor the host image-pull policy before touching the registry.
+        let present = self.docker.inspect_image(image).await.is_ok();
+        match policy {
+            ImagePullPolicy::Never => {
+                if present {
+                    tracing::debug!(image = %image, "image_pull_policy=Never: using local image");
+                    return Ok(());
+                }
+                anyhow::bail!(
+                    "image_pull_policy=Never and image '{}' is not present locally",
+                    image
+                );
+            }
+            ImagePullPolicy::IfNotPresent if present => {
+                tracing::debug!(image = %image, "image_pull_policy=IfNotPresent: image already present, skipping pull");
+                return Ok(());
+            }
+            _ => {} // Always, or IfNotPresent && !present → pull below
+        }
 
         if let Some(console) = console {
             console.emit(console::ConsoleEvent::new(
@@ -47,6 +69,9 @@ impl ContainerRuntime {
 
         let mut stream = self.docker.create_image(Some(options), None, None);
 
+        // Capture a pull failure rather than bailing immediately, so we can fall back to a
+        // locally-present image (offline / air-gapped stones load images via `docker load`).
+        let mut pull_error: Option<String> = None;
         loop {
             match tokio::time::timeout(stall_timeout, stream.next()).await {
                 Ok(Some(Ok(info))) => {
@@ -65,21 +90,46 @@ impl ContainerRuntime {
                     }
                 }
                 Ok(Some(Err(e))) => {
-                    anyhow::bail!("Failed to pull image '{}': {}", image, e);
+                    pull_error = Some(e.to_string());
+                    break;
                 }
                 Ok(None) => {
                     // Stream finished -- pull complete
                     break;
                 }
                 Err(_elapsed) => {
-                    anyhow::bail!(
-                        "Image pull stalled for '{}': no progress for {} seconds. \
-                         Check network connectivity and Docker Hub access on this stone.",
-                        image,
-                        stall_timeout.as_secs(),
-                    );
+                    pull_error = Some(format!(
+                        "pull stalled: no progress for {} seconds",
+                        stall_timeout.as_secs()
+                    ));
+                    break;
                 }
             }
+        }
+
+        if let Some(err) = pull_error {
+            // Pull failed (e.g. no registry connectivity). If the image is already present
+            // locally — loaded via `docker load` on an offline/air-gapped stone — use it
+            // instead of failing the install.
+            if matches!(policy, ImagePullPolicy::IfNotPresent)
+                && self.docker.inspect_image(image).await.is_ok()
+            {
+                tracing::warn!(image = %image, error = %err,
+                    "Image pull failed; using locally-present image");
+                if let Some(console) = console {
+                    console.emit(console::ConsoleEvent::new(
+                        console::EventCategory::Services,
+                        console::EventStatus::PullComplete,
+                        format!("{} (local)", image),
+                    ));
+                }
+                return Ok(());
+            }
+            anyhow::bail!(
+                "Failed to pull image '{}': {} (and no local copy is present)",
+                image,
+                err
+            );
         }
 
         if let Some(console) = console {
@@ -160,6 +210,36 @@ impl ContainerRuntime {
                 }
             }
         })
+    }
+
+    /// Read the most recent `lines` of a container's combined logs (no follow).
+    ///
+    /// Best-effort reader for the post-install healthcheck scan (COMPAT-0003).
+    /// Accumulation is byte-capped (code-standard rule 20).
+    pub async fn read_recent_logs(&self, name: &str, lines: usize) -> Result<String> {
+        let container_name = zen_offering_container_name(name)?;
+        let options = LogsOptions {
+            follow: false,
+            stdout: true,
+            stderr: true,
+            tail: lines.min(10_000).to_string(),
+            ..Default::default()
+        };
+        let mut stream = self.docker.logs(&container_name, Some(options));
+        let mut out = String::new();
+        const MAX_BYTES: usize = 256 * 1024;
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(output) => {
+                    out.push_str(&output.to_string());
+                    if out.len() >= MAX_BYTES {
+                        break;
+                    }
+                }
+                Err(e) => return Err(anyhow::anyhow!("Docker logs error: {}", e)),
+            }
+        }
+        Ok(out)
     }
 
     // ========================================================================

@@ -286,13 +286,16 @@ pub async fn stone_shutdown(
                 .spawn();
 
             if let Err(e) = result {
-                // Fallback to shutdown command
+                // Fallback to shutdown, then to `poweroff` (toybox/Android has the latter,
+                // not `shutdown`).
                 tracing::warn!(error = ?e, "systemctl failed, trying shutdown -h now");
-                if let Err(e) = std::process::Command::new("shutdown")
+                if std::process::Command::new("shutdown")
                     .args(["-h", "now"])
                     .spawn()
+                    .is_err()
+                    && let Err(e) = std::process::Command::new("poweroff").spawn()
                 {
-                    tracing::error!(error = ?e, "Failed to execute shutdown fallback command");
+                    tracing::error!(error = ?e, "Failed to execute shutdown/poweroff fallback");
                 }
             }
         }

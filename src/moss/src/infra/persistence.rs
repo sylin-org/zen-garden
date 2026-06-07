@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 /// Get offerings cache file path
 fn offerings_cache_path() -> PathBuf {
-    PathBuf::from(garden_common::constants::CONFIG_DIR).join("offerings_cache.json")
+    PathBuf::from(garden_common::constants::paths::config_dir()).join("offerings_cache.json")
 }
 
 // ============================================================================
@@ -19,7 +19,7 @@ fn offerings_cache_path() -> PathBuf {
 ///
 /// Returns empty vec if file doesn't exist.
 pub async fn load_offerings() -> Result<Vec<garden_common::Offering>> {
-    let path = PathBuf::from(garden_common::constants::CONFIG_DIR).join("moss-offerings.json");
+    let path = PathBuf::from(garden_common::constants::paths::config_dir()).join("moss-offerings.json");
 
     match tokio::fs::read_to_string(&path).await {
         Ok(content) => {
@@ -45,7 +45,7 @@ pub async fn load_offerings() -> Result<Vec<garden_common::Offering>> {
 
 /// Save offerings to disk (atomic write)
 pub async fn save_offerings(offerings: &[garden_common::Offering]) -> Result<()> {
-    let dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
+    let dir = PathBuf::from(garden_common::constants::paths::config_dir());
     let path = dir.join("moss-offerings.json");
     tokio::fs::create_dir_all(&dir).await?;
 
@@ -167,7 +167,7 @@ pub async fn load_offerings_cache<T: serde::de::DeserializeOwned>() -> Result<Op
 
 /// Save offerings cache to disk (atomic write)
 pub async fn save_offerings_cache<T: serde::Serialize>(cache: &T) -> Result<()> {
-    let dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
+    let dir = PathBuf::from(garden_common::constants::paths::config_dir());
     tokio::fs::create_dir_all(&dir).await?;
 
     let path = offerings_cache_path();
@@ -234,7 +234,18 @@ async fn atomic_write<T: serde::Serialize, P: AsRef<std::path::Path>>(
     data: &T,
 ) -> Result<()> {
     let path = path.as_ref();
-    let tmp_path = path.with_extension("tmp");
+    // Unique temp name per (file, process): `with_extension("tmp")` drops the real
+    // extension, so distinct files sharing a stem (a.json / a.yaml) would collide on
+    // the same `a.tmp`. Keep the full filename + pid, hidden, beside the target.
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("atomic");
+    let tmp_name = format!(".{}.{}.tmp", file_name, std::process::id());
+    let tmp_path = match path.parent() {
+        Some(dir) => dir.join(tmp_name),
+        None => std::path::PathBuf::from(tmp_name),
+    };
 
     let content = serde_json::to_string_pretty(data)?;
     tokio::fs::write(&tmp_path, content).await?;

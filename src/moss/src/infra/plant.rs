@@ -493,7 +493,7 @@ async fn fetch_artifact(
 /// `StoneClient` in the future — M2 uses plain HTTP plus
 /// trust-the-LAN, matching `mirror_capabilities`.
 fn streaming_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
+    crate::http::client_builder()
         .build()
         .context("build snapshot streaming HTTP client")
 }
@@ -597,6 +597,9 @@ fn compiled_to_container_spec(
         volumes: compiled.volumes.clone(),
         config_files: compiled.config_files.clone(),
         device_requests: compiled.device_requests.clone(),
+        memory_bytes: compiled.resource_limits.memory_bytes,
+        nano_cpus: compiled.resource_limits.nano_cpus,
+        healthcheck: compiled.healthcheck.clone(),
     }
 }
 

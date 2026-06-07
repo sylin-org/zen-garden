@@ -46,6 +46,10 @@ tower-http = { workspace = true, features = ["trace", "cors"] }
 rustls = "0.23"
 rustls-pemfile = "2"
 tokio-rustls = "0.26"
+# Bundled CA roots: reqwest 0.13 + rustls defaults to rustls-platform-verifier (OS trust
+# store), which fails on hosts without one (Android/bionic). We supply webpki roots
+# explicitly via a preconfigured rustls client config (see src/http.rs).
+webpki-roots = "1"
 
 # CLI
 clap = { workspace = true, features = ["derive", "env"] }
@@ -119,8 +123,15 @@ windows = { version = "0.52", features = [
 wmi = "0.14"
 winreg = "0.52"
 
+# `udev` is optional (default-on) so the storage monitor's udev fast-path can be compiled
+# out for a fully-static musl build targeting Android/bionic, where libudev is unavailable.
+# With the feature off, the monitor's existing polling fallback handles device add/remove.
+[features]
+default = ["udev"]
+udev = ["dep:udev"]
+
 [target.'cfg(unix)'.dependencies]
-udev = "0.9"
+udev = { version = "0.9", optional = true }
 libc = "0.2"
 sd-notify = "0.4"
 

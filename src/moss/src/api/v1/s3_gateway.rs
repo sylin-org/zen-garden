@@ -320,7 +320,7 @@ async fn proxy_s3_request(
     body: Option<Bytes>,
 ) -> Response {
     static S3_PROXY_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
-        reqwest::Client::builder()
+        crate::http::client_builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("S3 proxy HTTP client")

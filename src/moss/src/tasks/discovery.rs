@@ -28,7 +28,6 @@ pub async fn lantern_registration_loop(
     token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
     use garden_common::{RegisterRequest, RegisterServiceInfo};
-    use reqwest::Client;
 
     tracing::info!(
         stone_id = %stone_id,
@@ -37,7 +36,7 @@ pub async fn lantern_registration_loop(
         "Starting Lantern registration loop"
     );
 
-    let client = Client::new();
+    let client = crate::http::HTTP.clone();
     let register_url = format!("{}/api/v1/register", lantern_endpoint);
 
     loop {

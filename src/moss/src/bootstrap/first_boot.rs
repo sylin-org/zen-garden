@@ -51,8 +51,15 @@ pub async fn run_first_boot_initialization(
     runtime.display_header("System Configuration");
     console::set_hostname(runtime, &new_name).await?;
     console::update_hosts_file(runtime, old_name, &new_name).await?;
-    console::restart_avahi(runtime).await?;
-    console::test_mdns_resolution(runtime, &new_name).await?;
+    // mDNS bring-up via avahi is best-effort: Moss runs its own mDNS, and hosts
+    // without avahi/systemd (Android/minimal) must not fail — and retry-loop —
+    // first-boot over it.
+    if let Err(e) = console::restart_avahi(runtime).await {
+        tracing::warn!(error = %e, "avahi restart failed (non-fatal)");
+    }
+    if let Err(e) = console::test_mdns_resolution(runtime, &new_name).await {
+        tracing::warn!(error = %e, "mDNS resolution test failed (non-fatal)");
+    }
     runtime.write_line("");
 
     // Update Moss configuration

@@ -137,7 +137,7 @@ async fn persist_console_mode(mode: ConsoleMode) -> Result<(), Box<dyn std::erro
     } else {
         PathBuf::from(format!(
             "{}/{}",
-            garden_common::constants::CONFIG_DIR,
+            garden_common::constants::paths::config_dir(),
             garden_common::constants::MOSS_CONFIG
         ))
     };

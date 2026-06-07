@@ -5,6 +5,13 @@
 **Target Audience**: Makers, hobbyists, e-waste reduction enthusiasts  
 **Complexity**: Experimental, community-supported
 
+> **Status update (2026-06): real Docker on Android is demonstrated.** A rooted phone with a
+> container-enabled kernel runs `garden-moss` and native Docker as a **full Stone**
+> ([STONE-0001](../decisions/STONE-0001-lineageos-arm64-full-stone.md)) — it is *not* a Pebble.
+> The Pebble tier described below now applies specifically to **unrooted / sensor-only** phones
+> (no container kernel, no root), which genuinely cannot run Docker. The "Docker ❌ proot only"
+> premise holds only for that unrooted case.
+
 ## Executive Summary
 
 Introduce a third compute tier called "Pebbles" to enable repurposing old Android smartphones as sensor-rich edge compute nodes. Unlike Stones (general-purpose compute with Docker), Pebbles are specialized for sensor workloads leveraging unique smartphone hardware (GPS, cameras, accelerometers, etc.).

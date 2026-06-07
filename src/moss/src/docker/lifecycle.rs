@@ -138,7 +138,7 @@ impl ContainerRuntime {
         let docker_occupied = self.scan_port_occupancy(Some(&container_name)).await?;
 
         // Pre-flight port availability check with automatic remediation/remapping
-        let resolved_ports = check_and_remediate_ports(&spec.ports, &docker_occupied).await?;
+        let resolved_ports = check_and_remediate_ports(name, &spec.ports, &docker_occupied).await?;
 
         // Log any port remappings
         for ((original, _), (actual, _)) in spec.ports.iter().zip(resolved_ports.iter()) {
@@ -300,7 +300,7 @@ impl ContainerRuntime {
         let docker_occupied = self.scan_port_occupancy(None).await?;
 
         // Resolve ports (same logic as install_service)
-        let resolved_ports = check_and_remediate_ports(&spec.ports, &docker_occupied).await?;
+        let resolved_ports = check_and_remediate_ports(name, &spec.ports, &docker_occupied).await?;
 
         // Build and start the container
         let (config, _) = self
@@ -430,13 +430,18 @@ impl ContainerRuntime {
         spec: &ContainerSpec,
         resolved_ports: &[(u16, u16)],
     ) -> Result<(ContainerCreateBody, ())> {
+        // Container runtime/security posture from the host profile. Defaults preserve the
+        // prior behavior (bridge networking, 0.0.0.0 bind, unless-stopped, image user).
+        let profile = garden_common::host::profile();
+        let container = &profile.runtime.container;
+
         // Configure port bindings (using resolved ports)
         let mut port_bindings = HashMap::new();
         for (host_port, container_port) in resolved_ports {
             port_bindings.insert(
                 format!("{}/tcp", container_port),
                 Some(vec![PortBinding {
-                    host_ip: Some("0.0.0.0".to_string()),
+                    host_ip: Some(container.bind_address.to_string()),
                     host_port: Some(host_port.to_string()),
                 }]),
             );
@@ -524,6 +529,51 @@ impl ContainerRuntime {
             None
         };
 
+        // Container healthcheck from the manifest `healthcheck:` block (OFFER-0009).
+        let healthcheck = spec
+            .healthcheck
+            .as_ref()
+            .map(|hc| bollard::models::HealthConfig {
+                test: Some(hc.test.clone()),
+                interval: hc.interval_ns,
+                timeout: hc.timeout_ns,
+                retries: hc.retries,
+                start_period: hc.start_period_ns,
+                ..Default::default()
+            });
+
+        // Expand the single container-privilege posture into bollard fields (§8: one knob,
+        // no impossible combinations). ImageDefault — the norm on a kernel without
+        // paranoid-network — adds nothing and preserves current behavior.
+        use garden_common::host::{ContainerPrivilege, NetworkMode, RestartPolicy as HostRestartPolicy};
+        let mut network_mode = match container.network_mode {
+            NetworkMode::Host => Some("host".to_string()),
+            NetworkMode::Bridge => None,
+        };
+        let mut cap_add: Option<Vec<String>> = None;
+        let mut group_add: Option<Vec<String>> = None;
+        let mut privileged: Option<bool> = None;
+        match container.privilege {
+            ContainerPrivilege::ImageDefault => {}
+            ContainerPrivilege::AmbientNetRaw => {
+                // Ambient net caps + the Android inet/net_raw GIDs survive a gosu/su-exec
+                // privilege drop, so a non-root service can still open sockets under
+                // paranoid-network (interim for un-patched Android kernels).
+                cap_add = Some(vec!["NET_RAW".to_string(), "NET_ADMIN".to_string()]);
+                group_add = Some(vec!["3003".to_string(), "3004".to_string()]);
+            }
+            ContainerPrivilege::HostNetwork => network_mode = Some("host".to_string()),
+            ContainerPrivilege::Privileged => privileged = Some(true),
+        }
+        let restart_policy_name = match container.restart_policy {
+            HostRestartPolicy::No => bollard::models::RestartPolicyNameEnum::NO,
+            HostRestartPolicy::OnFailure => bollard::models::RestartPolicyNameEnum::ON_FAILURE,
+            HostRestartPolicy::Always => bollard::models::RestartPolicyNameEnum::ALWAYS,
+            HostRestartPolicy::UnlessStopped => {
+                bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED
+            }
+        };
+
         let host_config = HostConfig {
             port_bindings: Some(port_bindings),
             binds: Some(binds),
@@ -531,10 +581,17 @@ impl ContainerRuntime {
             dns: Some(net.dns),
             dns_search: Some(net.dns_search),
             restart_policy: Some(bollard::models::RestartPolicy {
-                name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
+                name: Some(restart_policy_name),
                 maximum_retry_count: None,
             }),
             device_requests,
+            // Resource limits from manifest deploy.resources.limits (OFFER-0009).
+            memory: spec.memory_bytes,
+            nano_cpus: spec.nano_cpus,
+            network_mode,
+            cap_add,
+            group_add,
+            privileged,
             ..Default::default()
         };
 
@@ -542,7 +599,9 @@ impl ContainerRuntime {
             image: Some(spec.image.clone()),
             cmd: effective_cmd,
             env: Some(full_env),
+            user: container.user.clone(),
             host_config: Some(host_config),
+            healthcheck,
             ..Default::default()
         };
 

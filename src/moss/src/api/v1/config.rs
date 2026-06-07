@@ -429,6 +429,9 @@ fn effective_to_container_spec(
         volumes: effective.volumes.clone(),
         config_files: effective.config_files.clone(),
         device_requests: vec![],
+        memory_bytes: effective.resource_limits.memory_bytes,
+        nano_cpus: effective.resource_limits.nano_cpus,
+        healthcheck: effective.healthcheck.clone(),
     }
 }
 

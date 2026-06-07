@@ -706,14 +706,16 @@ mod linux {
         // Not mounted — try to mount temporarily to inspect
         let temp_mount = format!("/tmp/zen-garden-inspect-{}", std::process::id());
 
-        let _ = run_command_timed_sync("sudo", &["mkdir", "-p", &temp_mount], mount_timeout);
+        let (mkdir_prog, mkdir_args) =
+            crate::infra::privilege::sync_command("mkdir", &["-p", &temp_mount]);
+        let _ = run_command_timed_sync(mkdir_prog, &mkdir_args, mount_timeout);
 
         if Path::new(&temp_mount).exists() {
-            let mount_result = run_command_timed_sync(
-                "sudo",
-                &["mount", "-o", "ro", device_path, &temp_mount],
-                mount_timeout,
+            let (mount_prog, mount_args) = crate::infra::privilege::sync_command(
+                "mount",
+                &["-o", "ro", device_path, &temp_mount],
             );
+            let mount_result = run_command_timed_sync(mount_prog, &mount_args, mount_timeout);
 
             if let Ok(output) = mount_result {
                 if output.status.success() {
@@ -1073,7 +1075,9 @@ mod linux {
                 return Vec::new();
             }
             Err(e) => {
-                warn!(error = %e, "Failed to spawn lsblk for media scan");
+                // Expected on hosts without lsblk (e.g. Android/toybox). Degrade quietly —
+                // debug, not warn — since the media scan runs on a timer.
+                debug!(error = %e, "lsblk unavailable; skipping external-media scan");
                 return Vec::new();
             }
         };

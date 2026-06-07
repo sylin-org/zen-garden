@@ -190,6 +190,16 @@ pub async fn restart_docker_daemon() -> Result<()> {
 async fn restart_docker_linux() -> Result<()> {
     use tokio::process::Command;
 
+    if !matches!(
+        garden_common::host::profile().runtime.scheduler,
+        garden_common::host::Scheduler::Systemd
+    ) {
+        tracing::warn!(
+            "Docker daemon config changed, but auto-restart requires systemd; restart dockerd manually to apply"
+        );
+        return Ok(());
+    }
+
     tracing::info!("Restarting Docker daemon via systemctl");
 
     let output = Command::new("systemctl")

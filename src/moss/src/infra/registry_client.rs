@@ -103,7 +103,7 @@ struct TokenResponse {
 pub async fn query_image_tags(image: &str, config: &RegistryConfig) -> Result<Vec<String>> {
     let image_ref = ImageRef::parse(image)?;
 
-    let client = reqwest::Client::builder()
+    let client = crate::http::client_builder()
         .timeout(std::time::Duration::from_secs(config.timeout_seconds))
         .build()
         .context("Failed to create HTTP client")?;
@@ -250,7 +250,7 @@ pub fn find_newer_version(current: &str, available: &[String]) -> Option<String>
 pub async fn get_image_digest(image: &str, config: &RegistryConfig) -> Result<String> {
     let image_ref = ImageRef::parse(image)?;
 
-    let client = reqwest::Client::builder()
+    let client = crate::http::client_builder()
         .timeout(std::time::Duration::from_secs(config.timeout_seconds))
         .build()
         .context("Failed to create HTTP client")?;

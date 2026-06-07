@@ -28,9 +28,11 @@ pub async fn detect_by_http_probe(config: &HttpProbeDetection) -> Result<Detecti
     let timeout = Duration::from_millis(config.timeout_ms.unwrap_or(2000));
     let expected_status = config.expected_status.unwrap_or(200);
 
-    // Create HTTP client with timeout
+    // Create HTTP client with timeout. Local liveness probe → accept invalid certs (also
+    // avoids reqwest's platform-verifier, which fails to build on a host with no CA store).
     let client = reqwest::Client::builder()
         .timeout(timeout)
+        .danger_accept_invalid_certs(true)
         .build()
         .context("Failed to create HTTP client")?;
 

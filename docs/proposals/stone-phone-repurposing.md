@@ -2,6 +2,14 @@
 
 **Turn old smartphones into full-featured Stones with wired power, wired network, and real Linux.**
 
+> **Status update (2026-06): the accepted path is LineageOS + a container-enabled kernel.**
+> A rooted phone running LineageOS with a recompiled container kernel runs **native Docker** and
+> joins the garden as a **full Stone** — `garden-moss` runs as the `zen-garden/stone:arm64`
+> container, cross-compiled and deployed over ADB. See
+> [STONE-0001](../decisions/STONE-0001-lineageos-arm64-full-stone.md) and the
+> [phone Stone guide](../guides/phone-stone-lineageos.md). The PostmarketOS route described below
+> remains a valid alternative for devices with mainline (systemd) Linux support.
+
 ---
 
 ## Executive Summary

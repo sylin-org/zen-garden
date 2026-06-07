@@ -1,0 +1,391 @@
+<#
+.SYNOPSIS
+    Compile Zen Garden Linux ARM64 (aarch64) binaries using Docker
+
+.DESCRIPTION
+    Cross-compiles Zen Garden binaries for aarch64-unknown-linux-gnu (64-bit ARM Linux).
+    Uses a dedicated Docker container with the aarch64 cross toolchain and ARM64
+    cross-compilation libraries. Output goes to dist/linux-arm64/ (separate from the
+    x64 dist/linux-x64/ and x86 dist/linux-x86/).
+
+    This is a parallel pipeline to compile-linux-x64.ps1 / compile-linux-x86.ps1, not a
+    replacement. Use this for ARM64 stones (e.g., LineageOS phone Stones like the Pixel
+    3 XL / SDM845, and SBCs such as the Raspberry Pi 4/5).
+
+.PARAMETER Targets
+    List of cargo package names to build (e.g., "garden-moss", "garden-rake")
+    If not specified, builds all binaries (moss, lantern, rake, cricket, firefly).
+
+.PARAMETER DebugBuild
+    Compile debug binaries instead of optimized release
+
+.PARAMETER Fast
+    Use fast-release profile (~40% faster compile, slightly larger binaries)
+
+.PARAMETER ForceRebuild
+    Force rebuild of Docker build container
+
+.PARAMETER Jobs
+    Number of parallel cargo jobs (default: number of CPUs)
+
+.EXAMPLE
+    .\compile-linux-arm64.ps1
+    # Build all binaries for ARM64
+
+.EXAMPLE
+    .\compile-linux-arm64.ps1 -Targets "garden-moss","garden-rake"
+    # Build specific binaries for ARM64 (core tier for a phone Stone)
+
+.EXAMPLE
+    .\compile-linux-arm64.ps1 -ForceRebuild
+    # Rebuild Docker image and compile
+#>
+
+[CmdletBinding()]
+param(
+    [string]$Version,
+    [string[]]$Targets,
+    [switch]$DebugBuild,
+    [switch]$Fast,
+    [switch]$Release,
+    [switch]$ForceRebuild,
+    [int]$Jobs = 0
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$RUST_TARGET = "aarch64-unknown-linux-gnu"
+$WORKSPACE_ROOT = (Get-Item $PSScriptRoot).Parent.FullName
+$DIST_DIR = Join-Path $WORKSPACE_ROOT "dist"
+$LINUX_ARM64_DIR = Join-Path $DIST_DIR "linux-arm64"
+$IMAGE_NAME = "zen-builder-linux-arm64:latest"
+$CONTAINER_NAME = "zen-builder-linux-arm64"
+$CARGO_CACHE_VOLUME = "zen-cargo-cache-linux-arm64"
+
+# Detect if running on Windows
+$RunningOnWindows = if ($null -ne (Get-Variable -Name IsWindows -ValueOnly -ErrorAction SilentlyContinue)) {
+    $IsWindows
+} else {
+    $env:OS -eq "Windows_NT"
+}
+
+# Create dist directory
+New-Item -ItemType Directory -Force -Path $LINUX_ARM64_DIR | Out-Null
+
+# Version handling
+if ($Version) {
+    $env:GARDEN_VERSION = $Version
+    $parts = $Version.Split('.')
+    if ($parts.Length -ge 3) {
+        $env:BUILD_NUMBER = $parts[2]
+        $env:CARGO_BUILD_NUMBER = $parts[2]
+    }
+} elseif (-not $env:GARDEN_VERSION) {
+    $revision = (Get-Date).ToString("yyyyMMddHHmm")
+    $env:GARDEN_VERSION = "0.1.$revision"
+    $env:BUILD_NUMBER = $revision
+    $env:CARGO_BUILD_NUMBER = $revision
+    Write-Host "Warning: Version not set, using default: $env:GARDEN_VERSION" -ForegroundColor Yellow
+    Write-Host ""
+}
+$version = $env:GARDEN_VERSION
+
+# Build profile
+$buildProfile = if ($DebugBuild) { "debug" } elseif ($Fast) { "fast-release" } else { "release" }
+$buildTypeDesc = switch ($buildProfile) {
+    "debug" { "Debug (fastest compile, largest binary)" }
+    "fast-release" { "Fast-Release (thin LTO, ~40% faster compile)" }
+    default { "Release (full LTO, smallest binary)" }
+}
+
+$parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
+
+Write-Host "`n+====================================================+" -ForegroundColor Magenta
+Write-Host "|   Zen Garden Linux ARM64 Build                     |" -ForegroundColor Magenta
+Write-Host "+====================================================+`n" -ForegroundColor Magenta
+
+Write-Host "Configuration:" -ForegroundColor Yellow
+Write-Host "  Platform: Linux"
+Write-Host "  Architecture: ARM64 ($RUST_TARGET)"
+Write-Host "  Version: $version"
+Write-Host "  Build Type: $buildTypeDesc"
+Write-Host "  Parallel Jobs: $parallelJobs"
+Write-Host "  Output Dir: $LINUX_ARM64_DIR"
+Write-Host '  Build Method: Docker Container [cross-compilation]'
+Write-Host ""
+
+# Check Docker availability
+try {
+    docker version | Out-Null
+} catch {
+    Write-Host "Docker not available. Docker is required for ARM64 cross-compilation." -ForegroundColor Red
+    if ($RunningOnWindows) {
+        Write-Host "  Install Docker Desktop: https://www.docker.com/products/docker-desktop/" -ForegroundColor Yellow
+    }
+    exit 1
+}
+
+# Build or reuse Docker image
+$existingImage = $null
+try { $existingImage = docker images -q $IMAGE_NAME 2>&1 | Where-Object { $_ -is [string] } } catch {}
+
+# Auto-detect stale Cargo.lock: rebuild container when dependencies change
+$lockfileStale = $false
+if ($existingImage -and -not $ForceRebuild) {
+    $lockHash = (Get-FileHash (Join-Path $WORKSPACE_ROOT "Cargo.lock") -Algorithm SHA256).Hash.Substring(0, 16)
+    $markerFile = Join-Path ($DIST_DIR) ".builder-lock-hash-arm64"
+    if (Test-Path $markerFile) {
+        $savedHash = Get-Content $markerFile -ErrorAction SilentlyContinue
+        if ($savedHash -ne $lockHash) {
+            $lockfileStale = $true
+            Write-Host "Build Container:" -ForegroundColor Yellow
+            Write-Host "  Cargo.lock changed - rebuilding container for dependency sync" -ForegroundColor Cyan
+        }
+    } else {
+        New-Item -ItemType Directory -Path ($DIST_DIR) -Force | Out-Null
+        $lockHash | Out-File $markerFile -NoNewline
+    }
+}
+
+if ($existingImage -and -not $ForceRebuild -and -not $lockfileStale) {
+    Write-Host "Build Container:" -ForegroundColor Yellow
+    Write-Host "  Using existing image: $IMAGE_NAME" -ForegroundColor Green
+    Write-Host "    (Use -ForceRebuild to recreate)" -ForegroundColor DarkGray
+    Write-Host ""
+} else {
+    Write-Host "Build Container:" -ForegroundColor Yellow
+    Write-Host "  $(if ($ForceRebuild) { 'Rebuilding' } else { 'Creating' }) image: $IMAGE_NAME"
+
+    if ($ForceRebuild -or $lockfileStale) {
+        # Remove existing container and cargo cache volume to avoid stale
+        # build-script binaries compiled against a different glibc version.
+        Write-Host "  Removing old container and cargo cache..." -ForegroundColor DarkGray
+        docker rm -f $CONTAINER_NAME 2>$null | Out-Null
+        docker volume rm $CARGO_CACHE_VOLUME 2>$null | Out-Null
+    }
+
+    Push-Location $WORKSPACE_ROOT
+    try {
+        docker build -f Dockerfile.linux-arm64 -t $IMAGE_NAME . --quiet
+        if ($LASTEXITCODE -ne 0) { throw "Docker build failed" }
+        Write-Host "  Image ready`n" -ForegroundColor Green
+
+        # Save Cargo.lock hash for staleness detection
+        $lockHash = (Get-FileHash (Join-Path $WORKSPACE_ROOT "Cargo.lock") -Algorithm SHA256).Hash.Substring(0, 16)
+        $markerFile = Join-Path ($DIST_DIR) ".builder-lock-hash-arm64"
+        New-Item -ItemType Directory -Path ($DIST_DIR) -Force | Out-Null
+        $lockHash | Out-File $markerFile -NoNewline
+    } finally {
+        Pop-Location
+    }
+}
+
+# Determine build arguments
+$buildProfile = if ($DebugBuild) { "debug" }
+                elseif ($Fast) { "fast-release" }
+                else { "release" }
+
+$parallelJobs = if ($Jobs -gt 0) { $Jobs } else { [Environment]::ProcessorCount }
+
+Write-Host "Building ARM64 binaries in container..." -ForegroundColor Cyan
+$buildTypeDesc = switch ($buildProfile) {
+    "debug" { "Debug" }
+    "fast-release" { "Fast-Release (thin LTO)" }
+    default { "Release (full LTO)" }
+}
+Write-Host "  Build Type: $buildTypeDesc, Jobs: $parallelJobs" -ForegroundColor DarkGray
+
+# Volume mount path
+if ($RunningOnWindows) {
+    $driveLetter = $WORKSPACE_ROOT.Substring(0, 1).ToLower()
+    $unixPath = "/$driveLetter" + $WORKSPACE_ROOT.Substring(2).Replace('\', '/')
+} else {
+    $unixPath = $WORKSPACE_ROOT
+}
+
+# Koi repo is a sibling directory - mount it so path dependency resolves
+# Cargo.toml: koi-embedded = { path = "../koi/crates/koi-embedded" }
+# Inside container: /build/../koi -> /koi
+$koiHostPath = (Resolve-Path (Join-Path $WORKSPACE_ROOT "../koi")).Path
+if ($RunningOnWindows) {
+    $koiDriveLetter = $koiHostPath.Substring(0, 1).ToLower()
+    $koiUnixPath = "/$koiDriveLetter" + $koiHostPath.Substring(2).Replace('\', '/')
+} else {
+    $koiUnixPath = $koiHostPath
+}
+
+Push-Location $WORKSPACE_ROOT
+try {
+    # Build number
+    if (-not $env:CARGO_BUILD_NUMBER) {
+        $env:CARGO_BUILD_NUMBER = (Get-Date).ToString("yyyyMMdd.HHmm")
+        Write-Host "  Build Number: $env:CARGO_BUILD_NUMBER" -ForegroundColor Cyan
+    }
+
+    $defaultTargets = @("garden-moss", "garden-lantern", "garden-rake", "garden-cricket", "garden-firefly")
+    $buildTargets = if ($Targets -and $Targets.Count -gt 0) { $Targets } else { $defaultTargets }
+
+    # Build Lantern frontend (on host, before Docker cargo build)
+    if ($buildTargets -contains "garden-lantern") {
+        $frontendDir = Join-Path $WORKSPACE_ROOT "src/lantern/frontend"
+        if (Test-Path (Join-Path $frontendDir "package.json")) {
+            Write-Host "Building Lantern frontend SPA..." -ForegroundColor Yellow
+
+            $hasBun = Get-Command bun -ErrorAction SilentlyContinue
+            $hasNpm = Get-Command npm -ErrorAction SilentlyContinue
+
+            Push-Location $frontendDir
+            try {
+                if ($hasBun) {
+                    Write-Host "  Using bun..." -ForegroundColor DarkGray
+                    bun install --frozen-lockfile 2>$null
+                    if ($LASTEXITCODE -ne 0) { bun install }
+                    & ./node_modules/.bin/vite build
+                } elseif ($hasNpm) {
+                    Write-Host "  Using npm..." -ForegroundColor DarkGray
+                    npm ci 2>$null
+                    if ($LASTEXITCODE -ne 0) { npm install }
+                    npx vite build
+                } else {
+                    Write-Host "  ! Neither bun nor npm found - skipping frontend build" -ForegroundColor Yellow
+                    Write-Host "    Lantern will embed whatever is in frontend/dist/" -ForegroundColor DarkGray
+                }
+
+                if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $frontendDir "dist/index.html"))) {
+                    Write-Host "  OK Lantern frontend built`n" -ForegroundColor Green
+                } elseif ($LASTEXITCODE -ne 0) {
+                    Write-Host "  ! Frontend build failed (exit code $LASTEXITCODE) - continuing with cargo build`n" -ForegroundColor Yellow
+                }
+            } finally {
+                Pop-Location
+            }
+        }
+    }
+
+    foreach ($target in $buildTargets) {
+        Write-Host "  -> Building $target (ARM64)..."
+    }
+
+    # Cargo build args with --target for cross-compilation
+    $buildArgs = @("cargo", "build", "--frozen", "--target", $RUST_TARGET, "-j", "$parallelJobs")
+    if ($buildProfile -eq "debug") {
+        # Debug build - no profile flag needed
+    } elseif ($buildProfile -eq "fast-release") {
+        $buildArgs += @("--profile", "fast-release")
+    } else {
+        $buildArgs += "--release"
+    }
+    foreach ($target in $buildTargets) {
+        $buildArgs += @("--bin", $target)
+    }
+
+    # Container management
+    $existingContainer = $null
+    $existingContainer = docker ps --filter "name=^/${CONTAINER_NAME}$" --format "{{.Names}}" 2>$null
+    $stoppedContainer = $null
+    $stoppedContainer = docker ps -a --filter "name=^/${CONTAINER_NAME}$" --filter "status=exited" --format "{{.Names}}" 2>$null
+
+    if ($existingContainer -eq $CONTAINER_NAME) {
+        Write-Host "  -> Using running container: $CONTAINER_NAME" -ForegroundColor DarkGray
+    } elseif ($stoppedContainer -eq $CONTAINER_NAME) {
+        Write-Host "  -> Starting existing container: $CONTAINER_NAME" -ForegroundColor DarkGray
+        docker start $CONTAINER_NAME | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to start container" }
+    } else {
+        Write-Host "  -> Creating new container: $CONTAINER_NAME" -ForegroundColor DarkGray
+
+        # Workspace and koi mounted read-only to prevent lockfile drift.
+        # Target dir is a named volume for incremental compilation persistence.
+        docker run -d `
+            --name $CONTAINER_NAME `
+            -v "${unixPath}:/build:ro" `
+            -v "${koiUnixPath}:/koi:ro" `
+            -v "${CARGO_CACHE_VOLUME}:/root/.cargo" `
+            -v "zen-target-linux-arm64:/target" `
+            -w /build `
+            $IMAGE_NAME `
+            tail -f /dev/null
+
+        if ($LASTEXITCODE -ne 0) { throw "Failed to create container" }
+    }
+
+    # Version update detection: build.rs declares cargo:rerun-if-env-changed=CARGO_BUILD_NUMBER
+    # so Cargo automatically re-runs build scripts and recompiles affected crates when the
+    # build number changes. No manual cache cleaning needed - incremental compilation works.
+    # ARM64 uses a separate target dir (target-linux-arm64/) to avoid glibc/arch conflicts
+    # with the x64 builder which uses target-linux-x64/ and a different base image.
+
+    # Ensure container cargo cache has all crates from the lockfile.
+    # The host runs cargo fetch into its own CARGO_HOME, but each Docker container
+    # has a separate cargo cache (named volume). Without this step, --frozen fails
+    # the first time a new dependency is added to Cargo.toml.
+    docker exec $CONTAINER_NAME cargo fetch --manifest-path /build/Cargo.toml 2>&1 | Out-Null
+
+    # Execute build with separate target directory.
+    # Cross toolchain (linker, CC/CXX/AR) is baked into the builder image ENV; we pass the
+    # pkg-config cross variables here to mirror compile-linux-x86.ps1.
+    docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/target -e PKG_CONFIG_ALLOW_CROSS=1 -e PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig" -e PKG_CONFIG_SYSROOT_DIR="/" $CONTAINER_NAME $buildArgs
+
+    if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+
+    # Copy binaries from container
+    # Cross-compiled binaries are at target-linux-arm64/{RUST_TARGET}/{profile}/{binary}
+    Write-Host "  -> Copying binaries from container..." -ForegroundColor DarkGray
+    $copyFailed = $false
+    $containerBuildDir = "/target/$RUST_TARGET/$buildProfile"
+
+    foreach ($target in $buildTargets) {
+        docker cp "${CONTAINER_NAME}:${containerBuildDir}/${target}" "$LINUX_ARM64_DIR\$target" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "    Failed to copy $target" -ForegroundColor Red
+            $copyFailed = $true
+        }
+    }
+
+    if ($copyFailed) { throw "Failed to copy one or more binaries from container" }
+
+    Write-Host "  Linux ARM64 binaries built`n" -ForegroundColor Green
+
+} finally {
+    Pop-Location
+}
+
+# Display results
+Write-Host "+====================================================+" -ForegroundColor Green
+Write-Host "|   Linux ARM64 Build Complete!                      |" -ForegroundColor Green
+Write-Host "+====================================================+`n" -ForegroundColor Green
+
+Write-Host "Artifacts in $LINUX_ARM64_DIR`:" -ForegroundColor Cyan
+
+$artifacts = Get-ChildItem $LINUX_ARM64_DIR -ErrorAction SilentlyContinue
+if ($artifacts) {
+    $artifacts | ForEach-Object {
+        $sizeMB = [math]::Round($_.Length / 1MB, 2)
+        $sizeStr = if ($sizeMB -lt 1) {
+            "$([math]::Round($_.Length / 1KB, 0)) KB"
+        } else {
+            "$sizeMB MB"
+        }
+
+        # Verify binary type
+        $marker = "-"
+        try {
+            $fileType = docker run --rm -v "${LINUX_ARM64_DIR}:/check" $IMAGE_NAME file "/check/$($_.Name)" 2>$null
+            $isLinuxBinary = $fileType -match "ELF 64-bit.*ARM aarch64"
+            $marker = if ($isLinuxBinary) { "OK" } else { "?" }
+        } catch {
+            $marker = "-"
+        }
+
+        Write-Host ("  {0} {1,-20} {2,10}" -f $marker, $_.Name, $sizeStr) -ForegroundColor $(if ($marker -eq "OK") { "Green" } else { "White" })
+    }
+} else {
+    Write-Host "  (no artifacts found)" -ForegroundColor DarkGray
+}
+
+Write-Host "`nNext steps:" -ForegroundColor Yellow
+Write-Host "  1. Package + bundle into a runnable image: build-linux-arm64.ps1"
+Write-Host "  2. For a phone Stone: deploy via ADB (see installer/deploy-android.ps1)"
+Write-Host "  (Build container cached for next run)" -ForegroundColor DarkGray
+Write-Host ""

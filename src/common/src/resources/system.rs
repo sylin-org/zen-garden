@@ -23,11 +23,21 @@ pub fn get_cpu_info() -> Result<(String, Vec<String>, String)> {
 
 #[cfg(target_os = "linux")]
 fn get_cpu_info_linux() -> Result<(String, Vec<String>, String)> {
-    let cpuinfo = fs::read_to_string("/proc/cpuinfo").context("Failed to read /proc/cpuinfo")?;
+    let architecture = std::env::consts::ARCH.to_string();
+
+    // /proc/cpuinfo is absent or unreadable on some hosts (minimal containers,
+    // restricted Android). Degrade to minimal info rather than aborting the whole
+    // capability collection.
+    let cpuinfo = match fs::read_to_string("/proc/cpuinfo") {
+        Ok(content) => content,
+        Err(e) => {
+            tracing::warn!(error = %e, "/proc/cpuinfo unreadable; using minimal CPU info");
+            return Ok((String::from("Unknown"), Vec::new(), architecture));
+        }
+    };
 
     let mut model_name = String::from("Unknown");
     let mut features = Vec::new();
-    let mut architecture = std::env::consts::ARCH.to_string();
 
     for line in cpuinfo.lines() {
         if line.starts_with("model name") {
@@ -44,10 +54,16 @@ fn get_cpu_info_linux() -> Result<(String, Vec<String>, String)> {
         }
     }
 
-    // For ARM, try to get more specific arch info
-    if architecture.starts_with("arm") || architecture.starts_with("aarch") {
-        if let Ok(arch_info) = fs::read_to_string("/proc/device-tree/model") {
-            architecture = arch_info.trim().to_string();
+    // On ARM, /proc/cpuinfo usually has no "model name"; use the device-tree model as the
+    // descriptive CPU/board model. Keep `architecture` canonical (e.g. "aarch64") — it feeds
+    // offering compatibility matching, which must not receive a board string. Device-tree
+    // model strings are NUL-terminated, so strip embedded/trailing NULs.
+    if model_name == "Unknown" {
+        if let Ok(dt) = fs::read_to_string("/proc/device-tree/model") {
+            let dt = dt.trim().trim_matches('\0').trim().to_string();
+            if !dt.is_empty() {
+                model_name = dt;
+            }
         }
     }
 

@@ -359,8 +359,8 @@ pub async fn delete_bank_v1(
     if mount_dir.exists() {
         #[cfg(target_os = "linux")]
         {
-            let output = tokio::process::Command::new("sudo")
-                .args(["rm", "-rf", &mount_dir.to_string_lossy()])
+            let output = crate::infra::privilege::command("rm")
+                .args(["-rf", &mount_dir.to_string_lossy()])
                 .output()
                 .await
                 .map_err(|e| {
@@ -1022,8 +1022,8 @@ pub async fn add_storage_v1(
         {
             #[expect(unused_imports)]
             use anyhow::Context;
-            let output = tokio::process::Command::new("sudo")
-                .args(["mkdir", "-p", &mount_dir.to_string_lossy()])
+            let output = crate::infra::privilege::command("mkdir")
+                .args(["-p", &mount_dir.to_string_lossy()])
                 .output()
                 .await
                 .map_err(|e| {
@@ -1242,8 +1242,8 @@ async fn run_format_and_add(
 
     #[cfg(target_os = "linux")]
     {
-        let output = tokio::process::Command::new("sudo")
-            .args(["mkdir", "-p", &mount_dir.to_string_lossy()])
+        let output = crate::infra::privilege::command("mkdir")
+            .args(["-p", &mount_dir.to_string_lossy()])
             .output()
             .await
             .context("Failed to run sudo mkdir")?;
@@ -1281,8 +1281,8 @@ async fn run_format_and_add(
 
     #[cfg(target_os = "linux")]
     {
-        let output = tokio::process::Command::new("sudo")
-            .args(["chown", "-R", "stone:stone", &mount_dir.to_string_lossy()])
+        let output = crate::infra::privilege::command("chown")
+            .args(["-R", "stone:stone", &mount_dir.to_string_lossy()])
             .output()
             .await
             .context("Failed to run chown")?;
@@ -1373,8 +1373,7 @@ async fn format_device(device: &str, filesystem: &str) -> anyhow::Result<()> {
         _ => return Err(anyhow::anyhow!("Unsupported filesystem: {}", filesystem)),
     };
 
-    let output = tokio::process::Command::new("sudo")
-        .args([cmd])
+    let output = crate::infra::privilege::command(cmd)
         .args(&args)
         .output()
         .await
@@ -1393,8 +1392,8 @@ async fn format_device(device: &str, filesystem: &str) -> anyhow::Result<()> {
 #[cfg(target_os = "linux")]
 async fn mount_device(device: &str, mount_point: &std::path::Path) -> anyhow::Result<()> {
     use anyhow::Context;
-    let output = tokio::process::Command::new("sudo")
-        .args(["mount", device, &mount_point.to_string_lossy()])
+    let output = crate::infra::privilege::command("mount")
+        .args([device, &mount_point.to_string_lossy()])
         .output()
         .await
         .context("Failed to run sudo mount")?;

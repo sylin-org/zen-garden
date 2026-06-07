@@ -4,6 +4,7 @@ mod inspect;
 mod lifecycle;
 mod naming;
 mod port;
+mod port_ledger;
 mod spec;
 
 // Re-export public API (preserves all existing import paths)
@@ -50,9 +51,24 @@ impl ContainerRuntime {
 
         #[cfg(target_os = "linux")]
         let docker = {
-            tracing::debug!("Connecting to Docker via Unix socket");
-            BollardDocker::connect_with_socket_defaults()
-                .context("Failed to connect to Docker daemon via Unix socket")?
+            match garden_common::host::profile().runtime.docker_socket.as_deref() {
+                Some(socket) => {
+                    // Explicit socket from the host profile (e.g. /data/docker/docker.sock
+                    // on Android, where there is no /var/run).
+                    let path = socket.to_string_lossy().into_owned();
+                    tracing::debug!(socket = %path, "Connecting to Docker via configured Unix socket");
+                    BollardDocker::connect_with_socket(&path, 120, bollard::API_DEFAULT_VERSION)
+                        .with_context(|| format!("Failed to connect to Docker daemon at {path}"))?
+                }
+                None => {
+                    // No explicit socket: honor DOCKER_HOST, else the default socket.
+                    // (connect_with_socket_defaults ignores DOCKER_HOST — connect_with_defaults
+                    // does not.)
+                    tracing::debug!("Connecting to Docker (DOCKER_HOST or default socket)");
+                    BollardDocker::connect_with_defaults()
+                        .context("Failed to connect to Docker daemon (DOCKER_HOST or default socket)")?
+                }
+            }
         };
 
         Ok(Self { docker })

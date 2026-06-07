@@ -275,14 +275,15 @@ fn write_value(path: &Path, value: &str) -> Result<()> {
         return Ok(());
     }
 
-    // Direct write failed — likely permissions. Try sudo.
+    // Direct write failed — likely permissions. Retry with privilege escalation.
     let cmd = format!("echo {value} > {}", path.display());
+    let (prog, args) = crate::infra::privilege::sync_command("sh", &["-c", &cmd]);
     let output = crate::infra::storage::subprocess::run_command_timed_sync(
-        "sudo",
-        &["sh", "-c", &cmd],
+        prog,
+        &args,
         Duration::from_secs(5),
     )
-    .with_context(|| format!("sudo write {value} to {}", path.display()))?;
+    .with_context(|| format!("privileged write {value} to {}", path.display()))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

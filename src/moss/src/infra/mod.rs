@@ -42,6 +42,7 @@ pub mod network;
 pub mod nurturing_store;
 pub mod persistence;
 pub mod platform;
+pub mod privilege;
 pub mod process;
 pub mod registry_client;
 pub mod secrets;

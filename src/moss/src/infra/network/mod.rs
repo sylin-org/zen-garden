@@ -73,6 +73,17 @@ pub struct StaticIpApply {
 ///
 /// Returns the first available platform adapter, or None if no platform is supported.
 pub fn detect_platform() -> Option<Box<dyn NetworkPlatform>> {
+    // Host-profile gate: when network provisioning is disabled (e.g. Android — DHCP via the
+    // adapter, no ifupdown/netplan, no sudo), select no platform. This skips the static-IP and
+    // DHCP-revert sudo paths wholesale, at the boundary.
+    if matches!(
+        garden_common::host::profile().network.config_method,
+        garden_common::host::NetConfigMethod::None
+    ) {
+        tracing::debug!("network provisioning disabled (config_method=None); no platform selected");
+        return None;
+    }
+
     #[cfg(target_os = "linux")]
     {
         if let Some(platform) = detect_linux_platform() {
@@ -353,13 +364,34 @@ pub async fn revert_to_dhcp(offering: &str, state: &mut StaticIpState) -> Result
     Ok(())
 }
 
-/// Detect primary network interface
+/// Detect primary network interface.
+///
+/// Resolution order: explicit `network.interface` profile override → the interface
+/// that owns the default route (`/proc/net/route` — robust for any name: eth0, usb0,
+/// enxXXXX, rndis0, …) → common names → first non-virtual interface.
 fn detect_primary_interface() -> Option<String> {
-    // Try to get the interface with default route
-    // For now, use a simple heuristic based on common interface names
+    // Explicit override from the host profile wins.
+    if let Some(iface) = garden_common::host::profile().network.interface.clone() {
+        return Some(iface);
+    }
+
     #[cfg(target_os = "linux")]
     {
-        // Check common interface names in order of preference
+        // Primary: the interface that owns the default route. Name-agnostic, so it
+        // finds a USB Ethernet adapter regardless of how the kernel names it.
+        if let Ok(route) = std::fs::read_to_string("/proc/net/route") {
+            for line in route.lines().skip(1) {
+                let mut fields = line.split_whitespace();
+                if let (Some(iface), Some(dest)) = (fields.next(), fields.next())
+                    && dest == "00000000"
+                    && iface != "lo"
+                {
+                    return Some(iface.to_string());
+                }
+            }
+        }
+
+        // Fallback: common interface names in order of preference.
         let candidates = ["eth0", "ens0", "enp0s3", "eno1", "wlan0"];
         for candidate in candidates {
             let path = format!("/sys/class/net/{}", candidate);
@@ -368,7 +400,7 @@ fn detect_primary_interface() -> Option<String> {
             }
         }
 
-        // Fallback: list interfaces and pick first non-loopback
+        // Last resort: first non-loopback, non-virtual interface.
         if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();

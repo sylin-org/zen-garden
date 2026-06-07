@@ -1,9 +1,21 @@
 //! Path Constants
-//! File system paths with GARDEN_ environment variable overrides
+//!
+//! These are thin readers over the single host configuration source,
+//! [`crate::host::profile`]. The profile resolves env (`ZG_*` primary, `GARDEN_*`
+//! deprecated fallback) and per-platform defaults exactly once at startup; these
+//! functions surface the resolved values as `String` for existing call sites.
+//! Windows keeps its own branches — the profile is the unix single-source.
 
-/// Get config directory (default: /etc/zen-garden)
+/// Get config directory (default: /etc/zen-garden).
+///
+/// Reads `host::profile().paths.config` (which honors `ZG_CONFIG_DIR` /
+/// `GARDEN_CONFIG_DIR` and the platform default).
 pub fn config_dir() -> String {
-    std::env::var("GARDEN_CONFIG_DIR").unwrap_or_else(|_| "/etc/zen-garden".to_string())
+    crate::host::profile()
+        .paths
+        .config
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Get stone home directory (default: /home/stone)
@@ -11,10 +23,14 @@ pub fn stone_home() -> String {
     std::env::var("GARDEN_STONE_HOME").unwrap_or_else(|_| "/home/stone".to_string())
 }
 
-/// Get first-run flag path (default: /etc/zen-garden/.first-run-complete)
+/// Get first-run flag path (default: `{config_dir}/.first-run-complete`).
+///
+/// Uses the profile-backed `config_dir()` so the flag lands on writable storage
+/// (e.g. `/data` on Android) — not hardcoded read-only `/etc`.
 pub fn first_run_flag() -> String {
-    std::env::var("GARDEN_FIRST_RUN_FLAG")
-        .unwrap_or_else(|_| "/etc/zen-garden/.first-run-complete".to_string())
+    std::env::var("ZG_FIRST_RUN_FLAG")
+        .or_else(|_| std::env::var("GARDEN_FIRST_RUN_FLAG"))
+        .unwrap_or_else(|_| format!("{}/.first-run-complete", config_dir()))
 }
 
 /// Operator-local firefly roster path.
@@ -58,19 +74,27 @@ pub fn stone_user() -> String {
 /// relative name is resolved against the current working directory at startup
 /// so that Docker bind mounts and other external tools receive an absolute path.
 pub fn data_dir() -> String {
-    std::env::var("GARDEN_DATA_DIR").unwrap_or_else(|_| {
-        #[cfg(target_os = "windows")]
-        {
-            // Resolve .zen-garden relative to CWD so the path is absolute.
-            // Docker bind mounts reject relative paths on Windows.
-            let base = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            base.join(".zen-garden").to_string_lossy().into_owned()
-        }
-        #[cfg(target_os = "linux")]
-        {
-            "/var/lib/zen-garden".to_string()
-        }
-    })
+    #[cfg(target_os = "windows")]
+    {
+        // Resolve .zen-garden relative to CWD so the path is absolute.
+        // Docker bind mounts reject relative paths on Windows.
+        std::env::var("ZG_DATA_DIR")
+            .or_else(|_| std::env::var("GARDEN_DATA_DIR"))
+            .unwrap_or_else(|_| {
+                let base = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                base.join(".zen-garden").to_string_lossy().into_owned()
+            })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // unix: the host profile owns data-dir resolution (ZG_/GARDEN_DATA_DIR +
+        // per-platform default — e.g. /data/zen-garden on Android).
+        crate::host::profile()
+            .paths
+            .data
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 
 /// Get shared data directory for cross-process data
@@ -88,7 +112,9 @@ pub fn data_dir() -> String {
 ///
 /// Override: `GARDEN_SHARED_DATA_DIR` environment variable.
 pub fn shared_data_dir() -> String {
-    std::env::var("GARDEN_SHARED_DATA_DIR").unwrap_or_else(|_| {
+    std::env::var("ZG_SHARED_DATA_DIR")
+        .or_else(|_| std::env::var("GARDEN_SHARED_DATA_DIR"))
+        .unwrap_or_else(|_| {
         #[cfg(target_os = "windows")]
         {
             let program_data =
@@ -167,18 +193,24 @@ pub fn staging_dir() -> String {
 /// Overridable via `GARDEN_COMPANIONS_DIR`. The legacy mixed-case name
 /// `GARDEN_companions_dir` is also accepted for backwards compatibility.
 pub fn companions_dir() -> String {
-    std::env::var("GARDEN_COMPANIONS_DIR")
-        .or_else(|_| std::env::var("GARDEN_companions_dir"))
-        .unwrap_or_else(|_| {
-            #[cfg(target_os = "windows")]
-            {
-                format!(r"{}\companions", data_dir())
-            }
-            #[cfg(target_os = "linux")]
-            {
-                "/usr/local/bin/companions".to_string()
-            }
-        })
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var("ZG_COMPANIONS_DIR")
+            .or_else(|_| std::env::var("GARDEN_COMPANIONS_DIR"))
+            .or_else(|_| std::env::var("GARDEN_companions_dir"))
+            .unwrap_or_else(|_| format!(r"{}\companions", data_dir()))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // unix: the profile resolves ZG_/GARDEN_COMPANIONS_DIR (and the legacy
+        // mixed-case name) and defaults to {data}/companions — never the
+        // read-only /usr/local/bin that broke Android.
+        crate::host::profile()
+            .paths
+            .companions
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 
 /// Get logs directory for daemon file logging

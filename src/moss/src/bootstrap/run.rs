@@ -1186,6 +1186,16 @@ async fn serve(state: Moss, api_endpoint: &str) -> anyhow::Result<()> {
 async fn configure_resolved_for_containers(bridge_gw: &str) -> anyhow::Result<()> {
     use anyhow::Context;
 
+    if !matches!(
+        garden_common::host::profile().network.dns_provisioning,
+        garden_common::host::DnsProvisioning::SystemdResolved
+    ) {
+        tracing::debug!(
+            "skipping systemd-resolved container DNS config (dns_provisioning != systemd-resolved)"
+        );
+        return Ok(());
+    }
+
     let conf_path = "/etc/systemd/resolved.conf.d/zen-garden.conf";
     let desired = format!(
         "[Resolve]\nMulticastDNS=resolve\nDNSStubListenerExtra={}\n",
@@ -1225,6 +1235,28 @@ async fn configure_resolved_for_containers(_bridge_gw: &str) -> anyhow::Result<(
     Ok(())
 }
 
+/// Finish first-boot: restart-to-apply on a supervised (systemd) host, else keep running.
+///
+/// Exiting only makes sense when a supervisor will restart Moss with the new config.
+/// On Android/minimal there is none, so exiting would leave the Stone down; instead
+/// keep running — startup re-reads the hostname/config on the next boot, so the new
+/// identity applies then.
+#[cfg(target_os = "linux")]
+fn finish_first_boot(runtime: &dyn garden_common::PlatformRuntime, new_name: &str) {
+    if matches!(
+        garden_common::host::profile().runtime.scheduler,
+        garden_common::host::Scheduler::Systemd
+    ) {
+        runtime.display_wait("Restarting to apply new configuration...");
+        // Exit so systemd restarts us with the new configuration.
+        std::process::exit(0);
+    }
+    tracing::info!(
+        new_name = %new_name,
+        "First boot complete; no service supervisor (scheduler != systemd) — continuing to run; new identity applies on next boot"
+    );
+}
+
 /// Start first-boot initialization task (Linux only)
 ///
 /// Runs initialization in a background task.
@@ -1253,11 +1285,9 @@ fn start_first_boot_task(
                 tracing::info!(new_name = %new_name, "First boot initialization completed successfully");
                 runtime.write_line("");
                 runtime.display_success(&format!("Stone configured as: {}", new_name));
-                runtime.display_wait("Restarting to apply new configuration...");
                 runtime.write_line("");
 
-                // Exit so systemd restarts us with the new configuration
-                std::process::exit(0);
+                finish_first_boot(&*runtime, &new_name);
             }
             Err(e) => {
                 tracing::error!(error = ?e, "First boot initialization failed");
@@ -1276,7 +1306,7 @@ fn start_first_boot_task(
                                 tracing::error!(error = ?e, "Failed to mark first-run complete");
                             }
                             tracing::info!(new_name = %new_name, "First boot initialization completed");
-                            std::process::exit(0);
+                            finish_first_boot(&*runtime, &new_name);
                         }
                         Err(e) => {
                             tracing::error!(error = ?e, attempt, "First boot retry failed");

@@ -1,0 +1,51 @@
+# Build container for Zen Garden Linux ARM64 (aarch64) binaries
+# Cross-compiles from x64 host to aarch64-unknown-linux-gnu target.
+# Used by compile-linux-arm64.ps1 for ARM64 stones (e.g., LineageOS phone Stones
+# such as the Pixel 3 XL / SDM845, and SBCs like the Raspberry Pi 4/5).
+#
+# Pinned to Bookworm (Debian 12) for two reasons:
+#  1. glibc 2.36 runs on the target's kernel (the phone Stone runs Linux 4.9);
+#     the runtime container base (Dockerfile.stone-arm64) is bookworm-slim to match.
+#  2. Bookworm uses the classic sources.list (no deb822 `Architectures:` restriction),
+#     so `dpkg --add-architecture arm64` resolves :arm64 cross packages cleanly.
+#
+# This is a parallel pipeline to compile-linux-x86.ps1 — the same builder-image +
+# mounted-workspace pattern, just a different cross target. Additive: x64/x86/Windows
+# builds are untouched.
+FROM rust:bookworm AS builder
+
+WORKDIR /build
+
+# Install dependencies including the aarch64 cross toolchain and ARM64 (foreign-arch)
+# development libraries. Mirrors Dockerfile.linux-x86 (gcc-multilib -> aarch64 cross,
+# :i386 -> :arm64). No cmake: aws-lc-sys builds via the cc-crate path, exactly as it
+# does for the i686 cross build.
+RUN dpkg --add-architecture arm64 && \
+    apt-get update && apt-get install -y \
+    musl-tools \
+    file \
+    pkg-config \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
+    libasound2-dev:arm64 \
+    libudev-dev:arm64 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add aarch64 Rust target
+RUN rustup target add aarch64-unknown-linux-gnu
+
+# Cross-compilation toolchain wiring (container-scoped, mirroring how compile-linux-x64.ps1
+# passes the mold linker via env rather than polluting the shared .cargo/config.toml — a
+# linker entry there would break native aarch64 builds that use plain `gcc`/`cc`).
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+ENV CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+ENV CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
+ENV AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
+
+# pkg-config for cross-compilation to aarch64
+ENV PKG_CONFIG_ALLOW_CROSS=1
+ENV PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig"
+ENV PKG_CONFIG_SYSROOT_DIR="/"
+
+# Source code is mounted as a volume at runtime via -v flag
+CMD ["bash", "-c", "cargo build --target aarch64-unknown-linux-gnu --bin garden-moss && cargo build --target aarch64-unknown-linux-gnu --bin garden-rake"]

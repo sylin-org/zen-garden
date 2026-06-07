@@ -31,7 +31,7 @@ pub struct TaskStore {
 impl TaskStore {
     /// Create a new task store
     pub fn new() -> Self {
-        let config_dir = PathBuf::from(garden_common::constants::CONFIG_DIR);
+        let config_dir = PathBuf::from(garden_common::constants::paths::config_dir());
         let tasks_dir = config_dir.join("tasks");
 
         Self {
@@ -251,6 +251,7 @@ mod tests {
             description: "Test task".to_string(),
             schedule: "0 0 * * *".to_string(),
             command: vec!["echo".to_string(), "test".to_string()],
+            action: garden_common::TaskAction::Exec,
             category: TaskCategory::Maintenance,
             enabled: true,
             timeout_secs: 60,

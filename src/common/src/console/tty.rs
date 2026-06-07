@@ -396,9 +396,19 @@ async fn check_mdns_collision(name: &str) -> bool {
 pub async fn set_hostname(runtime: &dyn PlatformRuntime, name: &str) -> Result<()> {
     runtime.display_wait(&format!("Setting hostname to {}", name));
 
-    tokio::fs::write("/etc/hostname", format!("{}\n", name))
-        .await
-        .context("Failed to write /etc/hostname")?;
+    match &crate::host::profile().identity.hostname {
+        crate::host::WritePolicy::Write(path) => {
+            tokio::fs::write(path, format!("{}\n", name))
+                .await
+                .with_context(|| format!("Failed to write {}", path.display()))?;
+        }
+        crate::host::WritePolicy::Skip => {
+            tracing::warn!(
+                hostname = name,
+                "hostname-file write skipped (read-only /etc); relying on the hostname command"
+            );
+        }
+    }
 
     let output = tokio::process::Command::new("hostname")
         .arg(name)
@@ -442,14 +452,28 @@ pub async fn get_hostname() -> Result<String> {
 
     #[cfg(target_os = "linux")]
     {
-        let content = tokio::fs::read_to_string("/etc/hostname")
-            .await
-            .context("Failed to read /etc/hostname")?;
-        let hostname = content.trim().to_string();
-        if hostname.is_empty() {
-            anyhow::bail!("/etc/hostname was empty");
+        // Prefer the configured hostname file; fall back to the `hostname` command
+        // (symmetry with Windows, and the only option on a read-only /etc host).
+        if let crate::host::WritePolicy::Write(path) = &crate::host::profile().identity.hostname
+            && let Ok(content) = tokio::fs::read_to_string(path).await
+        {
+            let hostname = content.trim().to_string();
+            if !hostname.is_empty() {
+                return Ok(hostname);
+            }
         }
-        Ok(hostname)
+
+        match tokio::process::Command::new("hostname").output().await {
+            Ok(output) if output.status.success() => {
+                let hostname = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !hostname.is_empty() {
+                    return Ok(hostname);
+                }
+            }
+            _ => {}
+        }
+
+        anyhow::bail!("Failed to determine hostname (no readable hostname file and `hostname` command failed)");
     }
 }
 
@@ -461,11 +485,18 @@ pub async fn update_hosts_file(
     old_name: &str,
     new_name: &str,
 ) -> Result<()> {
-    runtime.display_wait("Updating /etc/hosts");
+    let path = match &crate::host::profile().identity.hosts_file {
+        crate::host::WritePolicy::Write(p) => p.clone(),
+        crate::host::WritePolicy::Skip => {
+            tracing::warn!("hosts-file update skipped (read-only /etc)");
+            return Ok(());
+        }
+    };
+    runtime.display_wait("Updating hosts file");
 
-    let hosts_content = tokio::fs::read_to_string("/etc/hosts")
+    let hosts_content = tokio::fs::read_to_string(&path)
         .await
-        .context("Failed to read /etc/hosts")?;
+        .with_context(|| format!("Failed to read {}", path.display()))?;
 
     let updated_content = hosts_content
         .lines()
@@ -508,16 +539,26 @@ pub async fn update_hosts_file(
         .collect::<Vec<_>>()
         .join("\n");
 
-    tokio::fs::write("/etc/hosts", updated_content)
+    tokio::fs::write(&path, updated_content)
         .await
-        .context("Failed to write /etc/hosts")?;
+        .with_context(|| format!("Failed to write {}", path.display()))?;
 
-    runtime.display_success("Updated /etc/hosts");
+    runtime.display_success("Updated hosts file");
     Ok(())
 }
 
 /// Restart avahi-daemon to update mDNS announcements
 pub async fn restart_avahi(runtime: &dyn PlatformRuntime) -> Result<()> {
+    // avahi + systemctl only exist on a systemd host. On Android/minimal there is no
+    // avahi (Moss runs its own mDNS), so skip rather than failing first-boot in a
+    // 3-second retry loop.
+    if !matches!(
+        crate::host::profile().runtime.scheduler,
+        crate::host::Scheduler::Systemd
+    ) {
+        tracing::debug!("avahi restart skipped (no systemd on this host)");
+        return Ok(());
+    }
     runtime.display_wait("Restarting avahi-daemon");
 
     let output = tokio::process::Command::new("systemctl")
@@ -691,7 +732,15 @@ pub fn write_motd(info: &MotdInfo) -> Result<()> {
     lines.push(String::new());
 
     let motd_content = lines.join("\n");
-    std::fs::write("/etc/motd", motd_content).context("Failed to write /etc/motd")?;
+    match &crate::host::profile().identity.motd {
+        crate::host::WritePolicy::Write(path) => {
+            std::fs::write(path, motd_content)
+                .with_context(|| format!("Failed to write {}", path.display()))?;
+        }
+        crate::host::WritePolicy::Skip => {
+            tracing::debug!("MOTD write skipped (read-only /etc)");
+        }
+    }
 
     Ok(())
 }

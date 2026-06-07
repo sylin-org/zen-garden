@@ -55,10 +55,14 @@ pub struct DetectionPipeline {
 
 impl DetectionPipeline {
     pub fn new() -> Self {
+        // Detection probes arbitrary LOCAL services for liveness/identity, so accept invalid
+        // certs (self-signed/none). This also avoids reqwest's default rustls-platform-verifier,
+        // which panics at build on hosts with no system CA store (Android/bionic).
         let http_client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(3))
             .timeout(Duration::from_secs(5))
             .no_proxy()
+            .danger_accept_invalid_certs(true)
             .build()
             .expect("HTTP client for detection");
 

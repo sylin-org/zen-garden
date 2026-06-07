@@ -145,3 +145,26 @@ made non-fatal.
 > `HTTP 200` mongod native-port notice. Peer `stone-gentle-cliff`'s garden topology:
 > `stone-slate-grove @ 192.168.1.120 health=thriving services=mongodb:running`. The phone is a
 > full Stone running a LAN-reachable MongoDB, and it survives restart via the code default.
+
+> **2026-06-07 — reboot persistence (#1): the test that lied, and M14.** Three real
+> power-cycles (driven over adb-over-TCP, made persistent with `setprop persist.adb.tcp.port
+> 5555`):
+> - **Reboot #1 — passed (by luck).** uptime 88 s; dockerd, moss, and mongo all auto-returned;
+>   mongo LAN-reachable. But `mongo` had `RestartPolicy=on-failure` with `RestartCount=0` — it
+>   came back via dockerd's *boot-restore of running containers*, not the policy. Recovery was
+>   incidental. Hardened: `Container::from_env` now defaults `RestartPolicy=UnlessStopped` for
+>   persistent Stones (LinuxStandard **and** Android); `on-failure` was an *ephemeral*-host label
+>   mis-applied to a phone meant to stay up.
+> - **Reboot #2 — FAILED.** moss came up but **dockerd was down**:
+>   `failed to start daemon ... delete /data/docker/docker.pid: process with PID 1777 is still
+>   running`. **M14: a hard reboot leaves a stale `/data/docker/docker.pid`; if that PID is
+>   reused by an unrelated process at next boot, dockerd refuses to start.** Probabilistic —
+>   #1 got lucky, #2 didn't. Fix: `dockerd-service.sh` now `rm -f`s the stale `docker.pid` (and
+>   containerd socket) before starting.
+> - **Reboot #3 — passed deterministically.** With the M14 fix, full recovery in **50 s**
+>   (moss + `mongo` HTTP 200 on the LAN). mongo auto-restarted via `unless-stopped` the instant
+>   dockerd came up.
+>
+> **Lesson:** one green reboot is not proof. Re-test power-cycles; intermittent PID-reuse / race
+> failures hide behind luck, and the re-verify pass is where the real bug lived. All five
+> acceptance criteria (#1–#5) are now green.

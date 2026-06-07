@@ -13,7 +13,7 @@ use crate::infra::save_capabilities_cache;
 use garden_common::console;
 use garden_common::resources::system as resources;
 use garden_common::{
-    AiCapabilitiesSummary, CpuCapabilities, DetectionStatus, DiskCapabilities, GpuInfo,
+    AiCapabilitiesSummary, CpuCapabilities, DetectionStatus, GpuInfo,
     HardwareCapabilities, HardwareInventory, MemoryCapabilities, RuntimeInfo,
 };
 use std::collections::HashSet;
@@ -213,19 +213,7 @@ pub async fn detect_capabilities_background(
         .map(|r| r.memory.total_bytes / 1024 / 1024)
         .unwrap_or(0);
 
-    let disk = resources.as_ref().map(|r| {
-        // Single source: the data partition (offering data + container images live there).
-        let primary = r.data_partition();
-        DiskCapabilities {
-            total_gb: primary.map(|s| s.total_gb).unwrap_or(0),
-            disk_type: primary.map(|s| match &s.disk_type {
-                garden_common::DiskType::NVMe => "NVMe".to_string(),
-                garden_common::DiskType::SSD => "SSD".to_string(),
-                garden_common::DiskType::HDD => "HDD".to_string(),
-                garden_common::DiskType::Unknown => "Unknown".to_string(),
-            }),
-        }
-    });
+    let disk = resources.as_ref().map(|r| r.disk_capabilities());
 
     tracing::info!("CPU detection complete: {} cores", cpu_cores);
     console.emit(console::ConsoleEvent::new(

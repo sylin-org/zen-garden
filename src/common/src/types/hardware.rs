@@ -75,6 +75,27 @@ impl StoneResources {
             .max_by_key(|s| s.mount_point.len())
             .or_else(|| self.storage.iter().max_by_key(|s| s.total_gb))
     }
+
+    /// Build the static disk capability (capacity + type) from the data partition — the single
+    /// way every capabilities builder derives `DiskCapabilities`. Returns a zeroed capability
+    /// (total 0, type None) when no partition is found, matching prior builder behavior.
+    pub fn disk_capabilities(&self) -> DiskCapabilities {
+        match self.data_partition() {
+            Some(s) => DiskCapabilities {
+                total_gb: s.total_gb,
+                disk_type: Some(match s.disk_type {
+                    DiskType::NVMe => "NVMe".to_string(),
+                    DiskType::SSD => "SSD".to_string(),
+                    DiskType::HDD => "HDD".to_string(),
+                    DiskType::Unknown => "Unknown".to_string(),
+                }),
+            },
+            None => DiskCapabilities {
+                total_gb: 0,
+                disk_type: None,
+            },
+        }
+    }
 }
 
 /// True if filesystem `path` lives under `mount` (prefix match at a path-component boundary).

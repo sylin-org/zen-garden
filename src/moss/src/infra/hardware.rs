@@ -179,7 +179,7 @@ pub async fn save_capabilities_cache(capabilities: &HardwareCapabilities) -> Res
 /// Call this in a background task to avoid blocking startup.
 pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities> {
     use garden_common::{
-        CpuCapabilities, DetectionStatus, DiskCapabilities, HardwareInventory, MemoryCapabilities,
+        CpuCapabilities, DetectionStatus, HardwareInventory, MemoryCapabilities,
         RuntimeInfo,
     };
 
@@ -202,19 +202,7 @@ pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities>
         .map(|r| r.memory.total_bytes / 1024 / 1024)
         .unwrap_or(0);
 
-    let disk = resources.as_ref().map(|r| {
-        // Single source: the data partition (offering data + container images live there).
-        let primary = r.data_partition();
-        DiskCapabilities {
-            total_gb: primary.map(|s| s.total_gb).unwrap_or(0),
-            disk_type: primary.map(|s| match &s.disk_type {
-                garden_common::DiskType::NVMe => "NVMe".to_string(),
-                garden_common::DiskType::SSD => "SSD".to_string(),
-                garden_common::DiskType::HDD => "HDD".to_string(),
-                garden_common::DiskType::Unknown => "Unknown".to_string(),
-            }),
-        }
-    });
+    let disk = resources.as_ref().map(|r| r.disk_capabilities());
 
     // Slow detection: GPUs
     tracing::debug!("Detecting GPUs (may take a few seconds)...");

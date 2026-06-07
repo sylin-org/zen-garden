@@ -480,7 +480,14 @@ pub fn detect_disk_type_for_mount(mount_point: &str) -> Option<String> {
             return Some(result);
         }
 
-        // Strategy 2: Direct sysfs probe (original approach, works for simple /dev/sdX).
+        // Strategy 2: /proc/mounts + /sys device-mapper slaves. No findmnt/lsblk — works on
+        // Android/toybox, where Strategy 1 cannot run. Resolves F2FS /data on UFS (dm-N →
+        // physical disk → rotational) so internal phone storage classifies as SSD, not Unknown.
+        if let Some(result) = detect_via_proc_mounts(mount_point) {
+            return Some(result);
+        }
+
+        // Strategy 3: Direct sysfs probe (original approach, works for simple /dev/sdX).
         detect_via_sysfs(mount_point)
     }
 }
@@ -555,6 +562,62 @@ fn detect_via_lsblk(mount_point: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Detect disk type without `findmnt`/`lsblk` (both absent on Android/toybox): resolve the
+/// backing device from `/proc/mounts`, follow a device-mapper node (`dm-N`) through
+/// `/sys/block/<dm>/slaves` to its physical parent, and read the rotational flag. Classifies
+/// Android internal storage (F2FS `/data` on UFS, e.g. `dm-37` → `sda21` → `sda`, rotational 0)
+/// as SSD instead of Unknown.
+#[cfg(target_os = "linux")]
+fn detect_via_proc_mounts(mount_point: &str) -> Option<String> {
+    let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
+    let source = mounts.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let dev = fields.next()?;
+        let mnt = fields.next()?;
+        (mnt == mount_point).then(|| dev.to_string())
+    })?;
+
+    let dev = source.rsplit('/').next().unwrap_or("");
+    if dev.is_empty() {
+        return None;
+    }
+
+    // A device-mapper node (dm-N) has no rotational flag of its own; follow its first slave
+    // to the physical block device.
+    let base = if dev.starts_with("dm-") {
+        std::fs::read_dir(format!("/sys/block/{dev}/slaves"))
+            .ok()?
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .map(|parent| trim_partition(&parent))
+            .next()?
+    } else {
+        trim_partition(dev)
+    };
+    if base.is_empty() {
+        return None;
+    }
+    if base.starts_with("nvme") {
+        return Some("NVMe".to_string());
+    }
+    let rotational = std::fs::read_to_string(format!("/sys/block/{base}/queue/rotational")).ok()?;
+    match rotational.trim() {
+        "0" => Some("SSD".to_string()),
+        "1" => Some("HDD".to_string()),
+        _ => None,
+    }
+}
+
+/// Strip a trailing partition suffix to get the physical block device name
+/// (`sda21` → `sda`, `nvme0n1p2` → `nvme0n1`, `mmcblk0p1` → `mmcblk0`).
+#[cfg(target_os = "linux")]
+fn trim_partition(dev: &str) -> String {
+    if dev.starts_with("nvme") || dev.starts_with("mmcblk") {
+        dev.split('p').next().unwrap_or(dev).to_string()
+    } else {
+        dev.trim_end_matches(|c: char| c.is_ascii_digit()).to_string()
+    }
 }
 
 /// Fallback: detect disk type via sysfs rotational flag.

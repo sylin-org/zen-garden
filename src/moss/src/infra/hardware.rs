@@ -2,54 +2,19 @@
 //!
 //! Provides composable functions for detecting system hardware,
 //! managing capabilities cache, and progressive detection.
+//!
+//! The single capability detector is `tasks::hardware_detection::detect_capabilities_background`;
+//! this module provides the cache I/O, the startup skeleton, and the DMI helpers it reuses.
 
 use anyhow::Result;
 use garden_common::HardwareCapabilities;
 use std::path::PathBuf;
 
-/// Detect Docker availability and version
+/// Detect system manufacturer from DMI/SMBIOS.
 ///
-/// Returns version string if Docker is running and functional, None otherwise.
-/// This differentiates between:
-/// - Docker installed but not running (None)
-/// - Docker running and functional (Some("24.0.7"))
-async fn detect_docker() -> Option<String> {
-    use crate::docker::ContainerRuntime;
-
-    // Try to connect to Docker
-    let docker = match ContainerRuntime::new() {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::debug!(error = ?e, "Docker not available (connection failed)");
-            return None;
-        }
-    };
-
-    // Verify Docker is actually functional by pinging it
-    if !docker.is_healthy().await {
-        tracing::debug!("Docker connected but not healthy (ping failed)");
-        return None;
-    }
-
-    // Get Docker version
-    match docker.get_docker_version().await {
-        Ok(version) => {
-            tracing::info!(version = %version, "Docker is functional");
-            Some(version)
-        }
-        Err(e) => {
-            tracing::debug!(error = ?e, "Docker connected but version unavailable");
-            None
-        }
-    }
-}
-
-/// Detect system manufacturer from DMI/SMBIOS
-///
-/// Linux: reads from /sys/class/dmi/id/sys_vendor
-/// Windows: uses WMI (stub for now)
+/// Linux: reads `/sys/class/dmi/id/sys_vendor`. Windows: WMI.
 #[cfg(target_os = "linux")]
-fn detect_system_manufacturer() -> Option<String> {
+pub(crate) fn detect_system_manufacturer() -> Option<String> {
     std::fs::read_to_string("/sys/class/dmi/id/sys_vendor")
         .ok()
         .map(|s| s.trim().to_string())
@@ -57,7 +22,7 @@ fn detect_system_manufacturer() -> Option<String> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn detect_system_manufacturer() -> Option<String> {
+pub(crate) fn detect_system_manufacturer() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
@@ -80,12 +45,11 @@ fn detect_system_manufacturer() -> Option<String> {
     None
 }
 
-/// Detect system product name from DMI/SMBIOS
+/// Detect system product name from DMI/SMBIOS.
 ///
-/// Linux: reads from /sys/class/dmi/id/product_name
-/// Windows: uses WMI (stub for now)
+/// Linux: reads `/sys/class/dmi/id/product_name`. Windows: WMI.
 #[cfg(target_os = "linux")]
-fn detect_system_product() -> Option<String> {
+pub(crate) fn detect_system_product() -> Option<String> {
     std::fs::read_to_string("/sys/class/dmi/id/product_name")
         .ok()
         .map(|s| s.trim().to_string())
@@ -93,7 +57,7 @@ fn detect_system_product() -> Option<String> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn detect_system_product() -> Option<String> {
+pub(crate) fn detect_system_product() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
@@ -116,7 +80,7 @@ fn detect_system_product() -> Option<String> {
     None
 }
 
-/// Load cached hardware capabilities from disk
+/// Load cached hardware capabilities from disk.
 ///
 /// Returns None if cache doesn't exist or is invalid.
 /// This allows instant startup while background detection runs.
@@ -141,7 +105,7 @@ pub async fn load_cached_capabilities() -> Option<HardwareCapabilities> {
     }
 }
 
-/// Save hardware capabilities to disk cache
+/// Save hardware capabilities to disk cache.
 ///
 /// Uses atomic write (temp file + rename) for consistency.
 pub async fn save_capabilities_cache(capabilities: &HardwareCapabilities) -> Result<()> {
@@ -170,118 +134,7 @@ pub async fn save_capabilities_cache(capabilities: &HardwareCapabilities) -> Res
     }
 }
 
-/// Detect hardware capabilities (CPU, memory, GPU, disk)
-///
-/// This is a progressive detection:
-/// 1. Fast: CPU, memory, disk (< 100ms)
-/// 2. Slow: GPU detection (may take seconds)
-///
-/// Call this in a background task to avoid blocking startup.
-pub async fn detect_hardware(stone_name: String) -> Result<HardwareCapabilities> {
-    use garden_common::{
-        CpuCapabilities, DetectionStatus, HardwareInventory, MemoryCapabilities,
-        RuntimeInfo,
-    };
-
-    tracing::info!("Starting hardware detection");
-
-    // Fast detection: CPU and memory using resources module
-    let (cpu_model, cpu_features, architecture) = garden_common::resources::system::get_cpu_info()
-        .unwrap_or_else(|_| {
-            (
-                "Unknown".to_string(),
-                vec![],
-                std::env::consts::ARCH.to_string(),
-            )
-        });
-
-    let resources = garden_common::resources::system::collect_stone_resources().ok();
-    let cpu_cores = resources.as_ref().map(|r| r.cpu.cores).unwrap_or(1);
-    let total_memory_mb = resources
-        .as_ref()
-        .map(|r| r.memory.total_bytes / 1024 / 1024)
-        .unwrap_or(0);
-
-    let disk = resources.as_ref().map(|r| r.disk_capabilities());
-
-    // Slow detection: GPUs
-    tracing::debug!("Detecting GPUs (may take a few seconds)...");
-    let gpus = garden_common::resources::system::detect_gpus();
-
-    // Additional system info
-    let os_version = garden_common::resources::system::detect_os_version();
-    let kernel_version = garden_common::resources::system::detect_kernel_version();
-    let swap_mb = garden_common::resources::system::detect_swap();
-
-    // DMI/SMBIOS system identity (for hw manifest matching)
-    let system_manufacturer = detect_system_manufacturer();
-    let system_product = detect_system_product();
-
-    if let (Some(mfr), Some(prod)) = (&system_manufacturer, &system_product) {
-        tracing::info!(manufacturer = %mfr, product = %prod, "Detected system identity");
-    }
-
-    let hardware = HardwareInventory {
-        cpu: CpuCapabilities {
-            model: if cpu_model == "Unknown" {
-                None
-            } else {
-                Some(cpu_model.clone())
-            },
-            cores: cpu_cores,
-            threads: None,
-            architecture,
-            features: if cpu_features.is_empty() {
-                None
-            } else {
-                Some(cpu_features)
-            },
-        },
-        memory: MemoryCapabilities {
-            total_mb: total_memory_mb,
-        },
-        gpus,
-        disk,
-        swap_mb,
-        ai_capabilities: None,
-        system_manufacturer,
-        system_product,
-    };
-
-    // Build OS version string for RuntimeInfo.os
-    let os_family = std::env::consts::OS;
-    let os_string = if let Some(ref ver) = os_version {
-        format!("{}/{}", os_family, ver)
-    } else {
-        os_family.to_string()
-    };
-
-    // Detect Docker (async check for functional Docker daemon)
-    let docker_version = detect_docker().await;
-
-    let capabilities = HardwareCapabilities {
-        stone_id: None, // Set externally after detection
-        stone_name,
-        hardware,
-        runtime: Some(RuntimeInfo {
-            docker_version,
-            os: os_string,
-            kernel: kernel_version,
-        }),
-        detection_status: DetectionStatus::Complete,
-    };
-
-    tracing::info!(
-        cpu = ?capabilities.hardware.cpu.model,
-        memory_gb = capabilities.hardware.memory.total_mb / 1024,
-        gpus = capabilities.hardware.gpus.len(),
-        "Hardware detection complete"
-    );
-
-    Ok(capabilities)
-}
-
-/// Create a skeleton capabilities object for instant startup
+/// Create a skeleton capabilities object for instant startup.
 ///
 /// Use this when cache doesn't exist. Background detection will update it.
 pub fn create_skeleton(stone_name: String) -> HardwareCapabilities {

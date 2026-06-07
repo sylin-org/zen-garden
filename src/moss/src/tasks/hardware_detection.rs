@@ -256,6 +256,9 @@ pub async fn detect_capabilities_background(
             detection_status: DetectionStatus::Scanning,
         });
 
+        // Stamp our identity here — the canonical detector owns stone_id, not the API layer.
+        caps.stone_id = Some(state.current.stone.id.clone());
+
         // Update CPU fields only
         caps.hardware.cpu = CpuCapabilities {
             model: if cpu_model == "Unknown" {
@@ -314,12 +317,15 @@ pub async fn detect_capabilities_background(
         format!("[CAPABILITY DETECTION] Found {} GPU(s)", gpu_count),
     ));
 
-    // === PHASE 3: OS, Kernel, Swap Detection ===
+    // === PHASE 3: OS, Kernel, Swap, Docker, DMI Detection ===
     // Note: Storage inventory moved to live resources (METRICS-0001)
     tracing::info!("Detecting system information...");
     let os_version = resources::detect_os_version();
     let kernel_version = resources::detect_kernel_version();
     let swap_mb = resources::detect_swap();
+    let docker_version = state.platform.container.get_docker_version().await.ok();
+    let system_manufacturer = crate::infra::hardware::detect_system_manufacturer();
+    let system_product = crate::infra::hardware::detect_system_product();
     tracing::info!("System information detection complete");
 
     // Update complete capabilities incrementally (update GPU + system info fields)
@@ -338,10 +344,12 @@ pub async fn detect_capabilities_background(
             true, // detection_complete = true
         ));
 
-        // Update swap (storage moved to live resources)
+        // Update swap (storage moved to live resources) + DMI identity
         caps.hardware.swap_mb = swap_mb;
+        caps.hardware.system_manufacturer = system_manufacturer;
+        caps.hardware.system_product = system_product;
 
-        // Update runtime info with OS version and kernel
+        // Update runtime info with OS version, kernel, and Docker
         if let Some(ref mut runtime) = caps.runtime {
             // Enhance OS string with version
             if let Some(ref os_ver) = os_version {
@@ -349,6 +357,7 @@ pub async fn detect_capabilities_background(
                 runtime.os = format!("{}/{}", os_family, os_ver);
             }
             runtime.kernel = kernel_version;
+            runtime.docker_version = docker_version;
         }
 
         // Mark detection as complete

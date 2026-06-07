@@ -37,9 +37,12 @@ This is a latent inconsistency bug, not just duplication.
 - Earlier: `StoneResources::data_partition()` — the single storage-partition accessor (commit
   0607da30), replacing 12 divergent `mount_point == "/"` selections.
 
-## Remaining: the consistency collapse (deferred — behavior-affecting)
+## Done: the consistency collapse (completed)
 
-Goal: **one canonical builder, every field, served consistently from cache.**
+**Implemented** — one canonical builder, every field, served consistently from cache. Verified
+on the phone Stone: `/api/v1/stone`, `/stone/capabilities`, and `/garden/stones/:name` return
+identical capabilities (`stone_id`, docker 29.5.3, `ai_complete`, disk 51 GB/SSD, status
+complete). What was done:
 
 1. Populate the gaps in the canonical task (`detect_capabilities_background`): set `stone_id`
    (Phase 1, from `state.current.stone.id`), `docker_version` (via `detect_docker()`), and DMI
@@ -50,6 +53,5 @@ Goal: **one canonical builder, every field, served consistently from cache.**
 3. Remove the dead `infra/hardware.rs::detect_hardware` (zero callers) once its DMI helpers are
    reused by step 1.
 
-**Behavior change:** garden endpoints would serve the progressively-detected cached capabilities
-(the design intent) instead of a fresh synchronous rebuild on each request. This is why it is
-deferred for an explicit go rather than bundled with the safe collapse above.
+**Behavior change (applied):** garden endpoints now serve the progressively-detected cached
+capabilities (the design intent) instead of a fresh synchronous rebuild on each request.

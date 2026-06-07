@@ -9,10 +9,7 @@ use axum::{
 };
 use garden_common::TopologyEntry;
 use garden_common::resources::system as resources;
-use garden_common::{
-    CpuCapabilities, DetectionStatus, HardwareCapabilities, HardwareInventory,
-    MemoryCapabilities, RuntimeInfo,
-};
+use garden_common::HardwareCapabilities;
 
 /// GET /api/v1/garden - Get garden overview (all stones)
 pub async fn get_garden_v1(
@@ -159,73 +156,23 @@ pub async fn recommend_placement_v1(
         }
     }
 }
-// Helper function to build consolidated capabilities (based on main.rs capabilities handler)
+/// The local stone's capabilities — read from the canonical, progressively-detected cache
+/// (populated by `tasks::hardware_detection::detect_capabilities_background`), not rebuilt per
+/// request. Falls back to a skeleton (stamped with our id) until the first phase lands. This is
+/// the same source as `api/v1/capabilities.rs::read_core` — one capability, served consistently.
 async fn get_capabilities(state: &Moss) -> HardwareCapabilities {
-    let (cpu_model, cpu_features, architecture) = resources::get_cpu_info().unwrap_or_else(|_| {
-        (
-            "Unknown".to_string(),
-            vec![],
-            std::env::consts::ARCH.to_string(),
-        )
-    });
-
-    let resources = resources::collect_stone_resources().ok();
-    let total_memory_mb = resources
-        .as_ref()
-        .map(|r| r.memory.total_bytes / 1024 / 1024)
-        .unwrap_or(0);
-
-    let gpus = resources::detect_gpus();
-
-    let disk = resources.as_ref().map(|r| r.disk_capabilities());
-
-    let cores = resources.as_ref().map(|r| r.cpu.cores).unwrap_or(1);
-
-    let os_version = resources::detect_os_version();
-    let kernel_version = resources::detect_kernel_version();
-    let swap_mb = resources::detect_swap();
-    let docker_version = state.platform.container.get_docker_version().await.ok();
-
-    HardwareCapabilities {
-        stone_id: Some(state.current.stone.id.clone()),
-        stone_name: state.current.stone.name.clone(),
-        hardware: HardwareInventory {
-            cpu: CpuCapabilities {
-                model: if cpu_model == "Unknown" {
-                    None
-                } else {
-                    Some(cpu_model)
-                },
-                cores,
-                threads: None,
-                architecture,
-                features: if cpu_features.is_empty() {
-                    None
-                } else {
-                    Some(cpu_features)
-                },
-            },
-            memory: MemoryCapabilities {
-                total_mb: total_memory_mb,
-            },
-            gpus,
-            disk,
-            swap_mb,
-            ai_capabilities: None,
-            system_manufacturer: None,
-            system_product: None,
-        },
-        runtime: Some(RuntimeInfo {
-            docker_version,
-            os: format!(
-                "{}/{}",
-                std::env::consts::OS,
-                os_version.unwrap_or_else(|| "Unknown".to_string())
-            ),
-            kernel: kernel_version,
-        }),
-        detection_status: DetectionStatus::Complete, // Synchronous detection
-    }
+    state
+        .current
+        .capabilities
+        .read()
+        .await
+        .clone()
+        .unwrap_or_else(|| {
+            let mut skeleton =
+                crate::infra::hardware::create_skeleton(state.current.stone.name.clone());
+            skeleton.stone_id = Some(state.current.stone.id.clone());
+            skeleton
+        })
 }
 
 // === TOPOLOGY API ===

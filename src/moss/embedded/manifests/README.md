@@ -1,117 +1,117 @@
-﻿# Zen Garden Service Manifests
+# Zen Garden Service Manifests
 
-Service and template definitions for `garden-rake offer` command.
+Managed-offering definitions for the `garden-rake offer` command. Every offering
+here is compiled into the Moss binary at build time (`rust_embed`) and can be
+overridden at runtime by an identically-named file under
+`{data_dir}/manifests/sw/<category>/` (the filesystem copy wins; missing fields
+are back-filled from the embedded copy).
 
-## Structure
+## Directory layout
 
 ```
 manifests/
-  data/           - Database services
-  vector/         - Vector database services
-  cache/          - Cache services
-  messaging/      - Message broker services
-  ai/             - AI/LLM runtime services
-  secrets/        - Secrets management services
-  observability/  - Monitoring services
-  templates/      - Multi-service templates
+├── sw/<category>/                  software offerings, grouped by category
+│   ├── <name>.snippet.yaml         REQUIRED: container definition
+│   ├── <name>.frontmatter.json     catalog metadata
+│   ├── <name>.compatibility.yaml   pre-flight rules + per-host image fallback
+│   ├── <name>.guidance.md          post-install notes (portrait page)
+│   └── <name>.research.md          research record (NOT loaded — documentation only)
+├── sw/<category>/category.json     category definition (validated by category.schema.json)
+├── hw/<vendor>/                    hardware profiles
+└── well-known-ports.yaml           port-conflict remediation catalog
 ```
 
-## Individual Services
+Categories (folders under `sw/`): `ai`, `auth`, `automation`, `cache`,
+`dashboard`, `data`, `devops`, `messaging`, `networking`, `observability`,
+`proxy`, `search`, `secrets`, `storage`, `timeseries`, `vector`. Add a new
+category folder (with its own `category.json`) only when no existing one fits.
+Browse the live catalog with `garden-rake template list`.
 
-### Data (7 services)
-- `mongodb` - MongoDB 7.x document database
-- `postgresql` - PostgreSQL 16 with pgvector
-- `sqlserver` - SQL Server 2022 Express
-- `redis` - Redis Stack (JSON, Search)
-- `couchbase` - Couchbase Server Community
-- `elasticsearch` - Elasticsearch 8.x
-- `opensearch` - OpenSearch 2.x
+## The offering file set
 
-### Vector (2 services)
-- `weaviate` - Weaviate vector database
-- `milvus` - Milvus vector database (standalone)
+An offering is a set of files sharing the `<name>` stem inside a
+`sw/<category>/` folder. **The offering's name and category come from the file
+path, not the file contents** — fields like `name`/`category` inside the JSON
+are informational and ignored by the loader.
 
-### Cache (1 service)
-- `redis` - Redis 7.x in-memory cache
+| File | Required | Purpose |
+|------|----------|---------|
+| `<name>.snippet.yaml` | **yes** | Docker-Compose-style service body. Only this file creates a managed offering; the rest are optional companions paired by stem. |
+| `<name>.frontmatter.json` | recommended | Catalog metadata: `description`, `tags`, `port`, `icon`, `homepage`, `documentation`, `connection`, `coordination`, `manageable_env`, `ceremony`, `minimum_memory_gb`. |
+| `<name>.compatibility.yaml` | recommended | Pre-flight `when:` rules and per-host image `fallback`. See the [compatibility guide](../../../../docs/guides/offering-manifest-compatibility.md). |
+| `<name>.guidance.md` | optional | Post-install notes shown on the stone portrait page. See [guidance-authoring](../../../../docs/guides/guidance-authoring.md). |
+| `<name>.research.md` | convention | Human research record (image/arch/RAM/sources). Not parsed. |
 
-### Messaging (1 service)
-- `rabbitmq` - RabbitMQ 3.x with management UI
+### Snippet fields consumed by Moss
 
-### AI (2 services)
-- `ollama` - Ollama local LLM runtime (GPU)
-- `ollama-cpu` - Ollama CPU-only inference for thin clients
+`<name>.snippet.yaml` is a Compose service body. Moss parses the keys below;
+other Compose keys (`container_name`, `restart`, `networks`) are accepted but ignored.
 
-### Secrets (1 service)
-- `vault` - HashiCorp Vault (dev mode)
+- `image` — required; pin a tag (`mongo:7`), never rely on `latest`
+- `ports` — map of role → `[host, container]`; the `default` role is the primary port
+- `environment` — a map or a `K=V` list; use `${VAR:-default}` for overridable secrets
+- `volumes` — `name:/container/path`; a bare `name` is namespaced under the offering's volume dir, absolute host paths pass through
+- `command` — a string or a list
+- `config_files` — inject/patch a config file, then `restart` or signal the container
+- `tasks` — scheduled maintenance commands (cron); `action: recycle` restarts the container
+- `healthcheck` — Docker healthcheck (`test` / `interval` / `timeout` / `retries` / `start_period`)
+- `network.static_ip` — static-IP preference + reason
+- `deploy.resources.reservations.devices` — GPU passthrough
+- `deploy.resources.limits` — `memory` (e.g. `2g`) and `cpus` (e.g. `1.5`) caps
 
-### Observability (1 service)
-- `aspire` - .NET Aspire Dashboard
+## Authoring a new offering
 
-## Templates
-
-Predefined service bundles:
-
-- `database` - MongoDB + PostgreSQL + SQL Server
-- `cache` - Redis
-- `messaging` - RabbitMQ
-- `search` - Elasticsearch + OpenSearch
-- `vector` - Weaviate + Milvus
-- `ai` - Ollama
-- `secrets` - Vault
-- `observability` - Aspire Dashboard
-- `fullstack` - PostgreSQL + Redis + RabbitMQ + Ollama
-
-## Usage
+Use the `manifest` toolchain (OFFER-0006) instead of hand-writing files:
 
 ```bash
-# Single service
-garden-rake offer mongodb
+# 1. Scaffold all four files from a Docker image (inspects the image on a stone)
+garden-rake manifest init <image-ref> --name <name> --category <category> --output <dir> --at <stone>
 
-# Multiple services
-garden-rake offer mongodb redis
+# 2. Edit the generated files, then validate offline
+garden-rake manifest validate <dir>
 
-# Template
-garden-rake offer --template fullstack
-
-# List available
-garden-rake catalog
+# 3. Test-deploy on a stone, then clean up
+garden-rake manifest test <dir> --at <stone>
+garden-rake remove <name>
 ```
 
-## Manifest Schema
+Ship the offering by placing the files under
+`src/moss/embedded/manifests/sw/<category>/` and rebuilding Moss (they embed at
+compile time). For a runtime-only offering, drop them under
+`{data_dir}/manifests/sw/<category>/` and run `garden-rake refresh`.
 
-Each service manifest includes:
+Related: `garden-rake manifest export <offering> --at <stone>` (export a running
+offering's files), `garden-rake manifest enrich <dir>` (add compatibility/guidance
+templates to an existing manifest). Full step-by-step:
+[authoring an offering](../../../../docs/guides/authoring-an-offering.md).
 
-- `name` - Service identifier
-- `description` - Human-readable description
-- `category` - Service category (data, vector, cache, etc.)
-- `image` - Docker image reference
-- `port` - Primary port number
-- `offering` - mDNS offering identifier
-- `environment` - Environment variables with defaults
-- `volumes` - Volume mappings
-- `healthcheck` - Docker healthcheck configuration
-- `restart` - Restart policy
-- `labels` - Metadata labels
-
-## Environment Variables
-
-All secrets use `${VARIABLE:-default}` pattern for overrides:
+## Lifecycle & browse commands
 
 ```bash
-# MongoDB
+garden-rake offer <name>          # plant (deploy)
+garden-rake rest <name>           # stop, keep data
+garden-rake wake <name>           # restart a rested offering
+garden-rake upgrade <name>        # pull a newer image and recreate
+garden-rake remove <name>         # remove (named volumes preserved)
+garden-rake offer refresh --at <stone>   # reload manifests after editing the overlay
+garden-rake template list         # browse available offerings
+garden-rake template show <name>  # show one offering's resolved manifest
+```
+
+## Environment variables
+
+Secrets use the `${VARIABLE:-default}` pattern so they can be overridden at plant time:
+
+```bash
 export MONGO_PASSWORD=secure123
 garden-rake offer mongodb
-
-# PostgreSQL
-export POSTGRES_PASSWORD=secure123
-export POSTGRES_DB=myapp
-garden-rake offer postgresql
 ```
 
-## Notes
+Default credentials are development-only — override every password in production.
 
-- All services use named volumes for persistence
-- Healthchecks ensure services are ready before announcing
-- Default credentials are provided for development only
-- Production deployments should override all passwords
-- GPU support for Ollama is commented out (enable manually)
+## See also
+
+- [Authoring an offering](../../../../docs/guides/authoring-an-offering.md) — full walkthrough
+- [Manifest compatibility & ports](../../../../docs/guides/offering-manifest-compatibility.md)
+- [Guidance authoring](../../../../docs/guides/guidance-authoring.md)
+- [Offerings reference](../../../../docs/reference/offerings.md)

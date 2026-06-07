@@ -1,0 +1,9 @@
+# Radarr Compatibility — GPL-3.0 movie PVR (.NET, embedded SQLite).
+# Multi-arch (amd64/arm64/armv7); no special CPU features.
+compatibility_rules:
+  - name: "low-memory-warning"
+    when:
+      - host.ram.total.mb < 256
+    reason: "Radarr is light but benefits from 256MB+ free"
+    suggestion: "Fine on most stones; add RAM for large libraries"
+    warn_only: true

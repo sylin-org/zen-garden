@@ -524,6 +524,9 @@ async fn fetch_remote_offerings(
             network: garden_common::manifests::NetworkRequirements::default(), // Not included in OfferingView
             coordination: garden_common::CoordinationMode::default(), // Remote views don't expose coordination
             device_requests: vec![], // Not included in OfferingView
+            resource_limits: Default::default(), // Not included in OfferingView
+            healthcheck: None,                   // Not included in OfferingView
+            ceremony: Default::default(),        // Not included in OfferingView
         })
         .collect();
 

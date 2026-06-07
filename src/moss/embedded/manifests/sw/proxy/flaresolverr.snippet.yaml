@@ -1,0 +1,33 @@
+# FlareSolverr — Cloudflare/DDoS-Guard bypass proxy for *arr indexers
+# MIT licensed. A multi-arch image is published, but the offering is gated to
+# x86_64 (see flaresolverr.compatibility.yaml) because the headless Chromium is
+# unreliable on ARM single-board hardware.
+container_name: flaresolverr
+image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+ports:
+  default: [8191, 8191]
+environment:
+  LOG_LEVEL: "${FLARESOLVERR_LOG_LEVEL:-info}"
+  LOG_HTML: "false"
+  CAPTCHA_SOLVER: "none"
+  TZ: "${TZ:-UTC}"
+# python is the image's runtime (python:3.11-slim has no curl/wget).
+healthcheck:
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8191/health')"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 30s
+# Chromium is memory-heavy and leaks over long runtimes; cap it and recycle nightly.
+deploy:
+  resources:
+    limits:
+      memory: "2g"
+tasks:
+  nightly-recycle:
+    description: "Restart nightly to reclaim leaked browser memory"
+    schedule: "0 4 * * *"
+    action: recycle
+    category: maintenance
+restart: unless-stopped
+networks: [zen-garden]

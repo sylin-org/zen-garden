@@ -1,0 +1,8 @@
+{
+  "$schema": "../category.schema.json",
+  "name": "media",
+  "description": "Media servers, *arr automation, and download clients",
+  "aliases": ["arr", "pvr", "streaming", "torrent", "usenet"],
+  "tags": ["media", "arr", "download", "streaming"],
+  "connection": { "protocol": "http", "uri_template": "http://{host}:{port}" }
+}

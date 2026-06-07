@@ -1,0 +1,20 @@
+# Sonarr — TV series PVR: searches indexers (via Prowlarr), grabs via a download
+# client, renames and organizes. GPL-3.0. LinuxServer image, multi-arch. Embedded SQLite.
+container_name: sonarr
+image: lscr.io/linuxserver/sonarr:latest
+ports:
+  default: [8989, 8989]
+environment:
+  PUID: "${PUID:-1000}"
+  PGID: "${PGID:-1000}"
+  TZ: "${TZ:-Etc/UTC}"
+volumes:
+  - sonarr-config:/config
+healthcheck:
+  test: ["CMD", "curl", "-fsS", "http://localhost:8989/ping"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 60s
+restart: unless-stopped
+networks: [zen-garden]

@@ -30,6 +30,10 @@ pub struct EffectiveConfig {
     /// Config file mappings from the manifest template.
     /// Carried through so install_service can create empty files and bind-mount them.
     pub config_files: Vec<garden_common::manifests::offering::ConfigFileMapping>,
+    /// Resource limits from the manifest (OFFER-0009). Patches cannot change these.
+    pub resource_limits: garden_common::manifests::offering::ResourceLimits,
+    /// Container healthcheck from the manifest (OFFER-0009).
+    pub healthcheck: Option<garden_common::manifests::offering::ContainerHealthcheck>,
 }
 
 // ============================================================================
@@ -49,6 +53,8 @@ pub fn compose(template: &ServiceTemplate, patches: &[ConfigPatch]) -> Result<Ef
         environment: template.environment.clone(),
         volumes: template.volumes.clone(),
         config_files: template.config_files.clone(),
+        resource_limits: template.resource_limits.clone(),
+        healthcheck: template.healthcheck.clone(),
     };
 
     // Sort patches by applied_at for deterministic order
@@ -205,6 +211,8 @@ mod tests {
             tasks: std::collections::HashMap::new(),
             network: Default::default(),
             device_requests: vec![],
+            resource_limits: Default::default(),
+            healthcheck: None,
         }
     }
 

@@ -45,7 +45,8 @@ param(
     [string]$Include = "",
     [string]$Exclude = "",
     [switch]$Push,
-    [string]$Tag = "latest"
+    [string]$Tag = "latest",
+    [string]$Platform = ""
 )
 
 Set-StrictMode -Version Latest
@@ -69,8 +70,10 @@ $orchestratorsDir = Join-Path $workspaceRoot "src" "orchestrators"
 
 # ── Filter orchestrators ───────────────────────────────────────────────
 
-$includeList = if ($Include) { $Include -split "," | ForEach-Object { $_.Trim() } } else { @() }
-$excludeList = if ($Exclude) { $Exclude -split "," | ForEach-Object { $_.Trim() } } else { @() }
+# @() forces array semantics: a single value (e.g. -Include mongodb) would otherwise
+# unwrap to a scalar string, and .Count below throws under Set-StrictMode.
+$includeList = @(if ($Include) { $Include -split "," | ForEach-Object { $_.Trim() } } else { @() })
+$excludeList = @(if ($Exclude) { $Exclude -split "," | ForEach-Object { $_.Trim() } } else { @() })
 
 $selected = $orchestrators | Where-Object {
     $name = $_.Name
@@ -93,6 +96,22 @@ $toBuild = $selected | ForEach-Object { $_.Name }
 Write-Host "  Building: $($toBuild -join ', ')" -ForegroundColor Green
 Write-Host ""
 
+# ── Ensure cross-build emulation (when targeting a foreign platform) ─────
+
+if ($Platform -and $Platform -match "arm64|aarch64") {
+    Write-Host "  Cross-build platform: $Platform" -ForegroundColor Cyan
+    $emuOk = $false
+    try {
+        docker run --rm --platform linux/arm64 arm64v8/debian:bookworm-slim true 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $emuOk = $true }
+    } catch {}
+    if (-not $emuOk) {
+        Write-Host "  Registering arm64 binfmt handlers (tonistiigi/binfmt)..." -ForegroundColor DarkGray
+        docker run --privileged --rm tonistiigi/binfmt --install arm64 | Out-Null
+    }
+    Write-Host ""
+}
+
 # ── Build each orchestrator ────────────────────────────────────────────
 
 $built = 0
@@ -109,10 +128,16 @@ foreach ($orch in $selected) {
         continue
     }
 
-    Write-Host "  [$name] Building $image ..." -ForegroundColor Cyan
+    Write-Host "  [$name] Building $image$(if ($Platform) { " ($Platform)" }) ..." -ForegroundColor Cyan
 
-    # Build with workspace root as context
-    docker build -t $image -f $dockerfile $workspaceRoot 2>&1
+    # Build with workspace root as context.
+    # -Platform selects buildx + QEMU emulation (e.g. linux/arm64 for ARM stones);
+    # default (empty) keeps the original native `docker build`.
+    if ($Platform) {
+        docker buildx build --platform $Platform -t $image -f $dockerfile --load $workspaceRoot 2>&1
+    } else {
+        docker build -t $image -f $dockerfile $workspaceRoot 2>&1
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [$name] FAILED" -ForegroundColor Red
         $failed++

@@ -1,8 +1,9 @@
 //! Manifest validation — security and schema rules.
 //!
 //! Reusable by both Rake (local validation) and Moss (server-side validation
-//! before test deployment). Pure functions, no external dependencies beyond
-//! serde for YAML/JSON parsing.
+//! before test deployment). Pure functions; the only in-crate helpers used are
+//! serde (YAML/JSON parsing), the compatibility predicate parser
+//! (`crate::compatibility::Predicate`), and the category registry.
 
 use serde::Serialize;
 use std::collections::HashSet;
@@ -336,6 +337,55 @@ pub fn validate_frontmatter(content: &str, filename: &str) -> Vec<ValidationFind
         });
     }
 
+    // FM005: Unknown category (alias-aware). Skipped when the registry is empty
+    // (e.g. unit tests / minimal deployments) to avoid false positives.
+    if let Some(category) = value.get("category").and_then(|c| c.as_str()) {
+        let registry = crate::manifests::category::get_category_registry();
+        let known = registry.category_names();
+        if !known.is_empty() && registry.resolve_token(category).is_none() {
+            findings.push(ValidationFinding {
+                file: filename.to_string(),
+                line: 0,
+                severity: Severity::Warning,
+                code: "FM005".to_string(),
+                message: format!("Unknown category '{category}'. Known: {}", known.join(", ")),
+            });
+        }
+    }
+
+    // FM007: Unknown top-level frontmatter keys.
+    const KNOWN_FRONTMATTER_KEYS: &[&str] = &[
+        "name",
+        "description",
+        "category",
+        "tags",
+        "port",
+        "modes",
+        "volumes",
+        "gpu_recommended",
+        "minimum_memory_gb",
+        "connection",
+        "manageable_env",
+        "homepage",
+        "documentation",
+        "icon",
+        "coordination",
+        "ceremony",
+    ];
+    if let Some(obj) = value.as_object() {
+        for key in obj.keys() {
+            if !KNOWN_FRONTMATTER_KEYS.contains(&key.as_str()) {
+                findings.push(ValidationFinding {
+                    file: filename.to_string(),
+                    line: 0,
+                    severity: Severity::Warning,
+                    code: "FM007".to_string(),
+                    message: format!("Unknown frontmatter key '{key}'"),
+                });
+            }
+        }
+    }
+
     findings
 }
 
@@ -362,15 +412,33 @@ pub fn validate_compatibility(content: &str, filename: &str) -> Vec<ValidationFi
         }
     };
 
-    // Check version field
-    if value.get("version").is_none() {
-        findings.push(ValidationFinding {
-            file: filename.to_string(),
-            line: 0,
-            severity: Severity::Warning,
-            code: "COMPAT002".to_string(),
-            message: "Missing 'version' field — defaulting to version 1".to_string(),
-        });
+    // COMPAT003: parse every compatibility_rules[].when predicate. Walking the
+    // untyped Value keeps one bad rule from aborting the whole check and no-ops
+    // on the hw/ recommendations schema (which has no compatibility_rules).
+    if let Some(rules) = value.get("compatibility_rules").and_then(|r| r.as_sequence()) {
+        for rule in rules {
+            let rule_name = rule
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("<unnamed>");
+            let Some(when) = rule.get("when").and_then(|w| w.as_sequence()) else {
+                continue;
+            };
+            for expr in when {
+                let Some(expr) = expr.as_str() else { continue };
+                if let Err(e) = crate::compatibility::Predicate::parse(expr) {
+                    findings.push(ValidationFinding {
+                        file: filename.to_string(),
+                        line: 0,
+                        severity: Severity::Error,
+                        code: "COMPAT003".to_string(),
+                        message: format!(
+                            "Rule '{rule_name}' has invalid predicate '{expr}': {e}"
+                        ),
+                    });
+                }
+            }
+        }
     }
 
     findings
@@ -389,6 +457,8 @@ pub fn validate_manifest_dir(dir: &Path) -> anyhow::Result<ValidationResult> {
 
     let mut findings = Vec::new();
     let mut files_checked = 0;
+    let mut snippet_content: Option<String> = None;
+    let mut frontmatter_content: Option<String> = None;
 
     let entries = std::fs::read_dir(dir)
         .with_context(|| format!("Cannot read directory: {}", dir.display()))?;
@@ -406,11 +476,13 @@ pub fn validate_manifest_dir(dir: &Path) -> anyhow::Result<ValidationResult> {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("Cannot read {}", path.display()))?;
             findings.extend(validate_snippet(&content, &name));
+            snippet_content = Some(content);
             files_checked += 1;
         } else if name.ends_with(".frontmatter.json") {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("Cannot read {}", path.display()))?;
             findings.extend(validate_frontmatter(&content, &name));
+            frontmatter_content = Some(content);
             files_checked += 1;
         } else if name.ends_with(".compatibility.yaml") {
             let content = std::fs::read_to_string(&path)
@@ -418,6 +490,11 @@ pub fn validate_manifest_dir(dir: &Path) -> anyhow::Result<ValidationResult> {
             findings.extend(validate_compatibility(&content, &name));
             files_checked += 1;
         }
+    }
+
+    // FM006: cross-file port consistency (requires both files).
+    if let (Some(snippet), Some(frontmatter)) = (&snippet_content, &frontmatter_content) {
+        findings.extend(validate_ports_match(snippet, frontmatter));
     }
 
     if files_checked == 0 {
@@ -434,6 +511,50 @@ pub fn validate_manifest_dir(dir: &Path) -> anyhow::Result<ValidationResult> {
         findings,
         files_checked,
     })
+}
+
+/// Cross-file check (FM006): the frontmatter `port` should match the snippet's
+/// `ports.default` host port. Both inputs are raw file contents; returns empty
+/// when either file is unparseable or the frontmatter has no `port`.
+pub fn validate_ports_match(
+    snippet_content: &str,
+    frontmatter_content: &str,
+) -> Vec<ValidationFinding> {
+    let mut findings = Vec::new();
+
+    let Ok(snippet) = serde_yml::from_str::<serde_yml::Value>(snippet_content) else {
+        return findings;
+    };
+    let Ok(fm) = serde_json::from_str::<serde_json::Value>(frontmatter_content) else {
+        return findings;
+    };
+    let Some(fm_port) = fm.get("port").and_then(|p| p.as_u64()) else {
+        return findings;
+    };
+
+    // Unwrap an optional `services:` compose wrapper.
+    let service = snippet
+        .get("services")
+        .and_then(|s| s.as_mapping())
+        .and_then(|m| m.values().next())
+        .unwrap_or(&snippet);
+
+    let default = service.get("ports").and_then(|p| p.get("default"));
+    if let Some((host, _container)) = default.and_then(extract_port_pair)
+        && host as u64 != fm_port
+    {
+        findings.push(ValidationFinding {
+            file: "frontmatter".to_string(),
+            line: 0,
+            severity: Severity::Warning,
+            code: "FM006".to_string(),
+            message: format!(
+                "Frontmatter port {fm_port} does not match snippet ports.default host port {host}"
+            ),
+        });
+    }
+
+    findings
 }
 
 #[cfg(test)]
@@ -571,15 +692,38 @@ networks:
 
     #[test]
     fn validates_compatibility_yaml() {
-        let yaml = "version: \"1\"\ncompatibility_rules: []\n";
+        let yaml = "compatibility_rules:\n  - name: ok\n    when:\n      - host.ram.total.mb < 512\n    reason: low\n";
         let findings = validate_compatibility(yaml, "test.compatibility.yaml");
-        assert!(findings.is_empty());
+        assert!(findings.is_empty(), "got: {findings:?}");
     }
 
     #[test]
-    fn warns_missing_compatibility_version() {
-        let yaml = "compatibility_rules: []\n";
+    fn rejects_invalid_predicate() {
+        let yaml = "compatibility_rules:\n  - name: bad\n    when:\n      - host.architcture IS armv6l\n    reason: typo\n";
         let findings = validate_compatibility(yaml, "test.compatibility.yaml");
-        assert!(findings.iter().any(|f| f.code == "COMPAT002"));
+        assert!(findings.iter().any(|f| f.code == "COMPAT003"));
+    }
+
+    #[test]
+    fn warns_unknown_frontmatter_key() {
+        let json = r#"{"name":"x","description":"y","bogus_key":true}"#;
+        let findings = validate_frontmatter(json, "x.frontmatter.json");
+        assert!(findings.iter().any(|f| f.code == "FM007"));
+    }
+
+    #[test]
+    fn warns_port_mismatch() {
+        let snippet = "image: x:1\nports:\n  default: [8080, 80]\n";
+        let fm = r#"{"name":"x","description":"y","port":9090}"#;
+        let findings = validate_ports_match(snippet, fm);
+        assert!(findings.iter().any(|f| f.code == "FM006"));
+    }
+
+    #[test]
+    fn port_match_produces_no_warning() {
+        let snippet = "image: x:1\nports:\n  default: [8080, 80]\n";
+        let fm = r#"{"name":"x","description":"y","port":8080}"#;
+        let findings = validate_ports_match(snippet, fm);
+        assert!(findings.is_empty(), "got: {findings:?}");
     }
 }

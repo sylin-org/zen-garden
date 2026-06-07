@@ -1,0 +1,38 @@
+# FlareSolverr Compatibility Rules
+# MIT-licensed Cloudflare-bypass proxy that launches a headless Chromium per request.
+# x86_64 only: a linux/arm64 image is published, but Chromium launch is unreliable
+# on ARM single-board hardware across releases (see flaresolverr.research.md).
+
+compatibility_rules:
+  - name: "non-x86_64-unsupported"
+    when:
+      - host.architecture IN (aarch64,arm64,armv7l,armv6l)
+    reason: "FlareSolverr's headless Chromium is unreliable on ARM; this offering is x86_64-only"
+    suggestion: "Run FlareSolverr on an x86_64 stone (e.g. a Dell Wyse thin client)"
+
+  - name: "insufficient-memory"
+    when:
+      - host.ram.total.mb < 512
+    reason: "FlareSolverr launches a headless Chromium per request and needs headroom"
+    suggestion: "Use a stone with at least 2GB RAM"
+
+  - name: "low-memory-warning"
+    when:
+      - host.ram.total.mb < 2048
+    reason: "Chromium is memory-heavy and grows toward ~1GB+ under load"
+    suggestion: "Prefer 2GB+ RAM; the nightly recycle task reclaims leaked memory"
+    warn_only: true
+
+# Post-install log scan (no fallback image exists, so matches are advisory warnings).
+post_install_healthcheck:
+  enabled: true
+  scan_log_lines: 100
+  timeout_seconds: 45
+  patterns:
+    - pattern: "Chrome / Chromium version not detected|cannot connect to chrome|session not created"
+      reason: "Headless Chromium failed to launch"
+      suggestion: "Confirm the stone is x86_64 with enough RAM; pin a known-good image tag"
+
+    - pattern: "Cannot allocate memory|OOM|Out of memory"
+      reason: "Insufficient memory for the headless browser"
+      suggestion: "Increase stone RAM or reduce concurrent requests"

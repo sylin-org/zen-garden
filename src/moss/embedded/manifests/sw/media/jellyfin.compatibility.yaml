@@ -1,0 +1,10 @@
+# Jellyfin Compatibility — GPL-2.0 media server. Multi-arch (amd64/arm64/armv7).
+# Light at idle; software transcoding spikes CPU/RAM (hardware accel needs device
+# passthrough not yet expressible in the snippet schema — CPU/direct-play by default).
+compatibility_rules:
+  - name: "low-memory-warning"
+    when:
+      - host.ram.total.mb < 512
+    reason: "Jellyfin is light at idle but software transcoding spikes CPU and RAM"
+    suggestion: "512MB+ recommended; direct-play (no transcode) is the lightest path"
+    warn_only: true

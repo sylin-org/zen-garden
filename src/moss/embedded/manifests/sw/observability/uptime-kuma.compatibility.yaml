@@ -1,0 +1,10 @@
+# Uptime Kuma Compatibility — MIT. Multi-arch (amd64/arm64/armv7).
+# The full image bundles Chromium (for screenshot/real-browser monitors); idle is
+# modest but headroom helps. No special CPU features.
+compatibility_rules:
+  - name: "low-memory-warning"
+    when:
+      - host.ram.total.mb < 512
+    reason: "The full image bundles Chromium for browser-based monitors; benefits from 512MB+"
+    suggestion: "Plenty for HTTP/TCP/ping monitors on smaller stones; browser monitors want more"
+    warn_only: true

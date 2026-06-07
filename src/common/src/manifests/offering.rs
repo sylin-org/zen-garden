@@ -33,8 +33,9 @@ use crate::manifests::detection::{
     ControlConfig, HealthConfig, HealthVerification, LocationConfig, OsDetectionRules,
     PortDetectionConfig, ProcessDetection,
 };
+use crate::manifests::ceremony::CeremonyPolicy;
 use crate::types::AdoptedControlLevel;
-use crate::{CompatibilityRules, CoordinationMode, OfferingMode, TaskDefinition};
+use crate::{CompatibilityRule, CompatibilityRules, CoordinationMode, OfferingMode, TaskDefinition};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -275,6 +276,10 @@ pub struct ServiceTemplate {
     pub network: NetworkRequirements,
     /// GPU device requests parsed from `deploy.resources.reservations.devices`.
     pub device_requests: Vec<GpuDeviceRequest>,
+    /// Resource limits parsed from `deploy.resources.limits` (OFFER-0009).
+    pub resource_limits: ResourceLimits,
+    /// Container healthcheck parsed from the snippet `healthcheck:` block (OFFER-0009).
+    pub healthcheck: Option<ContainerHealthcheck>,
 }
 
 impl ServiceTemplate {
@@ -441,6 +446,23 @@ struct ServiceConfig {
     network: NetworkRequirements,
     #[serde(default)]
     deploy: Option<DeployConfig>,
+    #[serde(default)]
+    healthcheck: Option<HealthcheckConfig>,
+}
+
+/// Docker Compose `healthcheck:` block (raw string durations) — OFFER-0009.
+#[derive(Debug, Deserialize, Clone)]
+struct HealthcheckConfig {
+    #[serde(default)]
+    test: Vec<String>,
+    #[serde(default)]
+    interval: Option<String>,
+    #[serde(default)]
+    timeout: Option<String>,
+    #[serde(default)]
+    retries: Option<i64>,
+    #[serde(default)]
+    start_period: Option<String>,
 }
 
 /// Docker Compose `deploy` section — GPU device reservations.
@@ -454,6 +476,17 @@ struct DeployConfig {
 struct ResourcesConfig {
     #[serde(default)]
     reservations: Option<ReservationsConfig>,
+    #[serde(default)]
+    limits: Option<LimitsConfig>,
+}
+
+/// Docker Compose `deploy.resources.limits` — memory/cpu caps (OFFER-0009).
+#[derive(Debug, Deserialize, Clone, Default)]
+struct LimitsConfig {
+    #[serde(default)]
+    memory: Option<String>,
+    #[serde(default)]
+    cpus: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -481,6 +514,131 @@ pub struct GpuDeviceRequest {
     pub count: i64,
     /// Required capabilities (e.g., [["gpu"]])
     pub capabilities: Vec<Vec<String>>,
+}
+
+/// Parsed container resource limits (OFFER-0009).
+///
+/// Maps to bollard `HostConfig.memory` (bytes) and `HostConfig.nano_cpus`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResourceLimits {
+    /// Hard memory limit in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_bytes: Option<i64>,
+    /// CPU limit in nano-CPUs (1.5 cores = 1_500_000_000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nano_cpus: Option<i64>,
+}
+
+impl ResourceLimits {
+    /// True when no limit is set.
+    pub fn is_empty(&self) -> bool {
+        self.memory_bytes.is_none() && self.nano_cpus.is_none()
+    }
+}
+
+/// Parsed container healthcheck (OFFER-0009).
+///
+/// Maps to bollard `ContainerCreateBody.healthcheck`. Durations are nanoseconds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContainerHealthcheck {
+    /// Test command, e.g. `["CMD", "curl", "-f", "http://localhost:8191/health"]`.
+    pub test: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval_ns: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ns: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retries: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_period_ns: Option<i64>,
+}
+
+/// Parse a Docker-style size string ("512m", "2g", "1073741824") to bytes.
+fn parse_memory_bytes(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let last = s.chars().last()?;
+    // Strip the suffix on a char boundary (robust if a future arm matches a
+    // multi-byte char); the current k/m/g/b arms are all single-byte ASCII.
+    let stripped = &s[..s.len() - last.len_utf8()];
+    let (num_str, mult): (&str, i64) = match last.to_ascii_lowercase() {
+        'k' => (stripped, 1024),
+        'm' => (stripped, 1024 * 1024),
+        'g' => (stripped, 1024 * 1024 * 1024),
+        'b' => (stripped, 1),
+        c if c.is_ascii_digit() => (s, 1),
+        _ => return None,
+    };
+    let value: f64 = num_str.trim().parse().ok()?;
+    if !value.is_finite() {
+        return None;
+    }
+    let bytes = (value * mult as f64) as i64;
+    (bytes > 0).then_some(bytes)
+}
+
+/// Parse a decimal CPU count ("1.5") to nano-CPUs.
+fn parse_cpus_nano(s: &str) -> Option<i64> {
+    let value: f64 = s.trim().parse().ok()?;
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    Some((value * 1_000_000_000.0).round() as i64)
+}
+
+/// Parse a Go/Compose duration ("30s", "1m30s", "500ms") to nanoseconds.
+fn parse_duration_ns(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(secs) = s.parse::<f64>() {
+        if !secs.is_finite() {
+            return None;
+        }
+        let ns = (secs * 1_000_000_000.0) as i64;
+        return (ns > 0).then_some(ns);
+    }
+    let mut total: i64 = 0;
+    let mut num = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() || c == '.' {
+            num.push(c);
+            chars.next();
+        } else {
+            let mut unit = String::new();
+            while let Some(&u) = chars.peek() {
+                if u.is_ascii_alphabetic() {
+                    unit.push(u);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            let value: f64 = num.parse().ok()?;
+            if !value.is_finite() {
+                return None;
+            }
+            num.clear();
+            let mult = match unit.as_str() {
+                "ns" => 1.0,
+                "us" => 1_000.0,
+                "ms" => 1_000_000.0,
+                "s" => 1_000_000_000.0,
+                "m" => 60.0 * 1_000_000_000.0,
+                "h" => 3_600.0 * 1_000_000_000.0,
+                _ => return None,
+            };
+            total += (value * mult) as i64;
+        }
+    }
+    if !num.is_empty() {
+        return None;
+    }
+    (total > 0).then_some(total)
 }
 
 // ============================================================================
@@ -541,6 +699,10 @@ pub struct Offering {
     /// `Independent` (default) = no election. `Elected` = Primary/Replica roles.
     #[serde(default)]
     pub coordination: CoordinationMode,
+
+    /// Snapshot ceremony policy (quiesce/resume) for managed offerings (ORCH-0041).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceremony: Option<CeremonyPolicy>,
 }
 
 impl Offering {
@@ -765,6 +927,33 @@ impl Offering {
             })
             .unwrap_or_default();
 
+        // Parse resource limits from deploy.resources.limits (OFFER-0009).
+        let resource_limits = config
+            .deploy
+            .as_ref()
+            .and_then(|d| d.resources.as_ref())
+            .and_then(|r| r.limits.as_ref())
+            .map(|lim| ResourceLimits {
+                memory_bytes: lim.memory.as_deref().and_then(parse_memory_bytes),
+                nano_cpus: lim.cpus.as_deref().and_then(parse_cpus_nano),
+            })
+            .unwrap_or_default();
+
+        // Parse the container healthcheck block (OFFER-0009).
+        let healthcheck = config.healthcheck.as_ref().and_then(|hc| {
+            if hc.test.is_empty() {
+                None
+            } else {
+                Some(ContainerHealthcheck {
+                    test: hc.test.clone(),
+                    interval_ns: hc.interval.as_deref().and_then(parse_duration_ns),
+                    timeout_ns: hc.timeout.as_deref().and_then(parse_duration_ns),
+                    retries: hc.retries,
+                    start_period_ns: hc.start_period.as_deref().and_then(parse_duration_ns),
+                })
+            }
+        });
+
         ServiceTemplate {
             image: config.image,
             command: config.command,
@@ -776,6 +965,8 @@ impl Offering {
             tasks: config.tasks,
             network: config.network,
             device_requests,
+            resource_limits,
+            healthcheck,
         }
     }
 }
@@ -937,22 +1128,16 @@ impl OfferingRegistry {
         let snippet_yaml = crate::utils::strings::strip_bom(&snippet_yaml_raw).to_string();
 
         // Load optional files
-        let compatibility = Self::load_compatibility(dir, name);
-        let (metadata, connection, fm_coordination, manageable_env) =
-            Self::load_metadata(dir, name).unwrap_or((
-                OfferingMetadata::default(),
-                None,
-                CoordinationMode::default(),
-                None,
-            ));
+        let mut compatibility = Self::load_compatibility(dir, name);
+        let fm = Self::load_metadata(dir, name).unwrap_or_default();
+        if let Some(gb) = fm.minimum_memory_gb {
+            compatibility = Some(append_min_memory_rule(compatibility, gb));
+        }
         let guidance = Self::load_guidance(dir, name);
 
         Ok(Offering {
             name: name.to_string(),
-            category: Some(&metadata)
-                .and_then(|m| m.description.as_ref())
-                .map(|_| category.to_string())
-                .unwrap_or_else(|| category.to_string()),
+            category: category.to_string(),
             managed: Some(ManagedConfig {
                 snippet_yaml,
                 network: None,
@@ -960,12 +1145,13 @@ impl OfferingRegistry {
             }),
             adopted: None,
             borrowed: None,
-            metadata,
+            metadata: fm.metadata,
             compatibility,
             guidance,
-            connection,
-            manageable_env,
-            coordination: fm_coordination,
+            connection: fm.connection,
+            manageable_env: fm.manageable_env,
+            coordination: fm.coordination,
+            ceremony: fm.ceremony,
         })
     }
 
@@ -992,6 +1178,7 @@ impl OfferingRegistry {
             connection: manifest.connection,
             manageable_env: manifest.manageable_env,
             coordination: manifest.coordination,
+            ceremony: manifest.ceremony,
         })
     }
 
@@ -1009,26 +1196,20 @@ impl OfferingRegistry {
         // Adopted offerings share frontmatter with their managed counterpart
         // (e.g., ollama.frontmatter.json applies to both ollama.snippet.yaml
         // and ollama.adopted.yaml).
-        let (fm_metadata, fm_connection, _fm_coord, manageable_env) =
-            Self::load_metadata(dir, name).unwrap_or((
-                OfferingMetadata::default(),
-                None,
-                CoordinationMode::default(),
-                None,
-            ));
+        let fm = Self::load_metadata(dir, name).unwrap_or_default();
 
         // Adopted YAML fields override frontmatter where both exist
         let metadata = OfferingMetadata {
-            description: adopted_file.description.or(fm_metadata.description),
+            description: adopted_file.description.or(fm.metadata.description),
             tags: if adopted_file.tags.as_ref().is_none_or(|t| t.is_empty()) {
-                fm_metadata.tags
+                fm.metadata.tags
             } else {
                 adopted_file.tags.unwrap_or_default()
             },
-            icon: fm_metadata.icon,
-            homepage: fm_metadata.homepage,
-            documentation: fm_metadata.documentation,
-            port: fm_metadata.port,
+            icon: fm.metadata.icon,
+            homepage: fm.metadata.homepage,
+            documentation: fm.metadata.documentation,
+            port: fm.metadata.port,
         };
 
         Ok(Offering {
@@ -1052,9 +1233,10 @@ impl OfferingRegistry {
             metadata,
             compatibility: None,
             guidance: None,
-            connection: adopted_file.connection.or(fm_connection),
-            manageable_env,
+            connection: adopted_file.connection.or(fm.connection),
+            manageable_env: fm.manageable_env,
             coordination: adopted_file.coordination,
+            ceremony: None,
         })
     }
 
@@ -1069,15 +1251,7 @@ impl OfferingRegistry {
         })
     }
 
-    fn load_metadata(
-        dir: &Path,
-        name: &str,
-    ) -> Option<(
-        OfferingMetadata,
-        Option<ConnectionProfile>,
-        CoordinationMode,
-        Option<ManageableEnv>,
-    )> {
+    fn load_metadata(dir: &Path, name: &str) -> Option<ParsedFrontmatter> {
         let path = dir.join(format!("{}.frontmatter.json", name));
         if !path.exists() {
             return None;
@@ -1088,17 +1262,7 @@ impl OfferingRegistry {
                 let json = crate::utils::strings::strip_bom(&json);
                 serde_json::from_str::<FrontmatterFile>(json).ok()
             })
-            .map(|fm| {
-                let metadata = OfferingMetadata {
-                    description: fm.description,
-                    tags: fm.tags.unwrap_or_default(),
-                    icon: fm.icon,
-                    homepage: fm.homepage,
-                    documentation: fm.documentation,
-                    port: fm.port,
-                };
-                (metadata, fm.connection, fm.coordination, fm.manageable_env)
-            })
+            .map(ParsedFrontmatter::from)
     }
 
     fn load_guidance(dir: &Path, name: &str) -> Option<String> {
@@ -1143,30 +1307,19 @@ impl OfferingRegistry {
         // Strip BOM from all input content
         let snippet_content = crate::utils::strings::strip_bom(snippet_content);
 
-        let compatibility = compatibility_content
+        let mut compatibility = compatibility_content
             .map(crate::utils::strings::strip_bom)
             .and_then(|yaml| serde_yml::from_str(yaml).ok());
 
-        let (metadata, connection, fm_coordination, manageable_env) = frontmatter_content
+        let fm = frontmatter_content
             .map(crate::utils::strings::strip_bom)
             .and_then(|json| serde_json::from_str::<FrontmatterFile>(json).ok())
-            .map(|fm| {
-                let metadata = OfferingMetadata {
-                    description: fm.description,
-                    tags: fm.tags.unwrap_or_default(),
-                    icon: fm.icon,
-                    homepage: fm.homepage,
-                    documentation: fm.documentation,
-                    port: fm.port,
-                };
-                (metadata, fm.connection, fm.coordination, fm.manageable_env)
-            })
-            .unwrap_or((
-                OfferingMetadata::default(),
-                None,
-                CoordinationMode::default(),
-                None,
-            ));
+            .map(ParsedFrontmatter::from)
+            .unwrap_or_default();
+
+        if let Some(gb) = fm.minimum_memory_gb {
+            compatibility = Some(append_min_memory_rule(compatibility, gb));
+        }
 
         let guidance = guidance_content
             .map(crate::utils::strings::strip_bom)
@@ -1182,12 +1335,13 @@ impl OfferingRegistry {
             }),
             adopted: None,
             borrowed: None,
-            metadata,
+            metadata: fm.metadata,
             compatibility,
             guidance,
-            connection,
-            manageable_env,
-            coordination: fm_coordination,
+            connection: fm.connection,
+            manageable_env: fm.manageable_env,
+            coordination: fm.coordination,
+            ceremony: fm.ceremony,
         })
     }
 }
@@ -1211,6 +1365,8 @@ struct ManifestFile {
     manageable_env: Option<ManageableEnv>,
     #[serde(default)]
     coordination: CoordinationMode,
+    #[serde(default)]
+    ceremony: Option<CeremonyPolicy>,
 }
 
 /// Adopted-only file format (.adopted.yaml)
@@ -1250,6 +1406,63 @@ struct FrontmatterFile {
     #[serde(default)]
     coordination: CoordinationMode,
     manageable_env: Option<ManageableEnv>,
+    /// Snapshot ceremony policy (ORCH-0041).
+    #[serde(default)]
+    ceremony: Option<CeremonyPolicy>,
+    /// Recommended minimum RAM in GB; synthesized into a warn-only rule (COMPAT-0003).
+    #[serde(default)]
+    minimum_memory_gb: Option<u32>,
+}
+
+/// Frontmatter resolved into the fields an Offering consumes.
+#[derive(Default)]
+struct ParsedFrontmatter {
+    metadata: OfferingMetadata,
+    connection: Option<ConnectionProfile>,
+    coordination: CoordinationMode,
+    manageable_env: Option<ManageableEnv>,
+    ceremony: Option<CeremonyPolicy>,
+    minimum_memory_gb: Option<u32>,
+}
+
+impl From<FrontmatterFile> for ParsedFrontmatter {
+    fn from(fm: FrontmatterFile) -> Self {
+        Self {
+            metadata: OfferingMetadata {
+                description: fm.description,
+                tags: fm.tags.unwrap_or_default(),
+                icon: fm.icon,
+                homepage: fm.homepage,
+                documentation: fm.documentation,
+                port: fm.port,
+            },
+            connection: fm.connection,
+            coordination: fm.coordination,
+            manageable_env: fm.manageable_env,
+            ceremony: fm.ceremony,
+            minimum_memory_gb: fm.minimum_memory_gb,
+        }
+    }
+}
+
+/// Append a synthesized `warn_only` RAM rule from a `minimum_memory_gb` hint (COMPAT-0003).
+///
+/// Appended last so a hand-authored deny still takes first-match precedence.
+fn append_min_memory_rule(existing: Option<CompatibilityRules>, gb: u32) -> CompatibilityRules {
+    let mut rules = existing.unwrap_or(CompatibilityRules {
+        compatibility_rules: Vec::new(),
+        post_install_healthcheck: None,
+    });
+    rules.compatibility_rules.push(CompatibilityRule {
+        name: "minimum-memory".to_string(),
+        when: vec![format!("host.ram.total.mb < {}", gb as u64 * 1024)],
+        reason: format!("Recommended minimum is {gb}GB RAM"),
+        suggestion: Some("Increase stone memory for reliable operation".to_string()),
+        fallback: None,
+        warn_only: true,
+        continue_eval: false,
+    });
+    rules
 }
 
 /// Strip YAML frontmatter from markdown content
@@ -1335,6 +1548,7 @@ mod tests {
             connection: None,
             manageable_env: None,
             coordination: CoordinationMode::default(),
+            ceremony: None,
         };
 
         assert!(offering.supports_mode(&OfferingMode::Managed));
@@ -1363,6 +1577,7 @@ mod tests {
             connection: None,
             manageable_env: None,
             coordination: CoordinationMode::Elected,
+            ceremony: None,
         });
 
         registry.upsert(Offering {
@@ -1391,6 +1606,7 @@ mod tests {
             connection: None,
             manageable_env: None,
             coordination: CoordinationMode::default(),
+            ceremony: None,
         });
 
         assert_eq!(registry.by_mode(&OfferingMode::Managed).len(), 1);
@@ -1424,5 +1640,91 @@ mod tests {
                 .and_then(|c| c.uri_template.as_deref()),
             Some("mongodb://{host}:{port}")
         );
+    }
+
+    #[test]
+    fn parse_memory_sizes() {
+        assert_eq!(parse_memory_bytes("512m"), Some(512 * 1024 * 1024));
+        assert_eq!(parse_memory_bytes("2g"), Some(2 * 1024 * 1024 * 1024));
+        assert_eq!(parse_memory_bytes("1073741824"), Some(1_073_741_824));
+        assert_eq!(parse_memory_bytes("nonsense"), None);
+        assert_eq!(parse_memory_bytes(""), None);
+    }
+
+    #[test]
+    fn parse_cpu_counts() {
+        assert_eq!(parse_cpus_nano("1.5"), Some(1_500_000_000));
+        assert_eq!(parse_cpus_nano("2"), Some(2_000_000_000));
+        assert_eq!(parse_cpus_nano("0"), None);
+        assert_eq!(parse_cpus_nano("x"), None);
+        assert_eq!(parse_cpus_nano("inf"), None);
+        assert_eq!(parse_cpus_nano("nan"), None);
+    }
+
+    #[test]
+    fn parse_durations() {
+        assert_eq!(parse_duration_ns("30s"), Some(30_000_000_000));
+        assert_eq!(parse_duration_ns("500ms"), Some(500_000_000));
+        assert_eq!(parse_duration_ns("1m30s"), Some(90_000_000_000));
+        assert_eq!(parse_duration_ns("bad"), None);
+    }
+
+    #[test]
+    fn snippet_parses_limits_and_healthcheck() {
+        let snippet = "image: ghcr.io/flaresolverr/flaresolverr:v3.5.0\n\
+ports:\n  default: [8191, 8191]\n\
+healthcheck:\n  test: [CMD, curl, -fsS, \"http://localhost:8191/health\"]\n  interval: 30s\n  timeout: 10s\n  retries: 5\n  start_period: 30s\n\
+deploy:\n  resources:\n    limits:\n      memory: 2g\n      cpus: \"1.5\"\n";
+        let offering = Offering {
+            name: "flaresolverr".to_string(),
+            category: "proxy".to_string(),
+            managed: Some(ManagedConfig {
+                snippet_yaml: snippet.to_string(),
+                network: None,
+                tasks: None,
+            }),
+            adopted: None,
+            borrowed: None,
+            metadata: OfferingMetadata::default(),
+            compatibility: None,
+            guidance: None,
+            connection: None,
+            manageable_env: None,
+            coordination: CoordinationMode::default(),
+            ceremony: None,
+        };
+        let template = offering.parse_template().unwrap();
+        assert_eq!(
+            template.resource_limits.memory_bytes,
+            Some(2 * 1024 * 1024 * 1024)
+        );
+        assert_eq!(template.resource_limits.nano_cpus, Some(1_500_000_000));
+        let hc = template.healthcheck.expect("healthcheck parsed");
+        assert_eq!(hc.test.first().map(String::as_str), Some("CMD"));
+        assert_eq!(hc.interval_ns, Some(30_000_000_000));
+        assert_eq!(hc.retries, Some(5));
+    }
+
+    #[test]
+    fn minimum_memory_gb_synthesizes_warn_rule() {
+        let temp = TempDir::new().unwrap();
+        let cat = temp.path().join("proxy");
+        fs::create_dir_all(&cat).unwrap();
+        fs::write(
+            cat.join("svc.snippet.yaml"),
+            "image: x:1\nports:\n  default: [80, 80]",
+        )
+        .unwrap();
+        fs::write(
+            cat.join("svc.frontmatter.json"),
+            r#"{"description":"x","minimum_memory_gb":2}"#,
+        )
+        .unwrap();
+        let registry = OfferingRegistry::load(temp.path()).unwrap();
+        let svc = registry.get("svc").unwrap();
+        let rules = svc.compatibility.as_ref().expect("compat synthesized");
+        assert!(rules.compatibility_rules.iter().any(|r| {
+            r.name == "minimum-memory" && r.warn_only && r.when.iter().any(|w| w.contains("2048"))
+        }));
     }
 }

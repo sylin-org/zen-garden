@@ -48,6 +48,18 @@ pub struct CompiledOffering {
     /// GPU device requests from manifest `deploy.resources.reservations.devices`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub device_requests: Vec<garden_common::manifests::GpuDeviceRequest>,
+    /// Resource limits from manifest `deploy.resources.limits` (OFFER-0009).
+    #[serde(
+        default,
+        skip_serializing_if = "garden_common::manifests::offering::ResourceLimits::is_empty"
+    )]
+    pub resource_limits: garden_common::manifests::offering::ResourceLimits,
+    /// Container healthcheck from the manifest `healthcheck:` block (OFFER-0009).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub healthcheck: Option<garden_common::manifests::offering::ContainerHealthcheck>,
+    /// Snapshot ceremony policy (quiesce/resume) for managed offerings (ORCH-0041).
+    #[serde(default)]
+    pub ceremony: garden_common::manifests::CeremonyPolicy,
 }
 
 impl CompiledOffering {

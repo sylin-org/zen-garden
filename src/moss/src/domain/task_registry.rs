@@ -115,6 +115,7 @@ mod tests {
             description: "Test task".to_string(),
             schedule: "0 0 * * *".to_string(),
             command: vec!["echo".to_string(), "test".to_string()],
+            action: garden_common::TaskAction::Exec,
             category: TaskCategory::Maintenance,
             enabled: true,
             timeout_secs: 60,

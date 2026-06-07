@@ -42,8 +42,17 @@ pub async fn build_spec_from_manifest(
     // This is the same source that install_service_task uses.
     let compiled = state.catalog.get_compiled(&offering_type).await;
 
-    let (image, command, ports, environment, volumes, config_files, device_requests) =
-        match compiled {
+    let (
+        image,
+        command,
+        ports,
+        environment,
+        volumes,
+        config_files,
+        device_requests,
+        resource_limits,
+        healthcheck,
+    ) = match compiled {
             Some(compiled) => {
                 // Resolve FQN-specific volume paths (e.g., comfyui::prod isolation)
                 let fqn_volumes = compiled.volumes_for_fqn(&fqn);
@@ -56,6 +65,8 @@ pub async fn build_spec_from_manifest(
                     fqn_volumes,
                     compiled.config_files,
                     compiled.device_requests,
+                    compiled.resource_limits,
+                    compiled.healthcheck,
                 )
             }
             None => {
@@ -82,6 +93,8 @@ pub async fn build_spec_from_manifest(
                     template.volumes,
                     template.config_files,
                     template.device_requests,
+                    template.resource_limits,
+                    template.healthcheck,
                 )
             }
         };
@@ -120,6 +133,9 @@ pub async fn build_spec_from_manifest(
         volumes: effective_volumes,
         config_files,
         device_requests,
+        memory_bytes: resource_limits.memory_bytes,
+        nano_cpus: resource_limits.nano_cpus,
+        healthcheck,
     })
 }
 

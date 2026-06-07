@@ -1,0 +1,16 @@
+{
+  "name": "qbittorrent",
+  "description": "BitTorrent download client with a Web UI — headless qbittorrent-nox (GPL-2.0)",
+  "category": "media",
+  "tags": ["download", "torrent", "bittorrent"],
+  "port": 8080,
+  "homepage": "https://www.qbittorrent.org",
+  "documentation": "https://docs.linuxserver.io/images/docker-qbittorrent/",
+  "connection": { "protocol": "http", "uri_template": "http://{host}:{port}" },
+  "coordination": "independent",
+  "manageable_env": {
+    "service_name": "qbittorrent",
+    "restart_required": true,
+    "vars": ["TZ", "PUID", "PGID", "WEBUI_PORT"]
+  }
+}

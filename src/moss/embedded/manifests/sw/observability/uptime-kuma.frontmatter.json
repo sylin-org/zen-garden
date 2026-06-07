@@ -1,0 +1,16 @@
+{
+  "name": "uptime-kuma",
+  "description": "Self-hosted uptime and status monitor with notifications and public status pages (MIT)",
+  "category": "observability",
+  "tags": ["monitoring", "uptime", "status", "alerting"],
+  "port": 3001,
+  "homepage": "https://github.com/louislam/uptime-kuma",
+  "documentation": "https://github.com/louislam/uptime-kuma/wiki",
+  "connection": { "protocol": "http", "uri_template": "http://{host}:{port}" },
+  "coordination": "independent",
+  "manageable_env": {
+    "service_name": "uptime-kuma",
+    "restart_required": true,
+    "vars": ["TZ", "UPTIME_KUMA_PORT"]
+  }
+}

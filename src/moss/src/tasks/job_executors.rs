@@ -716,6 +716,9 @@ pub async fn install_service_task(
         volumes: fqn_volumes,
         config_files: compiled.config_files,
         device_requests: compiled.device_requests,
+        memory_bytes: compiled.resource_limits.memory_bytes,
+        nano_cpus: compiled.resource_limits.nano_cpus,
+        healthcheck: compiled.healthcheck.clone(),
     };
     let actual_ports = match state
         .platform
@@ -895,6 +898,25 @@ pub async fn install_service_task(
         }
     }
 
+    // Background post-install healthcheck scan (COMPAT-0003): detect crash
+    // patterns in the container's early logs and self-heal via the manifest's
+    // fallback image. Runs off the hot path so healthy deploys aren't delayed.
+    if let Some(hc) = state
+        .catalog
+        .get_manifest(offering_type)
+        .and_then(|m| m.parse_template().ok())
+        .and_then(|t| t.compatibility)
+        .and_then(|c| c.post_install_healthcheck)
+        .filter(|h| h.enabled && !h.patterns.is_empty())
+    {
+        let state = state.clone();
+        let offering = offering.to_string();
+        let spec = spec.clone();
+        tokio::spawn(async move {
+            run_post_install_scan(&state, &offering, spec, hc).await;
+        });
+    }
+
     // Mark the job item and finalize as Completed — fires wire
     // JobEvent::Completed and internal JobsChanged::Completed.
     state
@@ -910,6 +932,96 @@ pub async fn install_service_task(
     ));
 
     tracing::info!(job_id, offering, "Service installation completed");
+}
+
+/// Background post-install healthcheck scan (COMPAT-0003).
+///
+/// Waits for the container to settle, scans the last `scan_log_lines` of its
+/// logs against the manifest's crash patterns, and — if a matching pattern
+/// declares a fallback image — recreates the container on that image (volumes
+/// preserved, per `recreate_service`) and updates the registry version. The
+/// swap happens at most once per deploy. Best-effort: any error is logged and
+/// the healthy deploy is left standing.
+async fn run_post_install_scan(
+    state: &Moss,
+    offering: &str,
+    spec: crate::docker::ContainerSpec,
+    hc: garden_common::PostInstallHealthcheck,
+) {
+    let wait = std::time::Duration::from_secs(hc.timeout_seconds.clamp(1, 120));
+    tokio::time::sleep(wait).await;
+
+    let logs = match state
+        .platform
+        .container
+        .read_recent_logs(offering, hc.scan_log_lines)
+        .await
+    {
+        Ok(logs) => logs,
+        Err(e) => {
+            tracing::warn!(offering = %offering, error = %e, "post-install scan: log read failed");
+            return;
+        }
+    };
+
+    let Some(pattern) = hc.scan(&logs) else {
+        return;
+    };
+
+    let Some(fallback) = &pattern.fallback else {
+        tracing::warn!(
+            offering = %offering,
+            reason = %pattern.reason,
+            "post-install check matched (advisory; no fallback declared)"
+        );
+        return;
+    };
+
+    tracing::warn!(
+        offering = %offering,
+        reason = %pattern.reason,
+        fallback = %fallback.image,
+        "post-install check matched; falling back to alternate image"
+    );
+    state.console.emit(console::ConsoleEvent::new(
+        console::EventCategory::Jobs,
+        console::EventStatus::Failed,
+        format!(
+            "{}: {} — falling back to {}",
+            offering, pattern.reason, fallback.image
+        ),
+    ));
+
+    let mut fb_spec = spec;
+    fb_spec.image = fallback.image.clone();
+    fb_spec.device_requests = vec![]; // OFFER-0008: a CPU/legacy fallback drops GPU requests.
+
+    if let Err(e) = state
+        .platform
+        .container
+        .recreate_service(offering, &fb_spec)
+        .await
+    {
+        tracing::error!(offering = %offering, error = ?e, "post-install fallback recreate failed");
+        return;
+    }
+
+    // Reflect the fallback image tag in the registry.
+    let new_version = fb_spec
+        .image
+        .rsplit_once(':')
+        .map(|(_, tag)| tag)
+        .filter(|tag| !tag.contains('/'))
+        .unwrap_or("latest")
+        .to_string();
+    state
+        .offerings
+        .update_by_name(offering, |o| {
+            o.version = new_version.clone();
+            true
+        })
+        .await;
+    tracing::info!(offering = %offering, image = %fb_spec.image, "post-install fallback applied");
 }
 
 /// Execute image-direct service installation in background (OFFER-0006).
@@ -1282,6 +1394,9 @@ pub async fn install_batch_task(state: &Moss, job_id: &str, offerings: Vec<Strin
             volumes: compiled.volumes,
             config_files: vec![],
             device_requests: vec![],
+            memory_bytes: compiled.resource_limits.memory_bytes,
+            nano_cpus: compiled.resource_limits.nano_cpus,
+            healthcheck: compiled.healthcheck.clone(),
         };
         let actual_ports = match state
             .platform

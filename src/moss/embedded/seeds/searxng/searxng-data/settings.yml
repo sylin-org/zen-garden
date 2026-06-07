@@ -4,7 +4,18 @@
 # This file was placed by Moss during installation.
 # Customize freely — it won't be overwritten on updates.
 
-use_default_settings: true
+use_default_settings:
+  engines:
+    remove:
+      # Tor hidden-service engines: require a Tor proxy this deployment does not
+      # provide, so SearXNG marks them inactive and logs an error on every boot.
+      # Re-add them if you configure outgoing.proxies for Tor.
+      - ahmia
+      - torch
+      # Internet-radio engine: its init eagerly queries the SQLite engine cache
+      # before the cache table exists on first boot (upstream race), emitting a
+      # Python traceback on fresh installs. Niche engine; removed by default.
+      - radio browser
 
 server:
   secret_key: "__ZEN_GARDEN_GENERATE_SECRET__"

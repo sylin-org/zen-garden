@@ -1,0 +1,23 @@
+# Jellyfin — free software media server (movies/TV/music) with transcoding. GPL-2.0.
+# LinuxServer image, multi-arch (amd64/arm64/armv7). All state lives in /config (and a
+# regenerable transcode cache in /cache) — both externalized to host volumes, never
+# in the container layer. Media libraries are mounted by the user (customize later).
+container_name: jellyfin
+image: lscr.io/linuxserver/jellyfin:latest
+ports:
+  default: [8096, 8096]
+environment:
+  PUID: "${PUID:-1000}"
+  PGID: "${PGID:-1000}"
+  TZ: "${TZ:-Etc/UTC}"
+volumes:
+  - jellyfin-config:/config
+  - jellyfin-cache:/cache
+healthcheck:
+  test: ["CMD", "curl", "-fsS", "http://localhost:8096/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 60s
+restart: unless-stopped
+networks: [zen-garden]

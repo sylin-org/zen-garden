@@ -63,6 +63,45 @@ fn next_run_time(cron_expr: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 async fn execute_task(state: &Moss, task: &ScheduledTask) -> TaskResult {
     let start = std::time::Instant::now();
 
+    // Recycle action (OFFER-0009): restart the container at the Moss level
+    // instead of running a command inside it. The scheduler's container-Running
+    // gate already prevents recycling a stopped container.
+    if matches!(task.definition.action, garden_common::TaskAction::Recycle) {
+        tracing::info!(
+            task_id = %task.task_id,
+            container = %task.offering_name,
+            "Executing recycle task (container restart)"
+        );
+        let result = state
+            .platform
+            .container
+            .restart_service(&task.offering_name)
+            .await;
+        let duration_ms = start.elapsed().as_millis() as u64;
+        return match result {
+            Ok(()) => {
+                tracing::info!(task_id = %task.task_id, duration_ms, "Recycle completed");
+                TaskResult {
+                    success: true,
+                    exit_code: Some(0),
+                    duration_ms,
+                    output: Some("container restarted".to_string()),
+                    error: None,
+                }
+            }
+            Err(e) => {
+                tracing::error!(task_id = %task.task_id, error = ?e, duration_ms, "Recycle failed");
+                TaskResult {
+                    success: false,
+                    exit_code: None,
+                    duration_ms,
+                    output: None,
+                    error: Some(e.to_string()),
+                }
+            }
+        };
+    }
+
     tracing::info!(
         task_id = %task.task_id,
         container = %task.offering_name,

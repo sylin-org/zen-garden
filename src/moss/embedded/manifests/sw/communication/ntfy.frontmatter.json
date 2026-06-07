@@ -1,0 +1,16 @@
+{
+  "name": "ntfy",
+  "description": "Send push notifications to your phone or desktop over HTTP — simple pub/sub notification server (Apache-2.0)",
+  "category": "communication",
+  "tags": ["notifications", "push", "pubsub", "alerts"],
+  "port": 80,
+  "homepage": "https://ntfy.sh",
+  "documentation": "https://docs.ntfy.sh",
+  "connection": { "protocol": "http", "uri_template": "http://{host}:{port}" },
+  "coordination": "independent",
+  "manageable_env": {
+    "service_name": "ntfy",
+    "restart_required": true,
+    "vars": ["NTFY_BASE_URL", "NTFY_AUTH_DEFAULT_ACCESS", "TZ"]
+  }
+}

@@ -4,11 +4,15 @@
 //! Fallback: polling task (10s) diffs scan_volumes() against known set.
 //! Both paths measure disk_usage() BEFORE sending Connected events.
 
-use super::{PhysicalStorageEvent, StorageResources, VolumeMonitor};
+use super::{PhysicalStorageEvent, VolumeMonitor};
+#[cfg(feature = "udev")]
+use super::StorageResources;
 use crate::infra::storage::platform;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tracing::{debug, warn};
+use tracing::debug;
+#[cfg(feature = "udev")]
+use tracing::warn;
 
 /// Linux volume monitor using udev + polling fallback.
 pub struct LinuxVolumeMonitor;
@@ -19,16 +23,20 @@ impl VolumeMonitor for LinuxVolumeMonitor {
         tx: tokio::sync::mpsc::Sender<PhysicalStorageEvent>,
         token: tokio_util::sync::CancellationToken,
     ) {
-        // Primary: udev blocking thread
-        let udev_tx = tx.clone();
-        let udev_token = token.clone();
-        std::thread::spawn(move || {
-            if let Err(e) = run_udev_watcher(udev_tx, udev_token) {
-                warn!(error = %e, "udev watcher failed, polling fallback active");
-            }
-        });
+        // Primary: udev blocking thread (compiled out for static-musl/Android builds,
+        // where libudev is unavailable; the polling task below then carries detection).
+        #[cfg(feature = "udev")]
+        {
+            let udev_tx = tx.clone();
+            let udev_token = token.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = run_udev_watcher(udev_tx, udev_token) {
+                    warn!(error = %e, "udev watcher failed, polling fallback active");
+                }
+            });
+        }
 
-        // Fallback: polling task (10s interval)
+        // Fallback: polling task (10s interval). Primary detector when udev is disabled.
         tokio::spawn(async move {
             let mut known: HashSet<String> = HashSet::new();
 
@@ -90,7 +98,10 @@ impl VolumeMonitor for LinuxVolumeMonitor {
             }
         });
 
+        #[cfg(feature = "udev")]
         tracing::info!("Linux volume monitor started (udev + polling)");
+        #[cfg(not(feature = "udev"))]
+        tracing::info!("Linux volume monitor started (polling; udev disabled at build time)");
     }
 }
 
@@ -104,6 +115,7 @@ fn measure_usage(mount_path: &str, capacity_bytes: u64) -> (u64, u64) {
 }
 
 /// Build a StorageResources from disk_usage, falling back to zeros.
+#[cfg(feature = "udev")]
 fn resources_for_device(mount_path: &str, capacity_bytes: u64) -> StorageResources {
     let (used_bytes, available_bytes) = measure_usage(mount_path, capacity_bytes);
     StorageResources {
@@ -113,6 +125,7 @@ fn resources_for_device(mount_path: &str, capacity_bytes: u64) -> StorageResourc
     }
 }
 
+#[cfg(feature = "udev")]
 fn run_udev_watcher(
     tx: tokio::sync::mpsc::Sender<PhysicalStorageEvent>,
     token: tokio_util::sync::CancellationToken,
@@ -194,6 +207,7 @@ fn run_udev_watcher(
 }
 
 /// Build a VolumeSnapshot for a device if it's currently mounted.
+#[cfg(feature = "udev")]
 fn build_snapshot_for_device(device: &str) -> Option<platform::VolumeSnapshot> {
     let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
     for line in mounts.lines() {

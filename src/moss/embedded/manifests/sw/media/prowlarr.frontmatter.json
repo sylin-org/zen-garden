@@ -1,0 +1,16 @@
+{
+  "name": "prowlarr",
+  "description": "Indexer manager and proxy for the *arr stack — one place to manage Torrent/Usenet indexers (GPL-3.0)",
+  "category": "media",
+  "tags": ["arr", "indexer", "proxy", "torrent", "usenet"],
+  "port": 9696,
+  "homepage": "https://prowlarr.com",
+  "documentation": "https://wiki.servarr.com/prowlarr",
+  "connection": { "protocol": "http", "uri_template": "http://{host}:{port}" },
+  "coordination": "independent",
+  "manageable_env": {
+    "service_name": "prowlarr",
+    "restart_required": true,
+    "vars": ["TZ", "PUID", "PGID"]
+  }
+}

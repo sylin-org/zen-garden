@@ -1,0 +1,27 @@
+# ntfy — HTTP-based pub/sub push-notification server. Apache-2.0 / GPL-2.0.
+# Multi-arch (amd64/arm64/armv7). Needs the `serve` argument. By default ntfy keeps
+# its message cache in memory and has no auth DB; we point the cache and auth file
+# at on-disk paths and externalize them to host volumes so notifications, attachments,
+# and users survive a recreate and are captured by snapshots.
+container_name: ntfy
+image: binwiederhier/ntfy:v2.23.0
+command: ["serve"]
+ports:
+  default: [80, 80]
+environment:
+  NTFY_CACHE_FILE: "/var/cache/ntfy/cache.db"
+  NTFY_ATTACHMENT_CACHE_DIR: "/var/cache/ntfy/attachments"
+  NTFY_AUTH_FILE: "/var/lib/ntfy/user.db"
+  TZ: "${TZ:-Etc/UTC}"
+volumes:
+  - ntfy-cache:/var/cache/ntfy
+  - ntfy-data:/var/lib/ntfy
+# No curl in the image and no built-in HEALTHCHECK; BusyBox wget is present.
+healthcheck:
+  test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:80/v1/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 15s
+restart: unless-stopped
+networks: [zen-garden]

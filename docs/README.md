@@ -50,6 +50,7 @@ Step-by-step instructions for operators:
 | [First Stone](guides/first-stone.md) | Set up your first Stone from hardware to running service |
 | [Hardware Selection](guides/stone-hardware.md) | Choose appropriate hardware for different workloads |
 | [Managing Offerings](guides/offering-lifecycle.md) | Plant, upgrade, rest, wake, and take away services |
+| [Authoring an Offering](guides/authoring-an-offering.md) | Add a new managed offering end to end (snippet, frontmatter, compatibility, guidance) |
 | [Tools Domain User Guide](guides/tools-domain.md) | Build adapter/client automation on the normative tools snapshot + stream APIs |
 | [Using Companions](guides/companion-overview.md) | Control Cricket, Firefly, and OLED Companions for physical presence |
 | [Creating Tunes](guides/cricket-tune-authoring.md) | Write YAML configurations for Cricket audio Companion |

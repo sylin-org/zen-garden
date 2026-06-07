@@ -1,0 +1,18 @@
+# SearXNG bot-detection / limiter configuration for Zen Garden
+#
+# The rate limiter itself is OFF by default (server.limiter: false). This file
+# exists so SearXNG's always-on bot-detection subsystem finds its config rather
+# than logging "missing config file: /etc/searxng/limiter.toml" on every boot.
+#
+# trusted_proxies lists networks whose X-Forwarded-For / X-Real-IP headers are
+# honored for client-IP detection. Defaults to loopback; widen it if you front
+# SearXNG with a reverse proxy. See https://docs.searxng.org/admin/settings/
+#
+# This file was placed by Moss during installation.
+# Customize freely — it won't be overwritten on updates.
+
+[botdetection]
+trusted_proxies = [
+  '127.0.0.0/8',
+  '::1',
+]

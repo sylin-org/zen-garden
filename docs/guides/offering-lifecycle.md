@@ -36,7 +36,7 @@ Services in Zen Garden follow a simple lifecycle managed by Garden-Rake CLI:
 
 ### Service vs Offering
 
-- **Offering**: Service template (e.g., mongodb.yml defines how to deploy MongoDB)
+- **Offering**: Service template (e.g., `mongodb.snippet.yaml` defines how to deploy MongoDB)
 - **Service**: Running instance of an offering (e.g., `mongodb` container on stone-01)
 - **Instance (FQN)**: Named service identity (e.g., `mongodb::dev`, default instance = `mongodb`)
 
@@ -164,7 +164,7 @@ garden-rake offer mongodb --version 6.0
 1. **Rake discovers Stone** via localhost cache (instant) or network discovery (mDNS/UDP/Lantern)
 2. **Rake sends HTTP POST** to `http://stone-01:7185/api/v1/offerings` with `{name: "mongodb"}`
 3. **Moss validates offering** (template exists, port available, compatibility check)
-4. **Moss reads template** from `/usr/share/garden-moss/templates/mongodb.yaml`
+4. **Moss reads the manifest** (the embedded `mongodb` snippet, or its `{data_dir}/manifests/sw/<category>/` overlay)
 5. **Moss updates docker-compose.yml** atomically (backup, merge, validate, apply)
 6. **Moss runs Docker Compose** (`docker compose up -d`)
 7. **Moss announces service** via mDNS (updates TXT record with `offering=mongodb,port=27017`)
@@ -257,7 +257,7 @@ garden-rake describe mongodb
 # Output:
 # Service: mongodb
 # Offering: mongodb
-# Template: /usr/share/garden-moss/templates/mongodb.yaml
+# Manifest: sw/data/mongodb (embedded)
 # Image: mongo:7.0.4
 # Status: Running
 # Health: Passing
@@ -624,111 +624,61 @@ garden-rake offer vector --at anywhere --prefer ssd,high-memory
 
 ## Creating Custom Offerings
 
-### Offering Manifest Structure
+A custom offering is the same file set as a built-in one — a
+`<name>.snippet.yaml` (required) plus optional `<name>.frontmatter.json`,
+`<name>.compatibility.yaml`, and `<name>.guidance.md` — placed under
+`{data_dir}/manifests/sw/<category>/` (e.g.
+`/var/lib/zen-garden/manifests/sw/automation/`). The offering's name and
+category come from the file path.
 
-Create custom offerings in `/var/lib/zen-garden/manifests/custom/`:
+### Scaffold, validate, and test
 
-```yaml
-# /var/lib/zen-garden/manifests/custom/myapp.yaml
----
-name: myapp
-offering: myapp
-category: application
-tags: [web, api, nodejs]
-description: Custom Node.js API service
-
-versions:
-  default: latest
-  supported:
-    - latest
-    - 1.0.0
-
-docker:
-  native:
-    offering_name: myapp
-    image: mycompany/myapp
-    image_tag: ${VERSION}
-    ports:
-      - container: 3000
-        host: 3000
-        protocol: tcp
-    volumes:
-      - name: myapp_data
-        mount: /app/data
-        type: volume
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: zen-garden:mongodb/myapp
-    health_check:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-mdns:
-  - offering: myapp
-    protocol: native
-    port_source: 3000
-```
-
-### Template Validation
+Use the `manifest` toolchain rather than hand-writing files:
 
 ```bash
-# Refresh offering index to include custom manifests
-garden-rake offer refresh --at stone-01
+# Scaffold the four files from a Docker image (inspected on the stone)
+garden-rake manifest init mycompany/myapp:1.0.0 --name myapp --category automation --output ./myapp --at stone-01
 
-# Output:
-# Refreshing offerings index on stone-01...
-# Scanning manifests: /var/lib/zen-garden/manifests/
-# ✓ Found 15 curated offerings
-# Scanning custom: /var/lib/zen-garden/manifests/custom/
-# ✓ Found 1 custom offering (myapp)
-# ⚠ Skipped 1 invalid manifest (validation failed)
-# 
-# Available offerings: 16 total
+# Validate offline
+garden-rake manifest validate ./myapp
+
+# Test-deploy on a stone, then clean up
+garden-rake manifest test ./myapp --at stone-01
+garden-rake remove myapp --at stone-01
 ```
 
-**Validation rules:**
-
-- Template must have `name`, `offering`, `docker` sections
-- Image tags must be valid (no shell injection)
-- Port numbers: 1-65535
-- Environment variables: `${VAR}` or `${VAR:-default}` only
-- Volume names: `^[a-z0-9-]+$`
-- No arbitrary shell commands
-
-### Advanced: Agnostic Sidecar
-
-Add HTTP REST API to custom service:
+A minimal `myapp.snippet.yaml`:
 
 ```yaml
-docker:
-  native:
-    # ... native config ...
-
-  agnostic:
-    offering_name: myapp-agnostic
-    image: mycompany/myapp-agnostic
-    image_tag: ${VERSION}
-    ports:
-      - container: 8080
-        host_start: 8080
-        protocol: tcp
-    environment:
-      BACKEND_SERVICE: myapp
-      BACKEND_URL: http://myapp:3000
-    depends_on:
-      - myapp
-
-mdns:
-  - offering: myapp
-    protocol: native
-    port_source: 3000
-  - offering: myapp-agnostic
-    protocol: agnostic
-    port_source: 8080
-    capabilities: [crud, query, filter]
+image: mycompany/myapp:1.0.0
+ports:
+  default: [3000, 3000]
+environment:
+  NODE_ENV: production
+  DATABASE_URL: zen-garden:mongodb/myapp
+volumes:
+  - myapp-data:/app/data
 ```
+
+### Install the custom offering
+
+Drop the validated files under `{data_dir}/manifests/sw/<category>/` on the
+stone and reload the index:
+
+```bash
+garden-rake offer refresh --at stone-01
+
+# Refreshing offerings index on stone-01...
+# ✓ Loaded embedded offerings
+# ✓ Found 1 overlay offering (myapp)
+# ⚠ Skipped 1 invalid manifest (validation failed)
+```
+
+For the full walkthrough — frontmatter, compatibility rules, guidance, and
+shipping an offering into the embedded catalog — see
+[Authoring an Offering](authoring-an-offering.md). The validation rules and
+field-level details are in the [offerings spec](../specs/offerings.md) and the
+[compatibility guide](offering-manifest-compatibility.md).
 
 ---
 
@@ -844,7 +794,7 @@ garden-rake offer refresh --at stone-01
 **Solutions:**
 
 - Typo in offering name (correct: `mongodb` not `mongo`)
-- Custom offering not in `/var/lib/zen-garden/manifests/custom/`
+- Custom offering not under `{data_dir}/manifests/sw/<category>/` (run `garden-rake offer refresh`)
 - Manifest validation failed (check Moss logs)
 
 ### Upgrade Failed

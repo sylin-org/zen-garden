@@ -628,6 +628,7 @@ pub fn load_embedded_adopted_offerings() -> Vec<Offering> {
                         .or_else(|| fm.and_then(|f| f.connection.clone())),
                     manageable_env: fm.and_then(|f| f.manageable_env.clone()),
                     coordination: file.coordination,
+                    ceremony: None,
                 };
 
                 tracing::debug!(
@@ -852,10 +853,18 @@ mod tests {
         )];
         let count = extract_seeds("searxng", &volumes).unwrap();
         if count > 0 {
-            // Verify seed file was written
+            // settings.yml: seeded with default-settings inheritance and the
+            // engine-removal block that keeps the startup log clean.
             assert!(vol_dir.join("settings.yml").exists());
             let content = std::fs::read_to_string(vol_dir.join("settings.yml")).unwrap();
             assert!(content.contains("use_default_settings"));
+            assert!(content.contains("radio browser"));
+
+            // limiter.toml: seeded so bot-detection finds its config instead of
+            // warning about a missing file on every boot.
+            assert!(vol_dir.join("limiter.toml").exists());
+            let limiter = std::fs::read_to_string(vol_dir.join("limiter.toml")).unwrap();
+            assert!(limiter.contains("trusted_proxies"));
         }
     }
 

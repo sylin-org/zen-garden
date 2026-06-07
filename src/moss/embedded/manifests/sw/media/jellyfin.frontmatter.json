@@ -1,0 +1,16 @@
+{
+  "name": "jellyfin",
+  "description": "Free software media server — stream your movies, TV, and music with transcoding (GPL-2.0)",
+  "category": "media",
+  "tags": ["media", "streaming", "video", "music", "dlna"],
+  "port": 8096,
+  "homepage": "https://jellyfin.org",
+  "documentation": "https://jellyfin.org/docs/",
+  "connection": { "protocol": "http", "uri_template": "http://{host}:{port}" },
+  "coordination": "independent",
+  "manageable_env": {
+    "service_name": "jellyfin",
+    "restart_required": true,
+    "vars": ["TZ", "PUID", "PGID"]
+  }
+}

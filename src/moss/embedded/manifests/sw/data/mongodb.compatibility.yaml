@@ -12,20 +12,25 @@ compatibility_rules:
       image: "mongo:4.4"
       name: "legacy"
 
-  # CPU feature detection (Tier 2: Fast)
+  # CPU feature detection (Tier 2: Fast) — x86_64 only. AVX/SSE4.2 are x86 extensions that
+  # ARM CPUs never report, so these rules MUST be scoped to x86_64; otherwise every ARM stone
+  # (which always "LACKS avx") is wrongly downgraded to mongo:4.4. On ARM the relevant gate is
+  # the microarchitecture (ARMv8.2-A), enforced by the post-install healthcheck below.
   - name: "missing-avx-feature"
     when:
+      - host.architecture IS x86_64
       - host.cpu.features LACKS avx
-    reason: "MongoDB 5.0+ requires AVX CPU support"
+    reason: "MongoDB 5.0+ requires AVX CPU support (x86_64)"
     fallback:
       image: "mongo:4.4"
       name: "legacy"
 
-  # Older processors without SSE4.2
+  # Older x86 processors without SSE4.2
   - name: "missing-sse42-feature"
     when:
+      - host.architecture IS x86_64
       - host.cpu.features LACKS sse4_2
-    reason: "MongoDB 4.4+ requires SSE4.2 CPU support"
+    reason: "MongoDB 4.4+ requires SSE4.2 CPU support (x86_64)"
     fallback:
       image: "mongo:4.2"
       name: "legacy42"

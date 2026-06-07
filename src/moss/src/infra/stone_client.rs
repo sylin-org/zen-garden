@@ -61,7 +61,7 @@ impl StoneClient {
     /// Probes for certmesh certificates on disk. If found, builds a TLS
     /// client with mTLS identity and pond CA trust.
     pub fn new(stone_name: &str) -> Self {
-        let http = reqwest::Client::builder()
+        let http = crate::http::client_builder()
             .timeout(DEFAULT_TIMEOUT)
             .build()
             .expect("Failed to build HTTP client");

@@ -269,25 +269,60 @@ async fn capture_into<S: SnapshotStore + ?Sized>(
     let volume_count = volumes.len() as u32;
     let total_steps = CAPTURE_STEPS_BEFORE_VOLUMES + volume_count + CAPTURE_STEPS_AFTER_VOLUMES;
 
-    // Steps 5..=4+N — archive volumes with the container paused so a live
-    // process (e.g. a database flushing data files) can't mutate bytes
-    // mid-`tar`. Pause failure is non-fatal — we proceed, accepting a
-    // possibly-less-consistent archive rather than blocking the backup.
-    // Unpause runs on every path after a successful pause so the
-    // container is never left stuck paused, even when archiving fails.
-    let paused = match state.platform.container.pause_container(&container_name).await {
-        Ok(()) => true,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                container = %container_name,
-                "Failed to pause container for volume archive; proceeding without pause"
-            );
-            false
+    // Steps 5..=4+N — archive volumes. Consistency strategy follows the
+    // offering's ceremony policy (ORCH-0041):
+    //   Unsafe (default) → pause-only (freeze the FS so `tar` sees stable bytes).
+    //   Quiesceable      → app-level quiesce (flush+lock) before pause, resume after.
+    //   Stateless        → archive live, no pause.
+    let ceremony = state
+        .catalog
+        .get_compiled(&fqn_string)
+        .await
+        .map(|c| c.ceremony)
+        .unwrap_or_default();
+
+    // Quiesce while the container is still running (a DB needs a live server to
+    // take its lock). A failed quiesce aborts the capture so the partial dir is
+    // reaped by the caller; resume is then guaranteed to run below.
+    let quiesced = if ceremony.mode == garden_common::manifests::CeremonyMode::Quiesceable {
+        match ceremony.quiesce.as_ref() {
+            Some(q) => match state
+                .platform
+                .container
+                .exec_in_container(&fqn_string, &q.exec, q.timeout_seconds)
+                .await
+            {
+                Ok((0, _)) => true,
+                Ok((code, out)) => anyhow::bail!("quiesce command failed (exit {code}): {out}"),
+                Err(e) => anyhow::bail!("quiesce command errored: {e}"),
+            },
+            None => false,
+        }
+    } else {
+        false
+    };
+
+    // Pause so a live process can't mutate bytes mid-`tar`. Skipped for stateless
+    // offerings. Pause failure is non-fatal; unpause runs after a successful pause.
+    let paused = if ceremony.mode == garden_common::manifests::CeremonyMode::Stateless {
+        false
+    } else {
+        match state.platform.container.pause_container(&container_name).await {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    container = %container_name,
+                    "Failed to pause container for volume archive; proceeding without pause"
+                );
+                false
+            }
         }
     };
 
-    let archive_result = archive_volumes(
+    // Archive, bounded by `max_quiesce_seconds` when quiescing so a stuck archive
+    // can't hold the application locked indefinitely.
+    let archive_future = archive_volumes(
         state,
         store,
         snapshot_id,
@@ -296,16 +331,55 @@ async fn capture_into<S: SnapshotStore + ?Sized>(
         &managed_root,
         job_id,
         total_steps,
-    )
-    .await;
+    );
+    let archive_result = match ceremony.max_quiesce_seconds.filter(|_| quiesced) {
+        Some(max) => {
+            match tokio::time::timeout(std::time::Duration::from_secs(max as u64), archive_future)
+                .await
+            {
+                Ok(r) => r,
+                Err(_) => Err(anyhow::anyhow!(
+                    "snapshot archive exceeded max_quiesce_seconds ({max}s)"
+                )),
+            }
+        }
+        None => archive_future.await,
+    };
 
-    if paused {
-        if let Err(e) = state.platform.container.unpause_container(&container_name).await {
-            tracing::error!(
+    if paused
+        && let Err(e) = state.platform.container.unpause_container(&container_name).await
+    {
+        tracing::error!(
+            error = %e,
+            container = %container_name,
+            "Failed to unpause container after volume archive — it may be stuck paused"
+        );
+    }
+
+    // Resume MUST run whenever quiesce succeeded — even if pause/archive failed —
+    // or the application is left frozen (e.g. a DB stuck in fsyncLock), which is
+    // worse than a stuck-paused container (a restart clears pause, not a lock).
+    if quiesced
+        && let Some(r) = ceremony.resume.as_ref()
+    {
+        match state
+            .platform
+            .container
+            .exec_in_container(&fqn_string, &r.exec, r.timeout_seconds)
+            .await
+        {
+            Ok((0, _)) => {}
+            Ok((code, out)) => tracing::error!(
+                offering = %fqn_string,
+                exit = code,
+                output = %out,
+                "resume command failed — application may be left quiesced/locked"
+            ),
+            Err(e) => tracing::error!(
+                offering = %fqn_string,
                 error = %e,
-                container = %container_name,
-                "Failed to unpause container after volume archive — it may be stuck paused"
-            );
+                "resume command errored — application may be left quiesced/locked"
+            ),
         }
     }
 

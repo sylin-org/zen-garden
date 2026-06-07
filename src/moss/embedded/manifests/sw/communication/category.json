@@ -1,0 +1,21 @@
+{
+  "$schema": "../category.schema.json",
+  "name": "communication",
+  "description": "Push notifications, chat, and collaboration services",
+  "aliases": [
+    "comms",
+    "notifications",
+    "notify",
+    "chat",
+    "collaboration"
+  ],
+  "tags": [
+    "communication",
+    "notifications",
+    "chat"
+  ],
+  "connection": {
+    "protocol": "http",
+    "uri_template": "http://{host}:{port}"
+  }
+}

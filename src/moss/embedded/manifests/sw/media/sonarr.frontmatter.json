@@ -1,0 +1,16 @@
+{
+  "name": "sonarr",
+  "description": "TV series PVR — automated search, download, and organization of TV shows (GPL-3.0)",
+  "category": "media",
+  "tags": ["arr", "tv", "pvr", "automation"],
+  "port": 8989,
+  "homepage": "https://sonarr.tv",
+  "documentation": "https://wiki.servarr.com/sonarr",
+  "connection": { "protocol": "http", "uri_template": "http://{host}:{port}" },
+  "coordination": "independent",
+  "manageable_env": {
+    "service_name": "sonarr",
+    "restart_required": true,
+    "vars": ["TZ", "PUID", "PGID"]
+  }
+}

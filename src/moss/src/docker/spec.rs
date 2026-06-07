@@ -33,6 +33,12 @@ pub struct ContainerSpec {
     pub config_files: Vec<garden_common::manifests::offering::ConfigFileMapping>,
     /// GPU device requests from manifest `deploy.resources.reservations.devices`.
     pub device_requests: Vec<garden_common::manifests::GpuDeviceRequest>,
+    /// Memory limit in bytes (OFFER-0009) → bollard `HostConfig.memory`.
+    pub memory_bytes: Option<i64>,
+    /// CPU limit in nano-CPUs (OFFER-0009) → bollard `HostConfig.nano_cpus`.
+    pub nano_cpus: Option<i64>,
+    /// Container healthcheck (OFFER-0009) → bollard `ContainerCreateBody.healthcheck`.
+    pub healthcheck: Option<garden_common::manifests::offering::ContainerHealthcheck>,
 }
 
 impl ContainerSpec {

@@ -1,0 +1,28 @@
+# qBittorrent — headless BitTorrent client (qbittorrent-nox) with a Web UI. GPL-2.0.
+# LinuxServer image, multi-arch. libtorrent's disk cache and many active torrents can
+# use significant memory, so it is capped here (OFFER-0009) with a low-memory warning.
+container_name: qbittorrent
+image: lscr.io/linuxserver/qbittorrent:latest
+ports:
+  default: [8080, 8080]
+  torrent: [6881, 6881]
+environment:
+  PUID: "${PUID:-1000}"
+  PGID: "${PGID:-1000}"
+  TZ: "${TZ:-Etc/UTC}"
+  WEBUI_PORT: "8080"
+volumes:
+  - qbittorrent-config:/config
+  - qbittorrent-downloads:/downloads
+healthcheck:
+  test: ["CMD", "curl", "-fsS", "http://localhost:8080"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 30s
+deploy:
+  resources:
+    limits:
+      memory: "2g"
+restart: unless-stopped
+networks: [zen-garden]

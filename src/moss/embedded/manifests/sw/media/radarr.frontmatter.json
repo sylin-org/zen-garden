@@ -1,0 +1,16 @@
+{
+  "name": "radarr",
+  "description": "Movie PVR — automated search, download, and organization of films (GPL-3.0)",
+  "category": "media",
+  "tags": ["arr", "movies", "pvr", "automation"],
+  "port": 7878,
+  "homepage": "https://radarr.video",
+  "documentation": "https://wiki.servarr.com/radarr",
+  "connection": { "protocol": "http", "uri_template": "http://{host}:{port}" },
+  "coordination": "independent",
+  "manageable_env": {
+    "service_name": "radarr",
+    "restart_required": true,
+    "vars": ["TZ", "PUID", "PGID"]
+  }
+}

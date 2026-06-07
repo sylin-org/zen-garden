@@ -1,0 +1,10 @@
+# qBittorrent Compatibility — GPL-2.0 BitTorrent client (libtorrent).
+# Multi-arch (amd64/arm64/armv7); no special CPU features. Memory grows with the
+# disk cache and active torrents, so warn on low RAM (the snippet caps it at 2g).
+compatibility_rules:
+  - name: "low-memory-warning"
+    when:
+      - host.ram.total.mb < 512
+    reason: "qBittorrent's libtorrent disk cache and active torrents can use significant memory"
+    suggestion: "Prefer 512MB+ free; the 2g cap in the manifest bounds worst-case usage"
+    warn_only: true

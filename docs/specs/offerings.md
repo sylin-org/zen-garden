@@ -13,7 +13,7 @@
 4. [Offering Registry Structure](#offering-registry-structure)
 5. [Native vs Agnostic Services](#native-vs-agnostic-services)
 6. [Service Discovery](#service-discovery)
-7. [Template Format](#template-format)
+7. [Manifest Format](#manifest-format)
 8. [Validation Rules](#validation-rules)
 9. [Agnostic Data API](#agnostic-data-api)
 
@@ -21,7 +21,7 @@
 
 ## Overview
 
-Zen Garden uses curated service templates called "offerings" to ensure consistent, validated deployments. Each offering defines both native and optional agnostic sidecar configurations.
+Zen Garden uses curated service templates called "offerings" to ensure consistent, validated deployments. Each offering is a container definition (`<name>.snippet.yaml`) plus optional catalog metadata, compatibility rules, and post-install guidance.
 
 **Key Distinction:**
 - **Protocol** = Wire format for access (mongodb, s3, redis, storage)
@@ -118,27 +118,37 @@ garden-rake offer vector --at anywhere --prefer ssd,high-memory
 
 ## Offering Registry Structure
 
+Offerings are embedded in the Moss binary at build time and overlaid at runtime
+from the filesystem. Each offering is a set of files keyed by name inside a
+category folder:
+
 ```
-/var/lib/zen-garden/manifests/
-├── mongodb.yml
-├── postgresql.yml
-├── redis.yml
-├── sqlserver.yml
-├── mysql.yml
-├── weaviate.yml
-├── qdrant.yml
-├── rabbitmq.yml
-└── custom/
-    └── user-defined-app.yml
+src/moss/embedded/manifests/         # embedded at compile time (rust_embed)
+└── sw/<category>/
+    ├── <name>.snippet.yaml          # required — container definition
+    ├── <name>.frontmatter.json      # catalog metadata
+    ├── <name>.compatibility.yaml    # pre-flight rules
+    └── <name>.guidance.md           # post-install notes
+
+{data_dir}/manifests/                # runtime overlay (e.g. /var/lib/zen-garden/manifests)
+└── sw/<category>/
+    └── <name>.snippet.yaml          # a same-named file overrides the embedded copy
 ```
 
-**Registry loading:**
+The offering's **name and category are derived from the file path**, not from
+the file contents. The filesystem overlay takes precedence over the embedded
+copy on the offering key; fields absent from the filesystem copy (guidance,
+compatibility, connection, description, tags) are back-filled from the embedded
+one.
 
-1. Scan `/var/lib/zen-garden/manifests/` on Moss startup
-2. Validate each template (schema, syntax, injection checks)
-3. Load compatibility rules from `.compatibility.yaml` (if present)
-4. Evaluate compatibility against Stone capabilities
-5. Build in-memory index with tags + compatibility decisions
+**Registry loading (Moss startup):**
+
+1. Load every embedded `sw/<category>/<name>.snippet.yaml` and its companion files
+2. Overlay `{data_dir}/manifests/sw/` — filesystem copies win on the offering key
+3. Validate each template (schema, syntax, injection checks)
+4. Load compatibility rules from `<name>.compatibility.yaml` (if present)
+5. Evaluate compatibility against Stone capabilities
+6. Build the in-memory index with tags + compatibility decisions
 
 **Refresh command:**
 
@@ -146,7 +156,7 @@ garden-rake offer vector --at anywhere --prefer ssd,high-memory
 garden-rake offer refresh --at stone-01
 ```
 
-Rebuilds index when templates modified (add/remove/edit frontmatter).
+Rebuilds the index after manifest files are added, removed, or edited.
 
 ---
 
@@ -242,128 +252,126 @@ Defer to the discovery-layer algorithm in [specs/discovery.md §"Connection Stri
 
 ## Manifest Format
 
-### Example: MongoDB Offering
+An offering is defined by up to four sibling files sharing the `<name>` stem.
+Only `<name>.snippet.yaml` is required; the rest enrich it.
+
+### `<name>.snippet.yaml` — container definition
+
+A Docker-Compose-style service body. Moss parses `image`, `ports` (map of role →
+`[host, container]`; the `default` role is the primary port), `environment`,
+`volumes`, `command`, `config_files`, `tasks` (with an optional `action: recycle`),
+`healthcheck`, `network`, `deploy.resources.reservations.devices` (GPU), and
+`deploy.resources.limits` (`memory`/`cpus`). Other Compose keys
+(`container_name`, `restart`, `networks`) are accepted but ignored.
 
 ```yaml
-# /var/lib/zen-garden/manifests/mongodb.yaml
----
-name: mongodb
-offering: mongodb
-category: data
-tags: [database, document, nosql, transactions]
-description: Document database with ACID transactions and aggregation pipeline
-
-versions:
-  default: "7.0"
-  supported:
-    - "7.0"
-    - "6.0"
-    - "5.0"
-
-# Protocols this offering supports
-protocols:
-  - port: 27017
-    protocol: mongodb
-    default: true
-  - port: 8080
-    protocol: agnostic
-    sidecar: mongodb-agnostic
-
-docker:
-  native:
-    offering_name: mongodb
-    image: mongo
-    image_tag: ${VERSION}
-    ports:
-      - container: 27017
-        host: 27017
-        protocol: tcp
-    volumes:
-      - name: mongodb_data
-        mount: /data/db
-        type: volume
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-secret}
-    health_check:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  agnostic:
-    offering_name: mongodb-agnostic
-    image: sylin/agnostic-mongodb
-    image_tag: ${VERSION}
-    ports:
-      - container: 8080
-        host_start: 8080
-        protocol: tcp
-    environment:
-      BACKEND_SERVICE: mongodb
-      BACKEND_URL: mongodb://mongodb:27017
-      SET_MODE: database
-    depends_on:
-      - mongodb
-
-mdns:
-  - offering: mongodb
-    protocol: native
-    port_source: 27017
-    categories: database,document-database
-    capabilities: []
-  - offering: mongodb-agnostic
-    protocol: agnostic
-    port_source: 8080
-    categories: database,document-database
-    capabilities: [crud, query, filter, bulk, transactions]
+# mongodb.snippet.yaml
+image: mongo:7
+ports:
+  default: [27017, 27017]
+environment:
+  MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
+  MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-secret}
+volumes:
+  - mongo-data:/data/db
+config_files:
+  - path: /etc/mongod.conf
+    format: yaml
+    flag: "--config /etc/mongod.conf"
+    reload: restart
 ```
 
-### Compatibility Rules
+### `<name>.frontmatter.json` — catalog metadata
 
-Optionally, create `mongodb.compatibility.yaml`:
+```json
+{
+  "name": "mongodb",
+  "description": "Document database with ACID transactions (SSPL)",
+  "category": "data",
+  "tags": ["database", "document", "nosql"],
+  "port": 27017,
+  "connection": { "protocol": "mongodb", "uri_template": "mongodb://{host}:{port}" },
+  "coordination": "elected",
+  "manageable_env": { "service_name": "mongodb", "vars": ["MONGO_INITDB_ROOT_USERNAME"] }
+}
+```
+
+- `name` and `category` here are informational — the loader derives both from the file path.
+- `connection.uri_template` uses `{host}` and `{port}` placeholders, filled at connect time.
+- `coordination` is `independent` (default) or `elected` (Primary/Replica election for stateful offerings).
+- `manageable_env` allowlists the env vars Moss may read/write via the `/env` endpoints.
+- `ceremony` declares snapshot quiesce/resume hooks (ORCH-0041); `minimum_memory_gb` synthesizes a warn-only RAM rule.
+
+### `<name>.compatibility.yaml` — pre-flight rules
+
+Pre-flight `when:` predicate rules with optional per-host image `fallback`, plus
+a `post_install_healthcheck` log-scan block. The full grammar and the
+fact/operator reference live in the
+[compatibility guide](../guides/offering-manifest-compatibility.md).
 
 ```yaml
 # mongodb.compatibility.yaml
-rules:
-  - condition:
-      processor: arm64
-    action: override_image
-    value: mongo:7.0
-    reason: "ARM64 requires official ARM image"
-
-  - condition:
-      processor: x86_64
-      feature_missing: avx
-    action: warn
-    message: "MongoDB may perform poorly without AVX instructions"
+compatibility_rules:
+  - name: "missing-avx-feature"
+    when:
+      - host.cpu.features LACKS avx
+    reason: "MongoDB 5.0+ requires AVX CPU support"
+    fallback:
+      image: "mongo:4.4"
+      name: "legacy"
 ```
+
+### `<name>.guidance.md` — post-install notes
+
+Markdown shown on the stone portrait page, with a `version`/`trigger`
+frontmatter block and `{{template}}` variables. See
+[guidance-authoring](../guides/guidance-authoring.md).
 
 ---
 
 ## Validation Rules
 
-Templates must pass validation before loading:
+`garden-rake manifest validate <path>` (and Moss, before a test deployment) runs
+the rules in `garden_common::manifests::validation`. Each finding carries a code
+and a severity: an **Error** blocks the offering from loading; **Warning** and
+**Info** are advisory.
 
-1. **Required fields:** `name`, `offering`, `docker.native` sections present
-2. **Image tags:** Match regex `^[a-z0-9-_./]+:[a-z0-9-_.]+$` (no shell injection)
-3. **Port numbers:** Range 1-65535, no duplicates
-4. **Environment variables:** Only `${VAR}` or `${VAR:-default}` syntax
-5. **Volume names:** Match regex `^[a-z0-9-]+$`
-6. **No shell commands:** No arbitrary command execution in config
+**Snippet (`<name>.snippet.yaml`):**
 
-**Validation errors:**
+| Code | Severity | Rule |
+|------|----------|------|
+| `YAML001` | Error | File is not valid YAML |
+| `SCHEMA001` | Error | Missing `image` field |
+| `SCHEMA002` | Error | `image` is empty |
+| `SCHEMA003` | Info | No `ports` — offering is internal-only |
+| `SEC001` | Error | `privileged: true` |
+| `SEC002` | Error | `network_mode: host` |
+| `SEC003` | Error | Volume mounts a sensitive host path (`/`, `/etc`, `/proc`, `/sys`, `/var/run/docker.sock`, `/dev`) |
+| `SEC004` | Error | Port `0` |
+| `SEC005` | Warning | Duplicate host port |
 
-```
-✗ Template validation failed: mongodb.yml
+**Frontmatter (`<name>.frontmatter.json`):**
 
-Errors:
-  - Invalid port: 70000 (must be 1-65535)
-  - Invalid volume name: "mongo-data!" (only lowercase letters, numbers, hyphens)
-  - Unsupported environment variable syntax: $(whoami)
+| Code | Severity | Rule |
+|------|----------|------|
+| `FM001` | Error | File is not valid JSON |
+| `FM002` | Error | Missing `name` field |
+| `FM003` | Warning | Missing `description` |
+| `FM004` | Error | `port` outside 1–65535 |
+| `FM005` | Warning | Unknown `category` (alias-aware; skipped when the registry is empty) |
+| `FM006` | Warning | Frontmatter `port` ≠ snippet `ports.default` host port |
+| `FM007` | Warning | Unknown top-level frontmatter key |
 
-Skipping mongodb.yml
-```
+**Compatibility (`<name>.compatibility.yaml`):**
+
+| Code | Severity | Rule |
+|------|----------|------|
+| `COMPAT001` | Error | File is not valid YAML |
+| `COMPAT003` | Error | A `compatibility_rules[].when` predicate fails to parse |
+
+A directory containing no manifest files yields `DIR001` (Warning). Any Error
+finding blocks the offering; the daemon logs `Skipped N invalid manifest` and
+continues loading the rest.
 
 ---
 

@@ -29,6 +29,17 @@ impl std::fmt::Display for TaskCategory {
     }
 }
 
+/// What a scheduled task does when it fires.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskAction {
+    /// Run `command` inside the container (default).
+    #[default]
+    Exec,
+    /// Restart the container at the Moss level. `command` is ignored.
+    Recycle,
+}
+
 /// Task definition in a manifest
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskDefinition {
@@ -38,8 +49,13 @@ pub struct TaskDefinition {
     /// Cron schedule expression (e.g., "0 3 * * *" for daily at 3 AM)
     pub schedule: String,
 
-    /// Command to execute inside the container
+    /// Command to execute inside the container (ignored for `recycle` actions)
+    #[serde(default)]
     pub command: Vec<String>,
+
+    /// What the task does when it fires (default: exec)
+    #[serde(default)]
+    pub action: TaskAction,
 
     /// Task category (default: maintenance)
     #[serde(default)]
@@ -116,4 +132,47 @@ pub struct TaskResult {
     /// Error message (if failed)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_action_defaults_to_exec() {
+        assert_eq!(TaskAction::default(), TaskAction::Exec);
+    }
+
+    #[test]
+    fn exec_task_deserializes_with_command() {
+        let yaml = "description: update gravity\nschedule: \"0 3 * * 0\"\ncommand: [pihole, -g]\n";
+        let def: TaskDefinition = serde_yml::from_str(yaml).unwrap();
+        assert_eq!(def.action, TaskAction::Exec);
+        assert_eq!(def.command, vec!["pihole".to_string(), "-g".to_string()]);
+    }
+
+    #[test]
+    fn recycle_task_deserializes_without_command() {
+        let yaml = "description: nightly recycle\nschedule: \"0 4 * * *\"\naction: recycle\n";
+        let def: TaskDefinition = serde_yml::from_str(yaml).unwrap();
+        assert_eq!(def.action, TaskAction::Recycle);
+        assert!(def.command.is_empty());
+        assert!(def.enabled);
+        assert_eq!(def.timeout_secs, 300);
+    }
+
+    #[test]
+    fn recycle_action_serializes_lowercase() {
+        let def = TaskDefinition {
+            description: "recycle".to_string(),
+            schedule: "0 4 * * *".to_string(),
+            command: vec![],
+            action: TaskAction::Recycle,
+            category: TaskCategory::Maintenance,
+            enabled: true,
+            timeout_secs: 300,
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains("\"action\":\"recycle\""), "got: {json}");
+    }
 }

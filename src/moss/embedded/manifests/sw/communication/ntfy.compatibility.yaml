@@ -1,0 +1,9 @@
+# ntfy Compatibility — Apache-2.0 / GPL-2.0. Multi-arch (amd64/arm64/armv7).
+# Tiny single Go binary (~30MB); no special CPU features.
+compatibility_rules:
+  - name: "low-memory-warning"
+    when:
+      - host.ram.total.mb < 128
+    reason: "ntfy is tiny (~30MB) but needs a little headroom"
+    suggestion: "Runs comfortably on the smallest stones"
+    warn_only: true

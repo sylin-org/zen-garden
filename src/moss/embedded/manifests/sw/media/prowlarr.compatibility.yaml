@@ -1,0 +1,9 @@
+# Prowlarr Compatibility — GPL-3.0 indexer manager (.NET, embedded SQLite).
+# Multi-arch (amd64/arm64/armv7); no special CPU features. Light footprint.
+compatibility_rules:
+  - name: "low-memory-warning"
+    when:
+      - host.ram.total.mb < 256
+    reason: "Prowlarr is light but benefits from 256MB+ free"
+    suggestion: "Fine on most stones; add RAM if you run many indexers"
+    warn_only: true

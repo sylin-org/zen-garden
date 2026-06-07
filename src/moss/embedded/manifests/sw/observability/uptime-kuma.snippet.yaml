@@ -1,0 +1,15 @@
+# Uptime Kuma — self-hosted uptime/status monitor. MIT. Multi-arch (amd64/arm64/armv7).
+# State (SQLite DB, settings, the admin account, monitor history) lives in /app/data.
+# The image declares NO VOLUME, so this mount is mandatory — without it every
+# recreate wipes the database. Externalized to a host volume for backup.
+container_name: uptime-kuma
+image: louislam/uptime-kuma:2
+ports:
+  default: [3001, 3001]
+volumes:
+  - uptime-kuma-data:/app/data
+# No healthcheck block on purpose: the image ships its own HEALTHCHECK
+# (extra/healthcheck against GET / expecting a 302, with a 180s start period).
+# A hand-written 200-probe would wrongly fail on that redirect, so we inherit it.
+restart: unless-stopped
+networks: [zen-garden]

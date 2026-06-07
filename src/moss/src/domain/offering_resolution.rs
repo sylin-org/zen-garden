@@ -189,6 +189,10 @@ pub fn to_container_spec(resolved: &ResolvedOffering) -> ContainerSpec {
         volumes: resolved.volumes.clone(),
         config_files: vec![],
         device_requests: vec![],
+        // Image-direct offerings have no manifest, hence no resource limits or healthcheck.
+        memory_bytes: None,
+        nano_cpus: None,
+        healthcheck: None,
     }
 }
 
@@ -311,6 +315,9 @@ mod tests {
             network: Default::default(),
             coordination: Default::default(),
             device_requests: vec![],
+            resource_limits: Default::default(),
+            healthcheck: None,
+            ceremony: Default::default(),
         }];
 
         // Same image family, different tag

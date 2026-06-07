@@ -689,13 +689,25 @@ pub async fn test_manifest_v1(
 > {
     use garden_common::manifests::validation;
 
-    // Validate snippet content
-    let findings = validation::validate_snippet(&payload.snippet_yaml, "snippet.yaml");
+    // Validate all manifest files (COMPAT-0003): snippet, frontmatter,
+    // compatibility predicates, and cross-file port consistency. Errors block
+    // the test deploy; warnings/info are surfaced in the success response.
+    let mut findings = validation::validate_snippet(&payload.snippet_yaml, "snippet.yaml");
+    if let Some(ref fm) = payload.frontmatter_json {
+        findings.extend(validation::validate_frontmatter(fm, "frontmatter.json"));
+        findings.extend(validation::validate_ports_match(&payload.snippet_yaml, fm));
+    }
+    if let Some(ref compat) = payload.compatibility_yaml {
+        findings.extend(validation::validate_compatibility(
+            compat,
+            "compatibility.yaml",
+        ));
+    }
+
     let errors: Vec<_> = findings
         .iter()
         .filter(|f| f.severity == validation::Severity::Error)
         .collect();
-
     if !errors.is_empty() {
         let error_msgs: Vec<String> = errors
             .iter()
@@ -720,28 +732,14 @@ pub async fn test_manifest_v1(
         ));
     }
 
-    // Validate frontmatter if provided
-    if let Some(ref fm) = payload.frontmatter_json {
-        let fm_findings = validation::validate_frontmatter(fm, "frontmatter.json");
-        let fm_errors: Vec<_> = fm_findings
+    // Non-error findings (warnings/info) are surfaced to the caller.
+    let warnings_json = serde_json::to_value(
+        findings
             .iter()
-            .filter(|f| f.severity == validation::Severity::Error)
-            .collect();
-        if !fm_errors.is_empty() {
-            let error_msgs: Vec<String> = fm_errors
-                .iter()
-                .map(|e| format!("[{}] {}", e.code, e.message))
-                .collect();
-            return Err(bad_request(
-                "MANIFEST_VALIDATION_FAILED",
-                format!(
-                    "Frontmatter has {} error(s): {}",
-                    fm_errors.len(),
-                    error_msgs.join("; ")
-                ),
-            ));
-        }
-    }
+            .filter(|f| f.severity != validation::Severity::Error)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_default();
 
     // Extract image reference from snippet YAML to deploy via image-direct
     let offering_name = payload.name.trim().to_string();
@@ -792,6 +790,7 @@ pub async fn test_manifest_v1(
                 "status": resp.data.status,
                 "service": resp.data.service,
                 "message": resp.data.message,
+                "warnings": warnings_json,
             })),
         )),
         Err((status, err)) => Err((status, err)),

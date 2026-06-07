@@ -2,7 +2,7 @@
 audience: [developer, contributor]
 doc_type: guide
 status: current
-last_verified: 2026-01-31
+last_verified: 2026-05-29
 canonical: true
 ---
 
@@ -43,102 +43,151 @@ manifests/
 
 ### Schema
 
+A compatibility file has two top-level sections, both optional:
+
 ```yaml
-version: "1"
+compatibility_rules:          # pre-flight checks, evaluated at plant time
+  - name: "rule-identifier"   # required: stable identifier (appears in logs)
+    when:                     # required: predicate-DSL expressions; ALL must match (AND)
+      - host.architecture IN (aarch64,arm64,armv7l,armv6l)
+    reason: "Human-readable explanation"        # required
+    suggestion: "Actionable recommendation"     # optional
+    warn_only: false          # optional (default false): true = warn, false = block
+    continue: false           # optional (default false): with warn_only, keep evaluating later rules
+    fallback:                 # optional: deploy a different image instead of failing
+      image: "alt/image:tag"
+      name: "legacy"          # optional: instance suffix → FQN becomes <offering>::legacy
 
-compatibility_rules:
-  - name: "rule-identifier"
-    condition:
-      # OS inclusion (match if OS is in list)
-      os_family: ["linux", "macos"]
-
-      # OS exclusion (match if OS is NOT in list)
-      os_family_not: ["linux", "macos"]
-
-      # Other conditions (can be combined)
-      architectures: ["x86_64", "aarch64"]
-      memory_mb_less_than: 256
-      cpu_features_missing: ["avx"]
-
-    reason: "Human-readable explanation"
-    suggestion: "Actionable recommendation"
-    warn_only: false  # Optional: true = warning only, false = block
+post_install_healthcheck:     # post-deploy log scan (see "Post-Install Healthcheck" below)
+  enabled: true
+  scan_log_lines: 100
+  timeout_seconds: 30
+  patterns:
+    - pattern: "Cannot allocate memory|OOM"   # regex matched against container logs
+      reason: "Insufficient memory"
+      suggestion: "Increase RAM allocation"
+      fallback: { image: "alt/image:tag", name: "legacy" }   # optional
 ```
 
-### OS Family Values
+Each rule is `deny_unknown_fields` — an unrecognized key (including the legacy `condition:` block) is a hard parse error and the whole offering is skipped. All matching logic lives in `when:` (the predicate DSL), never in named condition keys. A top-level `version: "1"` is optional and ignored by the loader. `garden-rake manifest validate` parses every `when:` expression, so a malformed predicate is reported (`COMPAT003`) at authoring time rather than silently dropped at plant.
 
-| Value | Platform |
-|-------|----------|
-| `linux` | Linux (all distributions) |
-| `macos` | macOS / Darwin |
-| `windows` | Windows |
+### The `when:` predicate DSL
 
-### Example: Block Windows Deployment
+Each `when:` entry is one expression of the form `fact OPERATOR value`. Entries within a rule are ANDed; express OR across facts by writing separate rules. (Grammar defined in [COMPAT-0002](../decisions/COMPAT-0002-predicate-dsl.md).)
+
+**Facts** (the `host.*` namespace) and the operators each type accepts:
+
+| Fact | Type | Operators |
+|------|------|-----------|
+| `host.architecture` | scalar | `IS`, `IS NOT`, `IN`, `NOT IN` |
+| `host.os.family` | scalar | `IS`, `IS NOT`, `IN`, `NOT IN` |
+| `host.cpu.model` | scalar | `IS`, `IS NOT`, `IN`, `NOT IN` |
+| `host.cpu.pattern` | set | `HAS`, `HAS ALL`, `LACKS` |
+| `host.cpu.features` | set | `HAS`, `HAS ALL`, `LACKS` |
+| `host.ai.runtime` | set | `HAS`, `HAS ALL`, `LACKS` |
+| `host.ram.total.mb` | numeric | `>=`, `>`, `<`, `<=` |
+| `host.gpu.count` | numeric | `>=`, `>`, `<`, `<=` |
+| `host.gpu.vram.total.mb` / `host.gpu.vram.total.gb` | numeric | `>=`, `>`, `<`, `<=` |
+| `host.gpu` / `host.npu` | boolean | `IS present`, `IS NOT present` |
+
+**Value syntax by type:**
+
+- Scalar — `host.architecture IS armv6l`, `host.os.family NOT IN (linux,macos)`
+- Set — `host.cpu.features LACKS avx`, `host.cpu.pattern HAS j4105,j3455` (comma = OR), `host.ai.runtime HAS cuda AND rocm` (all-of)
+- Numeric — `host.ram.total.mb < 2048`
+- Boolean — `host.gpu IS present`
+
+Operators and facts are case-insensitive; values are lowercased on parse. Mixing `AND` and `OR` in one expression is rejected — split into separate `when:` entries. Using the wrong operator for a fact's type (e.g. `host.ram.total.mb HAS 4096`) is a parse error. **OS family values:** `linux`, `macos`, `windows`.
+
+### How rules are evaluated
+
+Rules are checked in order; the **first matching rule wins** and decides the outcome:
+
+| Rule shape | Outcome when it matches |
+|------------|-------------------------|
+| no `fallback`, no `warn_only` | **Fail** — deployment is blocked with `reason` |
+| `fallback: {image, name}` | **Fallback** — image swapped to `fallback.image`, GPU device requests cleared, FQN becomes `<offering>::<name>` |
+| `warn_only: true` | **Warning** — deploys anyway; `continue: true` keeps evaluating later rules |
+
+If no rule matches, the result is **Pass**. A `when:` expression that fails to parse is logged and that single rule is skipped.
+
+### Example: block by OS
 
 ```yaml
 # pihole.compatibility.yaml
-version: "1"
-
 compatibility_rules:
   - name: "windows-not-supported"
-    condition:
-      os_family_not: ["linux", "macos"]
+    when:
+      - host.os.family NOT IN (linux,macos)
     reason: "Pi-hole requires Linux or macOS for proper DNS port binding"
     suggestion: "Deploy Pi-hole on a Linux Stone (recommended) or use WSL2 with proper networking"
 ```
 
-This rule **triggers** when the OS is NOT linux or macos (i.e., triggers on Windows).
-
-### Example: Require Specific OS
+### Example: deny an unsupported architecture
 
 ```yaml
-# some-linux-only-service.compatibility.yaml
-version: "1"
-
+# sqlserver.compatibility.yaml — the image is amd64-only
 compatibility_rules:
-  - name: "linux-only"
-    condition:
-      os_family: ["linux"]
-    reason: "This service requires Linux kernel features"
-    suggestion: "Deploy on a Linux Stone"
+  - name: "non-x86_64-unsupported"
+    when:
+      - host.architecture IN (aarch64,arm64,armv7l,armv6l)
+    reason: "SQL Server Linux container images are supported only on x86_64 (amd64)"
+    suggestion: "Use PostgreSQL or MongoDB on ARM, or move to x86_64 hardware"
 ```
 
-Wait - this is inverted! The `os_family` condition **matches** when the OS IS in the list. So this rule would trigger ON linux, which is wrong.
-
-For "require linux", use `os_family_not`:
+### Example: RAM floor (hard) plus a soft warning
 
 ```yaml
 compatibility_rules:
-  - name: "requires-linux"
-    condition:
-      os_family_not: ["linux"]
-    reason: "This service requires Linux"
-    suggestion: "Deploy on a Linux Stone"
-```
-
-### Condition Logic
-
-- **`os_family: [...]`** - Rule triggers if current OS IS in the list
-- **`os_family_not: [...]`** - Rule triggers if current OS is NOT in the list
-- Multiple conditions are ANDed together
-- Rules are evaluated in order; first match wins
-
-### Combined Conditions
-
-```yaml
-compatibility_rules:
-  - name: "arm32v6-not-supported"
-    condition:
-      architectures: ["armv6l"]
-    reason: "Docker image requires ARMv7 or newer"
-    suggestion: "Use Raspberry Pi 2 or newer"
-
   - name: "insufficient-memory"
-    condition:
-      memory_mb_less_than: 128
+    when:
+      - host.ram.total.mb < 128
     reason: "Service requires at least 128MB RAM"
     suggestion: "Increase stone memory allocation"
+
+  - name: "low-memory-warning"
+    when:
+      - host.ram.total.mb < 256
+    reason: "Performs better with 256MB+ RAM"
+    suggestion: "Consider increasing RAM"
+    warn_only: true
 ```
+
+### Fallback images (per-host image swap)
+
+Rather than failing on incompatible hardware, a rule can deploy a different image. When the rule matches, Moss rewrites the service image to `fallback.image`, clears any GPU device requests, and — if `name` is given — deploys under the instance FQN `<offering>::<name>`:
+
+```yaml
+# mongodb.compatibility.yaml — fall back to 4.4 on CPUs without AVX
+compatibility_rules:
+  - name: "missing-avx-feature"
+    when:
+      - host.cpu.features LACKS avx
+    reason: "MongoDB 5.0+ requires AVX CPU support"
+    fallback:
+      image: "mongo:4.4"
+      name: "legacy"
+```
+
+### Post-Install Healthcheck
+
+The `post_install_healthcheck` block declares regex patterns to match against the container's logs after deployment — intended to catch runtime failures the pre-flight `when:` rules cannot predict (e.g. a CPU that advertises a feature but then crashes with "Illegal instruction"), optionally triggering the same `fallback` image swap:
+
+```yaml
+post_install_healthcheck:
+  enabled: true
+  scan_log_lines: 100
+  timeout_seconds: 30
+  patterns:
+    - pattern: "Illegal instruction"
+      reason: "CPU instruction set incompatibility"
+      fallback: { image: "mongo:4.2", name: "legacy42" }
+    - pattern: "Cannot allocate memory|OOM"
+      reason: "Insufficient memory"
+      suggestion: "Increase stone RAM or reduce service count"
+```
+
+> **Enforcement (COMPAT-0003):** after a deploy, Moss scans the container's recent logs against these patterns (off the hot path, so healthy deploys aren't delayed). A matching pattern with a `fallback` recreates the container on the fallback image — volumes preserved, at most once per deploy; a matching pattern without a fallback emits a warning. Pre-flight `compatibility_rules` are still evaluated first, at plant time.
 
 ---
 
@@ -350,8 +399,8 @@ manifests/
 
 ### Rule Not Triggering
 
-1. Check condition logic - `os_family` matches ON the list, `os_family_not` matches when NOT on list
-2. Verify YAML syntax - conditions must be valid
+1. Check the predicate - a `when:` entry only triggers when it evaluates true (e.g. `host.os.family NOT IN (linux,macos)` triggers on Windows). A reference to a fact the stone could not detect evaluates false.
+2. Verify the operator matches the fact type (scalar/set/numeric/boolean) - a type mismatch is a parse error and skips the rule
 3. Check rule order - first matching rule wins
 
 ### Port Still Conflicting
@@ -491,5 +540,6 @@ docker exec -it {{name}} pihole -a -p
 ## See Also
 
 - [COMPAT-0001: Compatibility Rules System](../decisions/COMPAT-0001-compatibility.md)
+- [COMPAT-0002: Compatibility Predicate DSL](../decisions/COMPAT-0002-predicate-dsl.md)
 - [Service Catalog](../reference/offerings.md)
-- [manifests/README.md](../../manifests/README.md)
+- [manifests/README.md](../../src/moss/embedded/manifests/README.md)

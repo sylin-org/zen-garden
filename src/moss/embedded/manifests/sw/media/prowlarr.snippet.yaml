@@ -1,0 +1,21 @@
+# Prowlarr — indexer manager/proxy for the *arr stack; the primary FlareSolverr consumer.
+# GPL-3.0. LinuxServer image, multi-arch (amd64/arm64/armv7). Embedded SQLite — single container.
+container_name: prowlarr
+image: lscr.io/linuxserver/prowlarr:latest
+ports:
+  default: [9696, 9696]
+environment:
+  PUID: "${PUID:-1000}"
+  PGID: "${PGID:-1000}"
+  TZ: "${TZ:-Etc/UTC}"
+volumes:
+  - prowlarr-config:/config
+# /ping is unauthenticated and returns 200 once the app has initialized.
+healthcheck:
+  test: ["CMD", "curl", "-fsS", "http://localhost:9696/ping"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 60s
+restart: unless-stopped
+networks: [zen-garden]

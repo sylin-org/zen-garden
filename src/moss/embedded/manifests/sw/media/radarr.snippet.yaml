@@ -1,0 +1,20 @@
+# Radarr — movie PVR: searches indexers (via Prowlarr), grabs via a download
+# client, renames and organizes. GPL-3.0. LinuxServer image, multi-arch. Embedded SQLite.
+container_name: radarr
+image: lscr.io/linuxserver/radarr:latest
+ports:
+  default: [7878, 7878]
+environment:
+  PUID: "${PUID:-1000}"
+  PGID: "${PGID:-1000}"
+  TZ: "${TZ:-Etc/UTC}"
+volumes:
+  - radarr-config:/config
+healthcheck:
+  test: ["CMD", "curl", "-fsS", "http://localhost:7878/ping"]
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 60s
+restart: unless-stopped
+networks: [zen-garden]

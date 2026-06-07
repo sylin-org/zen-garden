@@ -309,7 +309,7 @@ impl MossConfig {
     ///
     /// Returns None if file not found or contains errors (falls back to defaults)
     pub fn load() -> Option<Self> {
-        let config_path = std::path::PathBuf::from(garden_common::constants::CONFIG_DIR)
+        let config_path = std::path::PathBuf::from(garden_common::constants::paths::config_dir())
             .join(garden_common::constants::MOSS_CONFIG);
 
         match std::fs::read_to_string(&config_path) {
@@ -381,7 +381,7 @@ impl MossConfig {
     ///
     /// Returns Ok(()) on success, Err on write failure
     pub fn save(&self) -> Result<(), std::io::Error> {
-        let config_dir = std::path::PathBuf::from(garden_common::constants::CONFIG_DIR);
+        let config_dir = std::path::PathBuf::from(garden_common::constants::paths::config_dir());
         std::fs::create_dir_all(&config_dir)?;
 
         let config_path = config_dir.join(garden_common::constants::MOSS_CONFIG);

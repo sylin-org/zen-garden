@@ -340,6 +340,23 @@ impl Catalog {
                     })?;
             let compatibility = compile_compatibility(&mut template, caps);
 
+            // Validate the ceremony policy at compile time (ORCH-0041): a
+            // misconfigured quiesceable policy (missing quiesce/resume) is
+            // downgraded to the safe pause-only default rather than silently
+            // snapshotting a live database.
+            let ceremony = entry.ceremony.clone().unwrap_or_default();
+            let ceremony = match ceremony.validate() {
+                Ok(()) => ceremony,
+                Err(e) => {
+                    tracing::warn!(
+                        offering = %entry.name,
+                        error = %e,
+                        "invalid ceremony policy; using safe pause-only default"
+                    );
+                    garden_common::manifests::CeremonyPolicy::default()
+                }
+            };
+
             offerings.push(CompiledOffering {
                 name: entry.name.clone(),
                 category: entry.category.clone(),
@@ -356,6 +373,9 @@ impl Catalog {
                 network: template.network,
                 coordination: entry.coordination.clone(),
                 device_requests: template.device_requests,
+                resource_limits: template.resource_limits,
+                healthcheck: template.healthcheck,
+                ceremony,
             });
         }
 

@@ -4,6 +4,8 @@ use garden_common::types::{PortConflictHandler, PortRemediation};
 use std::collections::HashMap;
 use std::net::TcpListener;
 
+use super::port_ledger;
+
 /// Check if a TCP port is available for binding
 fn is_port_available(port: u16) -> bool {
     TcpListener::bind(("0.0.0.0", port)).is_ok()
@@ -42,9 +44,16 @@ fn get_default_remediation(port: u16) -> Option<&'static PortRemediation> {
     port_entry.default.as_ref()
 }
 
-/// Find the next available port in a given range
-fn find_available_port_in_range(start: u16, end: u16) -> Option<u16> {
-    (start..=end).find(|&port| is_port_available(port))
+/// Find the next available port in a given range.
+///
+/// "Available" means not in `occupied` (Docker-claimed or sibling-assigned) AND
+/// TCP-bindable — the cheap map check runs first to avoid a needless bind.
+fn find_available_port_in_range(
+    start: u16,
+    end: u16,
+    occupied: &HashMap<u16, String>,
+) -> Option<u16> {
+    (start..=end).find(|&port| !occupied.contains_key(&port) && is_port_available(port))
 }
 
 /// Run a shell command and return success status
@@ -169,11 +178,12 @@ async fn remediate_port_with_handler(port: u16, handler: &PortConflictHandler) -
 /// Resolve a port conflict - either remediate or remap
 ///
 /// Returns the actual host port to use (may be different if remapped).
-/// `docker_occupied` maps host ports already claimed by Docker containers
-/// (including stopped ones) to avoid silent conflicts on restart.
+/// `occupied` maps host ports already claimed by Docker containers (including
+/// stopped ones) plus any ports assigned to sibling ports in the same offering,
+/// so neither the catalog-remap range nor the increment fallback can pick one.
 async fn resolve_port_conflict(
     requested_port: u16,
-    docker_occupied: &HashMap<u16, String>,
+    occupied: &HashMap<u16, String>,
 ) -> Result<u16> {
     // First, check for platform-specific handler
     if let Some(handler) = get_conflict_handler(requested_port) {
@@ -196,7 +206,7 @@ async fn resolve_port_conflict(
                     "Port in use, finding available port in remap range"
                 );
 
-                match find_available_port_in_range(*range_start, *range_end) {
+                match find_available_port_in_range(*range_start, *range_end, occupied) {
                     Some(new_port) => {
                         tracing::info!(
                             original_port = requested_port,
@@ -235,7 +245,7 @@ async fn resolve_port_conflict(
     // No catalog entry -- universal increment-by-one fallback.
     // Try requested_port+1 through +100, checking both TCP bind and Docker occupancy.
     for candidate in (requested_port + 1)..=(requested_port.saturating_add(100)) {
-        if is_port_available(candidate) && !docker_occupied.contains_key(&candidate) {
+        if !occupied.contains_key(&candidate) && is_port_available(candidate) {
             tracing::info!(
                 original_port = requested_port,
                 remapped_port = candidate,
@@ -253,36 +263,91 @@ async fn resolve_port_conflict(
     );
 }
 
-/// Pre-flight check for port availability with automatic remediation/remapping
+/// Pre-flight check for port availability with persistence and automatic
+/// remediation/remapping.
 ///
-/// Uses the well-known ports catalog to determine how to handle conflicts:
-/// - For ports with auto-remediation (e.g., DNS port 53), runs commands to free the port
-/// - For ports with remap configuration, finds the next available port in range
-/// - For uncatalogued ports, increments by one until a vacant port is found
-/// - For manual or fail types, returns an actionable error message
+/// Resolution order, per requested port:
+/// 1. **Persisted** — reuse the host port previously allocated to this offering's
+///    container port (from the offering-ports ledger) if it is still free, so the
+///    bound port stays stable across redeploys and restarts.
+/// 2. **Manifest port** — use it if free.
+/// 3. **Remediate** via the well-known-ports catalog: auto-free (e.g. DNS 53),
+///    remap into the catalog range, or an actionable manual/fail error; uncatalogued
+///    ports increment by one (+1..+100) until vacant.
 ///
-/// `docker_occupied` maps host ports claimed by any Docker container (including
-/// stopped ones) so we avoid conflicts that TCP bind alone would miss.
+/// "Free" means TCP-bindable AND not claimed by any Docker container (including
+/// stopped ones, via `docker_occupied`) AND not already assigned to a sibling port
+/// in this same call. The whole load → resolve → save cycle runs under a global
+/// lock so concurrent deploys cannot race onto the same host port.
 ///
-/// Returns the resolved port mappings - (actual_host_port, container_port).
-/// The actual_host_port may differ from the requested port if it was remapped.
+/// Returns the resolved (actual_host_port, container_port) pairs; the actual port
+/// may differ from the manifest default if it was reused or remapped.
 pub async fn check_and_remediate_ports(
+    offering: &str,
     ports: &[(u16, u16)],
     docker_occupied: &HashMap<u16, String>,
 ) -> Result<Vec<(u16, u16)>> {
-    let mut resolved_ports = Vec::with_capacity(ports.len());
+    let _guard = port_ledger::ALLOCATION_LOCK.lock().await;
 
-    for (host_port, container_port) in ports {
-        if is_port_available(*host_port) && !docker_occupied.contains_key(host_port) {
-            // Port is available (both TCP-bindable and not claimed by a stopped container)
-            resolved_ports.push((*host_port, *container_port));
+    let mut ledger = port_ledger::OfferingPortLedger::load().await;
+    let prior = ledger.prior(offering).cloned().unwrap_or_default();
+
+    // Ports occupied for this resolution pass: Docker-claimed host ports plus any
+    // port we assign to a sibling port in this same offering (prevents two ports
+    // of one offering colliding on the same host port).
+    let mut occupied = docker_occupied.clone();
+
+    let mut resolved_ports = Vec::with_capacity(ports.len());
+    let mut allocation: HashMap<u16, u16> = HashMap::with_capacity(ports.len());
+
+    for (manifest_host, container_port) in ports {
+        let actual_host_port = if let Some(&persisted) = prior.get(container_port)
+            && !occupied.contains_key(&persisted)
+            && is_port_available(persisted)
+        {
+            // Persisted allocation is still free — keep the published port stable.
+            persisted
+        } else if !occupied.contains_key(manifest_host) && is_port_available(*manifest_host) {
+            *manifest_host
         } else {
-            // Port conflict - attempt resolution
-            tracing::info!(port = host_port, "Port is in use, attempting resolution");
-            let actual_host_port = resolve_port_conflict(*host_port, docker_occupied).await?;
-            resolved_ports.push((actual_host_port, *container_port));
+            tracing::info!(
+                offering = %offering,
+                port = manifest_host,
+                "Port is in use, attempting resolution"
+            );
+            // Resolve from the manifest port so the catalog remap range applies.
+            resolve_port_conflict(*manifest_host, &occupied).await?
+        };
+
+        occupied.insert(actual_host_port, offering.to_string());
+        allocation.insert(*container_port, actual_host_port);
+        resolved_ports.push((actual_host_port, *container_port));
+    }
+
+    ledger.set(offering, allocation);
+    ledger.save().await;
+
+    Ok(resolved_ports)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_available_skips_occupied_ports() {
+        // A port present in `occupied` must never be chosen, even if bindable.
+        let occupied = HashMap::from([(54000u16, "other".to_string())]);
+        let chosen = find_available_port_in_range(54000, 54010, &occupied);
+        assert_ne!(chosen, Some(54000));
+        if let Some(p) = chosen {
+            assert!(!occupied.contains_key(&p), "returned an occupied port: {p}");
         }
     }
 
-    Ok(resolved_ports)
+    #[test]
+    fn find_available_empty_range_is_none() {
+        // start > end is an empty inclusive range.
+        assert_eq!(find_available_port_in_range(60001, 60000, &HashMap::new()), None);
+    }
 }

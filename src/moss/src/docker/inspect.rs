@@ -535,6 +535,10 @@ impl ContainerRuntime {
             // config files are handled separately (file write + restart).
             config_files: vec![],
             device_requests: vec![],
+            // Not introspected from Docker; this spec is only used for diff comparison.
+            memory_bytes: None,
+            nano_cpus: None,
+            healthcheck: None,
         })
     }
 

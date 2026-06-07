@@ -42,12 +42,9 @@ pub async fn get_resources(
             .unwrap_or_else(create_fallback_resources)
     };
 
-    // Convert primary storage mount to DiskResources for backward compatibility
+    // Convert the data partition to DiskResources for backward compatibility
     let disk = resources
-        .storage
-        .iter()
-        .find(|s| s.mount_point == "/" || s.mount_point == "C:\\\\")
-        .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb))
+        .data_partition()
         .map(|s| DiskResources {
             total_bytes: s.total_gb * 1024 * 1024 * 1024,
             used_bytes: s.used_gb * 1024 * 1024 * 1024,

@@ -33,10 +33,7 @@ pub async fn run_load_monitor_task(state: Moss, token: tokio_util::sync::Cancell
             let resources = state.current.resources.system.read().await;
             if let Some(ref res) = *resources {
                 let primary_disk = res
-                    .storage
-                    .iter()
-                    .find(|s| s.mount_point == "/" || s.mount_point == "C:\\\\")
-                    .or_else(|| res.storage.iter().max_by_key(|s| s.total_gb))
+                    .data_partition()
                     .map(|s| s.used_percent as f64)
                     .unwrap_or(0.0);
                 (

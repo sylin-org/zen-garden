@@ -167,12 +167,9 @@ pub(crate) async fn generate_snapshot(state: &Moss) -> PresenceSnapshot {
     let (cpu_percent, memory_percent, disk_percent) = {
         let resources = state.current.resources.system.read().await;
         if let Some(ref res) = *resources {
-            // Use primary mount point (root or largest disk) for summary disk %
+            // Summary disk % from the data partition (where offerings + images live).
             let primary_disk_percent = res
-                .storage
-                .iter()
-                .find(|s| s.mount_point == "/" || s.mount_point == "C:\\\\")
-                .or_else(|| res.storage.iter().max_by_key(|s| s.total_gb))
+                .data_partition()
                 .map(|s| s.used_percent as f64)
                 .unwrap_or(0.0);
 

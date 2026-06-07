@@ -450,12 +450,8 @@ pub async fn get_portrait_data(
         };
 
         if let Some(ref res) = *resources {
-            // Find primary disk (root mount or first available)
-            let primary_disk = res
-                .storage
-                .iter()
-                .find(|d| d.mount_point == "/" || d.mount_point == "C:\\")
-                .or_else(|| res.storage.first());
+            // The data partition (offering data + container images live there).
+            let primary_disk = res.data_partition();
 
             let disk = if let Some(d) = primary_disk {
                 FoundationDisk {

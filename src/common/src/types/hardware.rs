@@ -60,6 +60,34 @@ pub struct StoneResources {
     pub cpu_temperature: Option<f32>,
 }
 
+impl StoneResources {
+    /// The storage mount that holds Zen Garden's data — offering data, container images,
+    /// caches — i.e. the mounted filesystem whose mount point is the deepest prefix of
+    /// `data_dir()`. This is the single accessor every "stone storage" figure must read
+    /// (capabilities, health, portrait, presence, garden): the OS root can be a tiny system
+    /// partition (e.g. ~1 GB on Android) while the data partition holds the real capacity.
+    /// Falls back to the largest mount when none contains the data path.
+    pub fn data_partition(&self) -> Option<&StorageResources> {
+        let data_path = crate::constants::paths::data_dir();
+        self.storage
+            .iter()
+            .filter(|s| mount_contains(&s.mount_point, &data_path))
+            .max_by_key(|s| s.mount_point.len())
+            .or_else(|| self.storage.iter().max_by_key(|s| s.total_gb))
+    }
+}
+
+/// True if filesystem `path` lives under `mount` (prefix match at a path-component boundary).
+/// A mount that is empty after trimming separators (`"/"`, `"\"`) is the root — it contains
+/// every path.
+fn mount_contains(mount: &str, path: &str) -> bool {
+    let m = mount.trim_end_matches(['/', '\\']);
+    m.is_empty()
+        || path == m
+        || path.starts_with(&format!("{m}/"))
+        || path.starts_with(&format!("{m}\\"))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuResources {
     pub cores: usize,

@@ -10,33 +10,6 @@
 use garden_common::{ComponentHealth, HealthCheck};
 use std::collections::HashMap;
 
-/// Select the storage mount that actually holds Zen Garden's data — container images,
-/// offering data, caches — i.e. the partition whose mount point is the deepest prefix of
-/// `data_dir()`. Disk health must reflect THAT partition, not the OS root: on Android `/` is
-/// a ~1 GB system partition (always near-full) while `/data`, where everything lives, has
-/// tens of GB free. Falls back to the largest mount if none contains the data path.
-fn data_storage(
-    storage: &[garden_common::types::hardware::StorageResources],
-) -> Option<&garden_common::types::hardware::StorageResources> {
-    let data_path = garden_common::constants::paths::data_dir();
-    storage
-        .iter()
-        .filter(|s| mount_contains(&s.mount_point, &data_path))
-        .max_by_key(|s| s.mount_point.len())
-        .or_else(|| storage.iter().max_by_key(|s| s.total_gb))
-}
-
-/// True if filesystem `path` lives under `mount` (prefix match at a path-component boundary).
-/// A mount that is empty after trimming separators (`"/"`, `"\"`) is the root — it contains
-/// every path.
-fn mount_contains(mount: &str, path: &str) -> bool {
-    let m = mount.trim_end_matches(['/', '\\']);
-    if m.is_empty() {
-        return true;
-    }
-    path == m || path.starts_with(&format!("{m}/")) || path.starts_with(&format!("{m}\\"))
-}
-
 /// Check disk health based on available space
 ///
 /// Thresholds:
@@ -46,7 +19,7 @@ pub fn check_disk_health() -> HealthCheck {
     match garden_common::resources::system::collect_stone_resources() {
         Ok(resources) => {
             // The partition that holds Zen Garden's data + container images.
-            let primary = data_storage(&resources.storage);
+            let primary = resources.data_partition();
 
             match primary {
                 Some(disk) => {
@@ -125,7 +98,7 @@ pub fn build_disk_component() -> ComponentHealth {
     match garden_common::resources::system::collect_stone_resources() {
         Ok(resources) => {
             // The partition that holds Zen Garden's data + container images.
-            let primary = data_storage(&resources.storage);
+            let primary = resources.data_partition();
 
             if let Some(disk) = primary {
                 let total_gb = disk.total_gb as f64;

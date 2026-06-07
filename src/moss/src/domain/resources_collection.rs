@@ -38,12 +38,8 @@ pub fn get_local_resources() -> Result<NormalizedResources> {
             )
         });
 
-    // Find primary storage mount
-    let primary = resources
-        .storage
-        .iter()
-        .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
-        .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb));
+    // The data partition (offering data + container images live there).
+    let primary = resources.data_partition();
 
     let storage_type = primary
         .map(|s| &s.disk_type)
@@ -160,12 +156,8 @@ pub fn normalize_resources(
     architecture: &str,
     storage_type: &DiskType,
 ) -> NormalizedResources {
-    // Find primary storage mount
-    let primary = resources
-        .storage
-        .iter()
-        .find(|s| s.mount_point == "/" || s.mount_point == "C:\\")
-        .or_else(|| resources.storage.iter().max_by_key(|s| s.total_gb));
+    // The data partition (offering data + container images live there).
+    let primary = resources.data_partition();
 
     let (storage_free_gb, storage_total_gb) = primary
         .map(|s| (s.available_gb, s.total_gb))

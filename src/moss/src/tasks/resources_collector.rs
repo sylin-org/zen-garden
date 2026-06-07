@@ -198,7 +198,7 @@ pub async fn run_resources_collector(state: Moss, token: tokio_util::sync::Cance
                         let path_str = vol.mount_path().to_string_lossy().to_string();
                         if let Some(usage) = crate::infra::storage::platform::disk_usage(&path_str) {
                             vol.observe(
-                                Some(crate::domain::storage::DiskResources {
+                                Some(crate::domain::storage::DiskMeasurement {
                                     capacity_bytes: usage.used_bytes + usage.available_bytes,
                                     used_bytes: usage.used_bytes,
                                 }),

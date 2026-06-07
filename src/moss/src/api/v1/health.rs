@@ -15,8 +15,33 @@ use std::collections::HashMap;
 pub async fn get_health(State(state): State<Moss>) -> (StatusCode, Json<DaemonHealthStatus>) {
     // Run health checks (using domain logic where possible)
     let docker_check = check_docker_health(&state).await;
-    let disk_check = crate::domain::health::check_disk_health();
-    let memory_check = crate::domain::health::check_memory_health();
+    // Collect resources ONCE for all disk/memory checks + components (was 4 separate
+    // collections, each doing I/O).
+    let (disk_check, memory_check, disk_component, memory_component) =
+        match garden_common::resources::system::collect_stone_resources() {
+            Ok(r) => (
+                crate::domain::health::check_disk_health(&r),
+                crate::domain::health::check_memory_health(&r),
+                crate::domain::health::build_disk_component(&r),
+                crate::domain::health::build_memory_component(&r),
+            ),
+            Err(e) => {
+                tracing::warn!(error = ?e, "health: resource collection failed");
+                let fail = |what: &str| HealthCheck {
+                    status: garden_common::constants::CHECK_FAIL.to_string(),
+                    message: Some(format!("Failed to check {what}: {e}")),
+                };
+                let bad = |what: &str| {
+                    let mut d = HashMap::new();
+                    d.insert(
+                        "error".to_string(),
+                        serde_json::json!(format!("Unable to collect {what} resources")),
+                    );
+                    ComponentHealth::unhealthy(d)
+                };
+                (fail("disk"), fail("memory"), bad("disk"), bad("memory"))
+            }
+        };
 
     // Build legacy checks HashMap for backward compatibility
     let mut checks = HashMap::new();
@@ -31,12 +56,8 @@ pub async fn get_health(State(state): State<Moss>) -> (StatusCode, Json<DaemonHe
     let docker_component = build_docker_component(&state).await;
     components.insert("docker".to_string(), docker_component);
 
-    // Disk component (pure, from domain)
-    let disk_component = crate::domain::health::build_disk_component();
+    // Disk + memory components were computed above from the single resource snapshot.
     components.insert("disk".to_string(), disk_component);
-
-    // Memory component (pure, from domain)
-    let memory_component = crate::domain::health::build_memory_component();
     components.insert("memory".to_string(), memory_component);
 
     // Initialization component (Moss-dependent)

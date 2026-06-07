@@ -16,7 +16,7 @@ use super::ports::{ManagementStoreOps, StoragePlatform};
 use super::platform_types::VolumeSnapshot;
 #[cfg(test)]
 use super::volume::VolumeState;
-use super::volume::{DiskResources, Volume};
+use super::volume::{DiskMeasurement, Volume};
 
 /// The unified volume collection — keyed by device path.
 pub type Volumes = Arc<RwLock<HashMap<String, Volume>>>;
@@ -48,7 +48,7 @@ pub async fn reconcile<S: ManagementStoreOps + 'static>(
 
     // Update existing and add new
     for snap in snapshots {
-        let disk_snapshot = DiskResources {
+        let disk_snapshot = DiskMeasurement {
             capacity_bytes: snap.capacity_bytes,
             used_bytes: 0, // reconcile doesn't measure usage — health tick does
         };
@@ -142,7 +142,7 @@ pub async fn observe_all(
         // Probe device health (STORAGE-0018).
         let health = platform.probe_device_health(&device_path, &mount_str);
 
-        let disk_snapshot = platform.disk_usage(&mount_str).map(|usage| DiskResources {
+        let disk_snapshot = platform.disk_usage(&mount_str).map(|usage| DiskMeasurement {
             capacity_bytes: usage.total(),
             used_bytes: usage.used_bytes,
         });
@@ -394,7 +394,7 @@ mod tests {
         // Force offline first
         let _ = vol.disconnect();
 
-        let events = vol.connect(DiskResources {
+        let events = vol.connect(DiskMeasurement {
             capacity_bytes: 64_000_000_000,
             used_bytes: 1_000_000,
         });
@@ -407,7 +407,7 @@ mod tests {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
 
-        let events = vol.connect(DiskResources {
+        let events = vol.connect(DiskMeasurement {
             capacity_bytes: 100,
             used_bytes: 50,
         });
@@ -444,7 +444,7 @@ mod tests {
         vol.disconnect();
 
         let events = vol.observe(
-            Some(DiskResources {
+            Some(DiskMeasurement {
                 capacity_bytes: 100,
                 used_bytes: 50,
             }),
@@ -458,7 +458,7 @@ mod tests {
     fn observe_none_degrades() {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
-        vol.connect(DiskResources {
+        vol.connect(DiskMeasurement {
             capacity_bytes: 100,
             used_bytes: 0,
         }); // bring Online first
@@ -471,13 +471,13 @@ mod tests {
     fn observe_zero_capacity_degrades() {
         let snap = make_snapshot("/dev/sdb1", "/mnt/usb", true);
         let mut vol = Volume::from_snapshot(&snap);
-        vol.connect(DiskResources {
+        vol.connect(DiskMeasurement {
             capacity_bytes: 100,
             used_bytes: 0,
         }); // bring Online first
 
         let _events = vol.observe(
-            Some(DiskResources {
+            Some(DiskMeasurement {
                 capacity_bytes: 0,
                 used_bytes: 0,
             }),

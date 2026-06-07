@@ -13,7 +13,7 @@ use tracing::{debug, info};
 
 use super::ports::ManagementStoreOps;
 
-use super::volume::DiskResources;
+use super::volume::DiskMeasurement;
 use super::{Volume, VolumeSnapshot, Volumes};
 
 /// Domain bridge for physical storage events.
@@ -72,7 +72,7 @@ impl<S: ManagementStoreOps + 'static> VolumeIngestor<S> {
             // Foreign-FS volumes render the correct `<family> (<fs>)`.
             filesystem,
         };
-        let disk_snapshot = DiskResources {
+        let disk_snapshot = DiskMeasurement {
             capacity_bytes,
             used_bytes,
         };

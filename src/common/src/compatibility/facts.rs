@@ -21,6 +21,18 @@ pub trait FactSource {
 /// Known AI runtime names (filtered from gpu.capabilities).
 const AI_RUNTIME_NAMES: &[&str] = &["cuda", "rocm", "directml", "openvino"];
 
+/// `HardwareCapabilities` is the single FactSource for the manifest compatibility DSL.
+///
+/// These `host.*` → field bindings are a CONTRACT: deployed `*.compatibility.yaml` manifests
+/// reference these fact paths, so the backing capability fields must not be renamed or removed
+/// without a manifest migration. Mapping:
+/// - `host.architecture`        → `hardware.cpu.architecture`
+/// - `host.cpu.model` / `.pattern` → `hardware.cpu.model`
+/// - `host.cpu.features`        → `hardware.cpu.features`
+/// - `host.ram.total.mb`        → `hardware.memory.total_mb`
+/// - `host.ai.runtime`          → `hardware.gpus[].capabilities` (filtered to AI runtimes)
+/// - `host.gpu` / `.count` / `.vram.total.*` → `hardware.gpus`
+/// - `host.os.family`           → `runtime.os` (segment before `/`)
 impl FactSource for crate::types::hardware::HardwareCapabilities {
     fn resolve_set(&self, fact: Fact) -> HashSet<String> {
         match fact {

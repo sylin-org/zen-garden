@@ -237,15 +237,8 @@ pub fn get_storage_resources() -> Result<Vec<StorageResources>> {
 
         let mount_point = disk.mount_point().to_string_lossy().to_string();
 
-        // Detect disk type from mount point
-        let disk_type = detect_disk_type_for_mount(&mount_point)
-            .and_then(|s| match s.as_str() {
-                "NVMe" => Some(DiskType::NVMe),
-                "SSD" => Some(DiskType::SSD),
-                "HDD" => Some(DiskType::HDD),
-                _ => None,
-            })
-            .unwrap_or(DiskType::Unknown);
+        // Detect disk type from mount point (the detector returns the DiskType enum directly).
+        let disk_type = detect_disk_type_for_mount(&mount_point).unwrap_or(DiskType::Unknown);
 
         // Extract identifier from mount point or use mount point
         let identifier = if let Some(name) = disk.name().to_str() {
@@ -464,7 +457,7 @@ fn collect_stone_resources_original() -> Result<StoneResources> {
 /// 2. Fallback to `findmnt` + `/sys/block/*/queue/rotational` for direct devices
 ///
 /// On Windows, always returns None (not implemented).
-pub fn detect_disk_type_for_mount(mount_point: &str) -> Option<String> {
+pub fn detect_disk_type_for_mount(mount_point: &str) -> Option<DiskType> {
     #[cfg(target_os = "windows")]
     {
         let _ = mount_point;
@@ -492,23 +485,35 @@ pub fn detect_disk_type_for_mount(mount_point: &str) -> Option<String> {
     }
 }
 
-/// Detect disk type using `lsblk`, which handles LVM, device-mapper, and LUKS.
+/// Resolve a mount point to its backing device via `findmnt` (shared by the lsblk + sysfs
+/// strategies). Returns None when `findmnt` is unavailable (e.g. Android/toybox).
 #[cfg(target_os = "linux")]
-fn detect_via_lsblk(mount_point: &str) -> Option<String> {
-    // Find the source device for this mount point
-    let findmnt = Command::new("findmnt")
+fn resolve_mount_source(mount_point: &str) -> Option<String> {
+    let output = Command::new("findmnt")
         .args(["-no", "SOURCE", "--target", mount_point])
         .output()
         .ok()?;
-
-    if !findmnt.status.success() {
+    if !output.status.success() {
         return None;
     }
+    let source = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if source.is_empty() { None } else { Some(source) }
+}
 
-    let source = String::from_utf8_lossy(&findmnt.stdout).trim().to_string();
-    if source.is_empty() {
-        return None;
+/// Map a `/queue/rotational` flag to a DiskType (`0` → SSD, `1` → HDD).
+#[cfg(target_os = "linux")]
+fn rota_to_disk_type(rotational: &str) -> Option<DiskType> {
+    match rotational.trim() {
+        "0" => Some(DiskType::SSD),
+        "1" => Some(DiskType::HDD),
+        _ => None,
     }
+}
+
+/// Detect disk type using `lsblk`, which handles LVM, device-mapper, and LUKS.
+#[cfg(target_os = "linux")]
+fn detect_via_lsblk(mount_point: &str) -> Option<DiskType> {
+    let source = resolve_mount_source(mount_point)?;
 
     // Use lsblk to find the underlying physical disk(s) for this device.
     // -s = show parents (follow LVM → VG → PV → physical disk)
@@ -517,47 +522,29 @@ fn detect_via_lsblk(mount_point: &str) -> Option<String> {
         .args(["-sndo", "NAME,ROTA,TYPE", &source])
         .output()
         .ok()?;
-
     if !lsblk.status.success() {
         return None;
     }
-
     let output = String::from_utf8_lossy(&lsblk.stdout);
 
-    // Look for the physical disk line (TYPE=disk) among the ancestors.
-    // Example output for an LVM on NVMe:
-    //   root      0 lvm
-    //   nvme0n1p2 0 part
-    //   nvme0n1   0 disk
+    // Prefer the physical disk line (TYPE=disk) among the ancestors.
     for line in output.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 3 && parts[2] == "disk" {
-            let name = parts[0];
-            if name.starts_with("nvme") {
-                return Some("NVMe".to_string());
+            if parts[0].starts_with("nvme") {
+                return Some(DiskType::NVMe);
             }
-            return match parts[1] {
-                "0" => Some("SSD".to_string()),
-                "1" => Some("HDD".to_string()),
-                _ => None,
-            };
+            return rota_to_disk_type(parts[1]);
         }
     }
-
-    // If no "disk" type found in ancestry, try the device itself
-    // (handles cases where lsblk -s doesn't traverse all the way)
+    // Fallback: the first device line (lsblk -s may not traverse all the way).
     for line in output.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 2 {
-            let name = parts[0];
-            if name.starts_with("nvme") {
-                return Some("NVMe".to_string());
+            if parts[0].starts_with("nvme") {
+                return Some(DiskType::NVMe);
             }
-            return match parts[1] {
-                "0" => Some("SSD".to_string()),
-                "1" => Some("HDD".to_string()),
-                _ => None,
-            };
+            return rota_to_disk_type(parts[1]);
         }
     }
 
@@ -570,7 +557,7 @@ fn detect_via_lsblk(mount_point: &str) -> Option<String> {
 /// Android internal storage (F2FS `/data` on UFS, e.g. `dm-37` → `sda21` → `sda`, rotational 0)
 /// as SSD instead of Unknown.
 #[cfg(target_os = "linux")]
-fn detect_via_proc_mounts(mount_point: &str) -> Option<String> {
+fn detect_via_proc_mounts(mount_point: &str) -> Option<DiskType> {
     let mounts = std::fs::read_to_string("/proc/mounts").ok()?;
     let source = mounts.lines().find_map(|line| {
         let mut fields = line.split_whitespace();
@@ -599,14 +586,10 @@ fn detect_via_proc_mounts(mount_point: &str) -> Option<String> {
         return None;
     }
     if base.starts_with("nvme") {
-        return Some("NVMe".to_string());
+        return Some(DiskType::NVMe);
     }
     let rotational = std::fs::read_to_string(format!("/sys/block/{base}/queue/rotational")).ok()?;
-    match rotational.trim() {
-        "0" => Some("SSD".to_string()),
-        "1" => Some("HDD".to_string()),
-        _ => None,
-    }
+    rota_to_disk_type(&rotational)
 }
 
 /// Strip a trailing partition suffix to get the physical block device name
@@ -623,50 +606,21 @@ fn trim_partition(dev: &str) -> String {
 /// Fallback: detect disk type via sysfs rotational flag.
 /// Works for direct /dev/sdX and /dev/nvmeXnY devices only.
 #[cfg(target_os = "linux")]
-fn detect_via_sysfs(mount_point: &str) -> Option<String> {
-    let output = Command::new("findmnt")
-        .args(["-no", "SOURCE", "--target", mount_point])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let source = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if source.is_empty() {
-        return None;
-    }
-
-    // Normalize /dev/<device><partition> to base block device name.
+fn detect_via_sysfs(mount_point: &str) -> Option<DiskType> {
+    let source = resolve_mount_source(mount_point)?;
     let dev = source.rsplit('/').next().unwrap_or("");
     if dev.is_empty() {
         return None;
     }
-
-    let base = if dev.starts_with("nvme") {
-        dev.split('p').next().unwrap_or(dev)
-    } else if dev.starts_with("mmcblk") {
-        dev.split('p').next().unwrap_or(dev)
-    } else {
-        dev.trim_end_matches(|c: char| c.is_ascii_digit())
-    };
-
+    let base = trim_partition(dev);
     if base.is_empty() {
         return None;
     }
-
     if base.starts_with("nvme") {
-        return Some("NVMe".to_string());
+        return Some(DiskType::NVMe);
     }
-
-    let rotational_path = format!("/sys/block/{base}/queue/rotational");
-    let rotational = fs::read_to_string(rotational_path).ok()?;
-    match rotational.trim() {
-        "0" => Some("SSD".to_string()),
-        "1" => Some("HDD".to_string()),
-        _ => None,
-    }
+    let rotational = fs::read_to_string(format!("/sys/block/{base}/queue/rotational")).ok()?;
+    rota_to_disk_type(&rotational)
 }
 
 /// Detect GPU hardware

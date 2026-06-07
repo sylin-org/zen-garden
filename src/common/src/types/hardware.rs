@@ -127,6 +127,10 @@ pub struct MemoryResources {
     pub available_friendly: String,
 }
 
+/// Legacy single-disk shape for the `/api/v1/stone/resources` response (`ResourcesSnapshot`).
+/// Backward-compat wire contract only — built from the data partition via
+/// `StoneResources::data_partition()`. New code should read `StoneResources::storage` /
+/// `data_partition()` directly rather than this flattened view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiskResources {
     pub total_bytes: u64,

@@ -70,7 +70,7 @@ impl std::fmt::Display for VolumeState {
 /// Measured disk usage from the OS. Passed into Volume state machine methods.
 /// Volume decides what to do with the information.
 #[derive(Debug, Clone, Copy)]
-pub struct DiskResources {
+pub struct DiskMeasurement {
     pub capacity_bytes: u64,
     pub used_bytes: u64,
 }
@@ -339,7 +339,7 @@ impl Volume {
     /// Device appeared or reappeared. Transitions Offline → Online.
     /// If already Online/Degraded, updates the disk snapshot silently
     /// (no event).
-    pub fn connect(&mut self, disk_snapshot: DiskResources) -> Vec<StorageChanged> {
+    pub fn connect(&mut self, disk_snapshot: DiskMeasurement) -> Vec<StorageChanged> {
         let was_offline = self.state == VolumeState::Offline;
 
         self.capacity_bytes = disk_snapshot.capacity_bytes;
@@ -387,7 +387,7 @@ impl Volume {
     /// resurrect.
     pub fn observe(
         &mut self,
-        disk_snapshot: Option<DiskResources>,
+        disk_snapshot: Option<DiskMeasurement>,
         health: DeviceHealth,
     ) -> Vec<StorageChanged> {
         if self.state == VolumeState::Offline {
@@ -711,7 +711,7 @@ mod tests {
             filesystem: Some("ext4".to_string()),
         };
         let mut vol = Volume::from_snapshot(&snap);
-        vol.connect(DiskResources {
+        vol.connect(DiskMeasurement {
             capacity_bytes: 64_000_000_000,
             used_bytes: 1_000_000,
         });
@@ -730,7 +730,7 @@ mod tests {
             ..DeviceHealth::healthy()
         };
         let events = vol.observe(
-            Some(DiskResources {
+            Some(DiskMeasurement {
                 capacity_bytes: 64_000_000_000,
                 used_bytes: 0,
             }),
@@ -765,7 +765,7 @@ mod tests {
             ..DeviceHealth::healthy()
         };
         let events = vol.observe(
-            Some(DiskResources {
+            Some(DiskMeasurement {
                 capacity_bytes: 64_000_000_000,
                 used_bytes: 0,
             }),
@@ -784,7 +784,7 @@ mod tests {
         let mut vol = online_volume();
 
         let events = vol.observe(
-            Some(DiskResources {
+            Some(DiskMeasurement {
                 capacity_bytes: 64_000_000_000,
                 used_bytes: 2_000_000,
             }),
@@ -817,7 +817,7 @@ mod tests {
 
         // Degrade with read-only
         vol.observe(
-            Some(DiskResources {
+            Some(DiskMeasurement {
                 capacity_bytes: 64_000_000_000,
                 used_bytes: 0,
             }),
@@ -830,7 +830,7 @@ mod tests {
 
         // Recover — filesystem is now read-write again
         let events = vol.observe(
-            Some(DiskResources {
+            Some(DiskMeasurement {
                 capacity_bytes: 64_000_000_000,
                 used_bytes: 0,
             }),

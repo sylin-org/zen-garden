@@ -64,17 +64,25 @@ $packagesDir = Join-Path $distRoot "packages"
 $linuxX64Package = $null
 $linuxX86Package = $null
 $windowsX64Package = $null
+$linuxArm64Package = $null
 
 if (Test-Path $packagesDir) {
     $linuxX64Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-x64.tar.gz" | Sort-Object LastWriteTime -Descending
     $linuxX86Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-x86.tar.gz" | Sort-Object LastWriteTime -Descending
     $windowsX64Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-windows-x64.zip" | Sort-Object LastWriteTime -Descending
+    # aarch64: prefer the fully-static musl package (runs on Android AND glibc ARM64 stones);
+    # fall back to the glibc arm64 package if that's all that's built.
+    $linuxArm64Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-arm64-musl.tar.gz" | Sort-Object LastWriteTime -Descending
+    if ($linuxArm64Packages.Count -eq 0) {
+        $linuxArm64Packages = Get-ChildItem $packagesDir -Filter "zen-garden-*-linux-arm64.tar.gz" | Sort-Object LastWriteTime -Descending
+    }
     if ($linuxX64Packages.Count -gt 0) { $linuxX64Package = $linuxX64Packages[0].FullName }
     if ($linuxX86Packages.Count -gt 0) { $linuxX86Package = $linuxX86Packages[0].FullName }
     if ($windowsX64Packages.Count -gt 0) { $windowsX64Package = $windowsX64Packages[0].FullName }
+    if ($linuxArm64Packages.Count -gt 0) { $linuxArm64Package = $linuxArm64Packages[0].FullName }
 }
 
-if (-not $linuxX64Package -and -not $linuxX86Package -and -not $windowsX64Package) {
+if (-not $linuxX64Package -and -not $linuxX86Package -and -not $windowsX64Package -and -not $linuxArm64Package) {
     Write-Host "!  No packages found in $packagesDir" -ForegroundColor Yellow
     Write-Host "   Run with -Build flag or run build.ps1 first." -ForegroundColor Yellow
     exit 1
@@ -411,11 +419,13 @@ try {
             }
 
             $platformLabel = if ($info.OS -match "windows") { "Windows x64" }
+                             elseif ($arch -eq "aarch64" -or $arch -eq "arm64") { "Linux ARM64" }
                              elseif ($arch -eq "x86" -or $arch -eq "i686" -or $arch -eq "i386") { "Linux x86" }
                              else { "Linux x64" }
 
             $packagePath = switch ($platformLabel) {
                 "Windows x64" { $windowsX64Package }
+                "Linux ARM64" { $linuxArm64Package }
                 "Linux x86"   { $linuxX86Package }
                 default       { $linuxX64Package }
             }

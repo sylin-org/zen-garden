@@ -6,12 +6,25 @@
 > Linux/Windows/Android (OS-specifics only), phone updates via standard HTTP. Then make cricket
 > target-agnostic (`docs/notes/cricket-android-audio-research.md`).
 
-## State at handoff (2026-06-07)
-- Branch `fix/snapshot-scheduler-disposal`. The earlier phone-Stone + HOST-0001 + capability
-  consolidation work is committed (latest: `cc4de0a3`). **No DEPLOY-0001 code written yet** —
-  analysis + ADR only. Nothing on any stone changed since.
-- The Pixel (`stone-slate-grove`) is a working Stone: native moss on `0.2.0.dev`, mongo healthy,
-  `192.168.1.120`, adb-over-TCP persistent (`persist.adb.tcp.port=5555`).
+## State (updated 2026-06-07 — PHONE HTTP DEPLOY PROVEN)
+- Branch `fix/snapshot-scheduler-disposal`. DEPLOY-0001 implemented + committed:
+  `adbba78b` (exit-code + profile-pathed apply), `d49ea373` (Android watchdog + mark-good),
+  `3266f5c5` (packaging + deploy.ps1 routing). Builds clean on aarch64-musl.
+- **VALIDATED end-to-end on the Pixel (`stone-slate-grove`, 192.168.1.120) over HTTP, no adb:**
+  - adb-bootstrapped onto new moss `0.2.0.202606071900` at bin_install (`/data/zen-garden/bin`)
+    under the watchdog (migrated off the legacy `/data/garden-moss`).
+  - HTTP deploy: `POST /api/v1/stone/deploy` → moss exited **rc=10** (RESTART_APPLY) → watchdog
+    ran `pre-start` (applied staged → bin_install, companions → companions dir) → respawned → healthy.
+  - **mark-good** deleted `.old` after surviving startup; **rollback** verified (injected an exit-1
+    binary → 3 fast crashes → watchdog restored `.old` → healthy); SIGTERM → rc=0 → clean STOP.
+  - Phone now runs good moss under watchdog (pid lives in `/data/zen-garden/moss-watchdog.pid`),
+    mongo up, docker healthy. Recovery escape hatch: re-run `deploy-android.ps1` bootstrap.
+- **Remaining:** (1) wyse `stone-silent-cascade` linux-x64 HTTP-deploy confirmation (Linux path —
+  needs an x64 build); (2) `build.ps1 -IncludeAndroid` dispatch + `dist.json` entry (so the
+  top-level build builds Android too — `build-android-arm64.ps1` already works standalone);
+  (3) SSH on Android; (4) cricket target-agnostic audio. Items 2-4 are polish/follow-on; the
+  core "phone updates via HTTP, one flow" is DONE.
+- adb-over-TCP persistent (`persist.adb.tcp.port=5555`).
 
 ## Access + safety nets
 - **Phone:** `adb connect 192.168.1.120:5555` (persistent). Push: `adb -s 192.168.1.120:5555

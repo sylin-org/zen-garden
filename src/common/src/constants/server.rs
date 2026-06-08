@@ -24,6 +24,11 @@ pub const DOCKER_STARTUP_RETRY_ATTEMPTS: u32 = 30;
 /// Delay between Docker connectivity retries during startup (seconds).
 pub const DOCKER_STARTUP_RETRY_DELAY_SECS: u64 = 2;
 
+/// DEPLOY-0001 mark-good delay (seconds): how long a freshly-applied build must survive before the
+/// upgrade is committed (its `.old` rollback backups deleted). If moss crashes before this, the
+/// `.old` binaries remain so the supervisor can roll back.
+pub const MARK_GOOD_SECS: u64 = 20;
+
 /// Process exit-code contract (DEPLOY-0001) — the shared language between moss and whatever
 /// supervises it (systemd / Windows SCM / the Android watchdog). The code says WHY moss exited;
 /// the supervisor decides what to do. On Linux/systemd `Restart=always` respawns on any exit and

@@ -202,7 +202,21 @@ pub async fn run(
             deadline_secs = hard_deadline_secs,
             "Shutdown deadline exceeded — forcing process exit"
         );
-        std::process::exit(1);
+        std::process::exit(garden_common::constants::server::exit::FATAL);
+    });
+
+    // DEPLOY-0001 mark-good: once moss survives startup (MARK_GOOD_SECS), commit the upgrade by
+    // deleting the `.old` rollback backups. If moss crashes before this fires, the process dies and
+    // `.old` survives so the supervisor (the Android watchdog) can roll back. Linux/Android only —
+    // pre_start (and thus the `.old` backups) exist only there; the Windows updater self-manages.
+    #[cfg(target_os = "linux")]
+    tokio::spawn(async {
+        tokio::time::sleep(tokio::time::Duration::from_secs(
+            garden_common::constants::server::MARK_GOOD_SECS,
+        ))
+        .await;
+        crate::infra::installer::pre_start::commit_upgrade();
+        tracing::info!("Upgrade marked good — removed .old rollback backups");
     });
 
     // SIGTERM all companions immediately when shutdown is triggered.

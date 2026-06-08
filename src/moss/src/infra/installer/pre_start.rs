@@ -142,6 +142,30 @@ fn current_version() -> String {
     format!("v{}", crate::cli::VERSION)
 }
 
+/// Mark the running binaries "good" (DEPLOY-0001): delete the `.old` rollback backups in
+/// `bin_install` + `companions`. Called once the process has proven it survives startup — until
+/// then the supervisor (the Android watchdog) can roll back to `.old`; after, the upgrade is
+/// committed. On Linux this is just cleanup (systemd doesn't roll back).
+pub(crate) fn commit_upgrade() {
+    let profile = garden_common::host::profile();
+    remove_old_backups(&profile.paths.bin_install);
+    remove_old_backups(&profile.paths.companions);
+}
+
+fn remove_old_backups(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            remove_old_backups(&path);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("old") {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 // ── Binary deployment ───────────────────────────────────────────────
 
 fn deploy_bin(staging_dir: &Path) -> anyhow::Result<()> {

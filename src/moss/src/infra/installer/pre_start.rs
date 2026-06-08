@@ -75,6 +75,11 @@ pub fn run(dry_run: bool) -> anyhow::Result<()> {
 /// Each check is a file-exists or string-contains test — fast on every boot.
 /// Once the artifacts are gone and the unit file is current, this is a no-op.
 fn migrate_legacy() -> anyhow::Result<()> {
+    // Systemd-only: legacy unit/script migration is meaningless where there's no systemd
+    // (Android runs under the watchdog). Skip to avoid futile systemctl calls.
+    if garden_common::host::profile().runtime.scheduler != garden_common::host::Scheduler::Systemd {
+        return Ok(());
+    }
     let mut changed = false;
 
     // ── Remove legacy scripts ──────────────────────────────────────
@@ -145,22 +150,35 @@ fn deploy_bin(staging_dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let bin_dest = PathBuf::from("/usr/local/bin");
+    // DEPLOY-0001: write to the host profile's paths, not a hardcoded /usr/local/bin (which is
+    // read-only on Android). The companions/ subdir is routed to `paths.companions` — the dir the
+    // runtime registry actually scans (companions.rs) — fixing the prior install≠scan mismatch.
+    let profile = garden_common::host::profile();
+    let bin_dest = profile.paths.bin_install.clone();
+    let companions_dest = profile.paths.companions.clone();
+    std::fs::create_dir_all(&bin_dest)?;
 
-    // Copy all files from bin/ to /usr/local/bin/
-    copy_dir_contents(&bin_src, &bin_dest)?;
-
-    // Set executable permissions
+    for entry in std::fs::read_dir(&bin_src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let src_path = entry.path();
+        if name.to_str() == Some("companions") {
+            copy_dir_contents(&src_path, &companions_dest)?;
+            set_executable_recursive(&companions_dest, 3)?;
+        } else if src_path.is_dir() {
+            copy_dir_contents(&src_path, &bin_dest.join(&name))?;
+        } else {
+            replace_file(&src_path, &bin_dest.join(&name))?;
+        }
+    }
     set_executable_recursive(&bin_dest, 1)?;
 
-    // Handle companions subdirectory
-    let companions = bin_dest.join("companions");
-    if companions.exists() {
-        set_executable_recursive(&companions, 3)?;
-    }
-
     let count = count_files(&bin_src)?;
-    println!("[pre-start] Deployed bin/ ({count} files) -> /usr/local/bin/");
+    println!(
+        "[pre-start] Deployed bin/ ({count} files) -> {} (companions -> {})",
+        bin_dest.display(),
+        companions_dest.display()
+    );
     Ok(())
 }
 
@@ -310,13 +328,19 @@ fn copy_dir_contents(src: &Path, dest: &Path) -> anyhow::Result<()> {
 
 /// Replace a file at `dest` with `src`, handling running executables.
 ///
-/// Uses rename-then-copy: atomically renames the existing file to `.old`,
-/// copies the new file to the original path (fresh inode), then cleans up.
-/// This avoids ETXTBSY (errno 26) because `rename(2)` detaches the directory
-/// entry while the kernel keeps the old inode alive for any running process.
+/// Uses rename-aside: atomically renames the existing file to `.old`, then copies the new file
+/// to the original path (fresh inode). This avoids ETXTBSY (errno 26) because `rename(2)` detaches
+/// the directory entry while the kernel keeps the old inode alive for any running process (and on
+/// Windows you can rename a locked .exe even though you can't overwrite it).
+///
+/// DEPLOY-0001: the `.old` backup is KEPT as the rollback artifact — the mark-good step deletes it
+/// once the new binary proves healthy, and rollback restores it on repeated failure.
 fn replace_file(src: &Path, dest: &Path) -> anyhow::Result<()> {
     if dest.exists() {
         let backup = dest.with_extension("old");
+        // Clear any stale prior backup first (Unix rename overwrites; Windows rename fails if the
+        // destination already exists — keep this portable).
+        let _ = std::fs::remove_file(&backup);
         // Atomic rename: running process keeps the old inode via page mapping.
         // The path is now free for a fresh file.
         std::fs::rename(dest, &backup).with_context(|| {
@@ -326,12 +350,9 @@ fn replace_file(src: &Path, dest: &Path) -> anyhow::Result<()> {
                 backup.display()
             )
         })?;
-        // Copy new file to original path (new inode — no ETXTBSY).
-        let result = std::fs::copy(src, dest)
-            .with_context(|| format!("failed to copy {} -> {}", src.display(), dest.display()));
-        // Best-effort cleanup — old inode stays alive until the process exits.
-        let _ = std::fs::remove_file(&backup);
-        result?;
+        // Copy new file to original path (new inode — no ETXTBSY). KEEP `backup` for rollback.
+        std::fs::copy(src, dest)
+            .with_context(|| format!("failed to copy {} -> {}", src.display(), dest.display()))?;
     } else {
         std::fs::copy(src, dest)
             .with_context(|| format!("failed to copy {} -> {}", src.display(), dest.display()))?;

@@ -23,3 +23,20 @@ pub const DOCKER_STARTUP_RETRY_ATTEMPTS: u32 = 30;
 
 /// Delay between Docker connectivity retries during startup (seconds).
 pub const DOCKER_STARTUP_RETRY_DELAY_SECS: u64 = 2;
+
+/// Process exit-code contract (DEPLOY-0001) — the shared language between moss and whatever
+/// supervises it (systemd / Windows SCM / the Android watchdog). The code says WHY moss exited;
+/// the supervisor decides what to do. On Linux/systemd `Restart=always` respawns on any exit and
+/// `systemctl stop` still stops, so these matter mainly to the hand-rolled Android watchdog.
+pub mod exit {
+    /// Clean stop — the supervisor must NOT respawn (operator stop / uninstall).
+    pub const STOP: i32 = 0;
+    /// Crash / bind failure / stalled-shutdown force-exit — respawn WITH backoff (crash-loop guard).
+    pub const FATAL: i32 = 1;
+    /// A staged upgrade is pending — the supervisor must run `garden-moss pre-start` (apply) then
+    /// respawn. Set when `{staging}/validated/bin` exists at exit time.
+    pub const RESTART_APPLY: i32 = 10;
+    /// Restart requested with no staged payload (e.g. first-boot/config reload) — respawn; the
+    /// `pre-start` apply is a fast no-op.
+    pub const RESTART: i32 = 11;
+}

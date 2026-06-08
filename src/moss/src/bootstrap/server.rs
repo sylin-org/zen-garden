@@ -315,8 +315,25 @@ pub async fn run(
     //
     // On Windows: releases ports so the temp updater can rebind
     // On Linux: ensures systemd sees the exit immediately for Restart=always
-    tracing::info!("Forcing process exit to ensure clean termination");
-    std::process::exit(0);
+    // DEPLOY-0001 exit-code contract: if a validated upgrade is staged, exit RESTART_APPLY so the
+    // supervisor runs `garden-moss pre-start` (apply) then respawns. This is read by the hand-rolled
+    // Android watchdog; systemd (`Restart=always`) and the Windows SCM respawn on any exit and honor
+    // `systemctl stop`, so the code is harmless there. Otherwise it's a clean STOP.
+    let staged_pending = std::path::Path::new(&garden_common::constants::paths::staging_dir())
+        .join("validated")
+        .join("bin")
+        .exists();
+    let code = if staged_pending {
+        garden_common::constants::server::exit::RESTART_APPLY
+    } else {
+        garden_common::constants::server::exit::STOP
+    };
+    tracing::info!(
+        exit_code = code,
+        staged = staged_pending,
+        "Forcing process exit to ensure clean termination"
+    );
+    std::process::exit(code);
 
     // Unreachable, but satisfies the return type for the compiler
     #[allow(unreachable_code)]

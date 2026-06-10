@@ -40,15 +40,6 @@ chrono = { workspace = true, features = ["serde"] }
 # Transport trait shutdown signalling (COMPANION-0004 — Book III of COMPANION-0001)
 tokio-util = "0.7"
 
-# USB devices domain (COMPANION-0018)
-serialport = "4.3"
-thiserror = "2"
-async-trait = "0.1"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-udev = "0.9"
-mio = { version = "1", features = ["os-poll", "os-ext"] }
-
 [lints]
 workspace = true
 

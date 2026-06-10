@@ -1,0 +1,31 @@
+[package]
+name = "garden-companion-usb"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "USB serial device discovery + lifecycle domain for Zen Garden companions (COMPANION-0018)"
+
+[lib]
+name = "garden_companion_usb"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio-util = "0.7"
+tracing.workspace = true
+serde.workspace = true
+
+# USB serial discovery + device lifecycle
+serialport = "4.3"
+thiserror = "2"
+async-trait = "0.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Event-driven hotplug on Linux (firefly etc.); PollMonitor is the cross-platform fallback.
+udev = "0.9"
+mio = { version = "1", features = ["os-poll", "os-ext"] }
+
+[lints]
+workspace = true

@@ -12,6 +12,13 @@ workspace = true
 name = "garden-cricket"
 path = "src/main.rs"
 
+[features]
+# Default links the rodio backend (→ libasound on Linux). Disable for a headless / target-agnostic
+# build where no libasound exists (aarch64-musl / Android): build `--no-default-features`, which
+# selects the null audio backend (cricket runs as a companion, playback is a no-op).
+default = ["audio-rodio"]
+audio-rodio = ["dep:rodio"]
+
 [dependencies]
 garden-common = { path = "../common" }
 garden-companion-sdk = { path = "../companion-sdk" }
@@ -34,8 +41,8 @@ reqwest = { workspace = true, features = ["stream"] }
 futures-util = "0.3"
 tokio-stream = "0.1"
 
-# Audio playback
-rodio = "0.18"
+# Audio playback (optional — see [features]). The default backend links libasound on Linux.
+rodio = { version = "0.18", optional = true }
 
 # Embedded assets
 rust-embed = "8"

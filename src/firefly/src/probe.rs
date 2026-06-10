@@ -7,7 +7,7 @@
 
 use crate::firefly::{Firefly, Identity};
 use anyhow::Result;
-use garden_companion_sdk::usb_devices::UsbSerialDevice;
+use garden_companion_usb::UsbSerialDevice;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

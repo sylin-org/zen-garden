@@ -1,14 +1,28 @@
 //! 4-channel audio mixer for Cricket
 //! Channels: foreground, midground, ambient, background
+//!
+//! The audio backend is feature-gated so cricket is target-agnostic:
+//! - `audio-rodio` (default): rodio output — links libasound on Linux, needs an audio device.
+//! - otherwise (`--no-default-features`): a null/headless backend with no rodio/libasound, so
+//!   cricket builds and runs as a companion on aarch64-musl/Android (no libasound there, and
+//!   often no exposed PCM device). Playback is a logged no-op; commands/events still work.
 
 use anyhow::Result;
+
+#[cfg(feature = "audio-rodio")]
 use rodio::{OutputStream, OutputStreamHandle, Sink, Source};
+#[cfg(feature = "audio-rodio")]
 use std::sync::Arc;
+#[cfg(feature = "audio-rodio")]
 use tokio::sync::RwLock;
 
-/// Ensure audio dependencies are installed (Linux only)
+// ---------------------------------------------------------------------------
+// System audio setup (real only on Linux with the rodio backend)
+// ---------------------------------------------------------------------------
+
+/// Ensure audio dependencies are installed (Linux + rodio backend).
 /// Returns Ok(()) if all dependencies are available (either already or after install)
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "audio-rodio"))]
 pub fn ensure_audio_dependencies() -> Result<()> {
     use garden_companion_sdk::dependencies::{ensure_dependencies, SystemDependency};
 
@@ -29,15 +43,15 @@ pub fn ensure_audio_dependencies() -> Result<()> {
     Ok(())
 }
 
-/// No-op on non-Linux platforms
-#[cfg(not(target_os = "linux"))]
+/// No-op without the rodio backend (or on non-Linux).
+#[cfg(not(all(target_os = "linux", feature = "audio-rodio")))]
 pub fn ensure_audio_dependencies() -> Result<()> {
     Ok(())
 }
 
-/// Initialize system audio on Linux (unmute and set volume)
+/// Initialize system audio on Linux (unmute and set volume) — rodio backend only.
 /// This ensures the ALSA master volume is set when Cricket starts
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "audio-rodio"))]
 pub fn init_system_audio(volume_percent: u8) -> Result<()> {
     use std::process::Command;
 
@@ -86,12 +100,16 @@ pub fn init_system_audio(volume_percent: u8) -> Result<()> {
     Ok(())
 }
 
-/// No-op on non-Linux platforms
-#[cfg(not(target_os = "linux"))]
+/// No-op without the rodio backend (or on non-Linux).
+#[cfg(not(all(target_os = "linux", feature = "audio-rodio")))]
 pub fn init_system_audio(_volume_percent: u8) -> Result<()> {
-    tracing::debug!("System audio init skipped (not Linux)");
+    tracing::debug!("System audio init skipped (headless / no-rodio backend)");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Channel (shared across backends)
+// ---------------------------------------------------------------------------
 
 /// Channel identifiers
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -114,13 +132,19 @@ impl Channel {
     }
 }
 
+// ===========================================================================
+// rodio backend (default)
+// ===========================================================================
+
 /// Mixer state for a single channel
+#[cfg(feature = "audio-rodio")]
 struct ChannelState {
     sink: Sink,
     volume: f32,
 }
 
 /// 4-channel mixer
+#[cfg(feature = "audio-rodio")]
 pub struct Mixer {
     stream_handle: OutputStreamHandle,
     channels: Arc<RwLock<[Option<ChannelState>; 4]>>,
@@ -129,12 +153,15 @@ pub struct Mixer {
 
 // SAFETY: OutputStream doesn't need to be held, only OutputStreamHandle
 // which is Send+Sync safe. The Arc<RwLock<_>> fields are also Send+Sync.
+#[cfg(feature = "audio-rodio")]
 unsafe impl Send for Mixer {}
 // SAFETY: Mixer only holds Arc<RwLock<_>> fields (which are Sync) and
 // OutputStreamHandle which is used via the Send-safe stream. Access to
 // shared state is guarded by the RwLock.
+#[cfg(feature = "audio-rodio")]
 unsafe impl Sync for Mixer {}
 
+#[cfg(feature = "audio-rodio")]
 impl Mixer {
     /// Create new mixer
     pub fn new(master_volume: f32) -> Result<Self> {
@@ -236,6 +263,43 @@ impl Mixer {
             state.sink.set_volume(master_vol * state.volume);
         }
     }
+}
+
+// ===========================================================================
+// null / headless backend (no rodio / libasound — aarch64-musl / Android)
+// ===========================================================================
+
+/// Headless mixer: same API, playback is a logged no-op. Lets cricket run as a companion where
+/// rodio/libasound is unavailable (and rodio's `OutputStream::try_default()` would otherwise fail).
+#[cfg(not(feature = "audio-rodio"))]
+pub struct Mixer;
+
+#[cfg(not(feature = "audio-rodio"))]
+impl Mixer {
+    pub fn new(_master_volume: f32) -> Result<Self> {
+        tracing::info!("cricket: headless audio backend (no rodio/libasound) — playback is a no-op");
+        Ok(Mixer)
+    }
+
+    #[expect(dead_code)]
+    pub async fn play(&self, channel: Channel, _sample_path: &str, looping: bool) -> Result<()> {
+        tracing::debug!(?channel, looping, "headless: play (no-op)");
+        Ok(())
+    }
+
+    pub async fn play_bytes(&self, channel: Channel, data: Vec<u8>, looping: bool) -> Result<()> {
+        tracing::debug!(?channel, bytes = data.len(), looping, "headless: play_bytes (no-op)");
+        Ok(())
+    }
+
+    pub async fn stop(&self, channel: Channel) {
+        tracing::debug!(?channel, "headless: stop (no-op)");
+    }
+
+    pub async fn set_master_volume(&self, _volume: f32) {}
+
+    #[expect(dead_code)]
+    pub async fn set_channel_volume(&self, _channel: Channel, _volume: f32) {}
 }
 
 #[cfg(test)]

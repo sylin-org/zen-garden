@@ -14,6 +14,7 @@ members = [
   "src/cricket",
   "src/firefly",
   "src/companion-sdk",
+  "src/companion-usb",
   "src/build-utils",
   "src/probe",
   "src/pavilion",

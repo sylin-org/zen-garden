@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use garden_companion_sdk::garden::{CommandTransport, SseTransport};
 use garden_companion_sdk::prelude::*;
-use garden_companion_sdk::usb_devices::{Monitor, UsbRegistry};
+use garden_companion_usb::{Monitor, UsbRegistry};
 use garden_companion_sdk::{check_dump_commands, CommandArg, CommandDef, CommandManifest};
 
 mod adapters;
@@ -148,13 +148,13 @@ async fn main() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn new_monitor() -> Result<Box<dyn Monitor>> {
-    use garden_companion_sdk::usb_devices::UdevMonitor;
+    use garden_companion_usb::UdevMonitor;
     Ok(Box::new(UdevMonitor::new()?))
 }
 
 #[cfg(not(target_os = "linux"))]
 fn new_monitor() -> Result<Box<dyn Monitor>> {
-    use garden_companion_sdk::usb_devices::PollMonitor;
+    use garden_companion_usb::PollMonitor;
     Ok(Box::new(PollMonitor::new()))
 }
 

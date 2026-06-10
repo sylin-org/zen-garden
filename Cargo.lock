@@ -2181,25 +2181,36 @@ name = "garden-companion-sdk"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "axum",
  "chrono",
  "clap",
  "futures-util",
  "garden-common",
- "mio 1.2.1",
  "reqwest 0.13.1",
  "serde",
  "serde_json",
- "serialport",
  "tempfile",
- "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "udev",
  "uuid",
+]
+
+[[package]]
+name = "garden-companion-usb"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "mio 1.2.1",
+ "serde",
+ "serialport",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "udev",
 ]
 
 [[package]]
@@ -2253,6 +2264,7 @@ dependencies = [
  "clap",
  "garden-common",
  "garden-companion-sdk",
+ "garden-companion-usb",
  "rand 0.9.4",
  "serde",
  "serde_json",

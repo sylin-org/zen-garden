@@ -12,7 +12,7 @@ use garden_companion_sdk::garden::{
     ServiceStoppedPayload, StoneTendedPayload, StorageConnectedPayload, StorageRemovedPayload,
 };
 use garden_companion_sdk::moss_client::MossLocalClient;
-use garden_companion_sdk::usb_devices::DeviceState;
+use garden_companion_usb::DeviceState;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;

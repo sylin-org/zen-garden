@@ -44,7 +44,6 @@ pub mod garden;
 pub mod moss_client;
 pub mod state;
 pub mod testing;
-pub mod usb_devices;
 
 /// Initialize tracing with the standard companion configuration:
 /// env-filter-driven, info-level default, plaintext format. Call

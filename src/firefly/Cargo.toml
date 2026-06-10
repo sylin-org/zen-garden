@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 garden-common = { path = "../common" }
 garden-companion-sdk = { path = "../companion-sdk" }
+garden-companion-usb = { path = "../companion-usb" }
 
 # Core
 anyhow.workspace = true

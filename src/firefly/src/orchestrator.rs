@@ -17,7 +17,7 @@ use crate::adapters::{MatrixAdapter, OledV1Adapter, OledV2Adapter, TDisplayAdapt
 use crate::firefly::{Firefly, FireflyKind};
 use crate::probe::FireflyProbe;
 use garden_companion_sdk::adapters::{Adapter, Adapters};
-use garden_companion_sdk::usb_devices::{RegistryEvent, UsbRegistry, UsbSerialDevice};
+use garden_companion_usb::{RegistryEvent, UsbRegistry, UsbSerialDevice};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;

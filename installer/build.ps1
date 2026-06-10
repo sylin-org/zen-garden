@@ -330,6 +330,20 @@ if ($builtPlatforms -contains "linux-x86") {
     }
 }
 
+# Move Android (linux-arm64-musl) package
+if ($builtPlatforms -contains "linux-arm64-musl") {
+    $armPackage = Get-ChildItem $config.staging.'linux-arm64-musl' -Filter "*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+    if ($armPackage) {
+        Move-Item $armPackage.FullName $config.packages.outputDir -Force
+        $sizeMB = [math]::Round($armPackage.Length / 1MB, 2)
+        Write-Host "  OK $($armPackage.Name) ($sizeMB MB)" -ForegroundColor Green
+        $packagesMoved++
+    } else {
+        Write-Warning "Android (linux-arm64-musl) package not found in staging: $($config.staging.'linux-arm64-musl')"
+    }
+}
+
 if ($packagesMoved -eq 0) {
     Write-Host "!  No packages found to consolidate (binaries built but not packaged)" -ForegroundColor Yellow
 } else {

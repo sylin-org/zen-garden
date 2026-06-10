@@ -1,10 +1,12 @@
 <#
 .SYNOPSIS
-    Build Zen Garden for all platforms including Linux x86
+    Build Zen Garden for all fleet platforms (Linux x64, Windows x64, Android arm64-musl)
 
 .DESCRIPTION
-    Convenience wrapper for build.ps1 -IncludeX86.
-    Produces 3 packages: Linux x64, Linux x86, Windows x64.
+    Convenience wrapper for build.ps1 -IncludeAndroid.
+    Produces packages for every platform a Stone runs on: Linux x64, Windows x64,
+    and Android (aarch64-musl, the native phone Stone). Linux x86 is available via
+    build.ps1 -IncludeX86 directly (no x86 Stone exists in the fleet, so it is not built here).
 
 .PARAMETER Tier
     Build tier: "core" or "full". Default: "full".
@@ -59,6 +61,7 @@ $scriptPath = Join-Path $PSScriptRoot "build.ps1"
     -Tier $Tier `
     -SkipLinux:$SkipLinux `
     -SkipWindows:$SkipWindows `
+    -IncludeAndroid `
     -DebugBuild:$DebugBuild `
     -Release:$Release `
     -Fast:$Fast `

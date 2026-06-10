@@ -30,9 +30,15 @@ clap = { workspace = true, features = ["derive", "env"] }
 serde.workspace = true
 serde_json.workspace = true
 
-# Serial port communication (only for `ports` subcommand diagnostic)
-serialport = "4.3"
 thiserror = "2"
 
 # Random for firefly animation
 rand = "0.9"
+
+# serialport pulls libudev on Linux (used by the `ports` diagnostic). musl (Android/arm64 Stone) has
+# no libudev, so drop it there — available_ports() falls back to /sys and open() is unaffected.
+[target.'cfg(not(target_env = "musl"))'.dependencies]
+serialport = "4.3"
+
+[target.'cfg(target_env = "musl")'.dependencies]
+serialport = { version = "4.3", default-features = false }

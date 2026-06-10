@@ -16,7 +16,7 @@ mod monitor;
 mod poll_monitor;
 mod registry;
 mod state;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 mod udev_monitor;
 
 pub use device::{DeviceId, PortPath, UsbDescriptor, UsbSerialDevice};
@@ -24,5 +24,5 @@ pub use monitor::{Monitor, MonitorEvent};
 pub use poll_monitor::PollMonitor;
 pub use registry::{RegistryEvent, UsbRegistry};
 pub use state::{DeviceState, StateError};
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 pub use udev_monitor::UdevMonitor;

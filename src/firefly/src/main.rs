@@ -146,13 +146,15 @@ async fn main() -> Result<()> {
     result
 }
 
-#[cfg(target_os = "linux")]
+// Event-driven libudev hotplug only on glibc Linux. musl (the Android/arm64 Stone) has no libudev,
+// so it uses the cross-platform PollMonitor — the same path Windows/macOS use.
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 fn new_monitor() -> Result<Box<dyn Monitor>> {
     use garden_companion_usb::UdevMonitor;
     Ok(Box::new(UdevMonitor::new()?))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", not(target_env = "musl"))))]
 fn new_monitor() -> Result<Box<dyn Monitor>> {
     use garden_companion_usb::PollMonitor;
     Ok(Box::new(PollMonitor::new()))

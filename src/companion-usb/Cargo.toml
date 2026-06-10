@@ -18,12 +18,21 @@ tracing.workspace = true
 serde.workspace = true
 
 # USB serial discovery + device lifecycle
-serialport = "4.3"
 thiserror = "2"
 async-trait = "0.1"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-# Event-driven hotplug on Linux (firefly etc.); PollMonitor is the cross-platform fallback.
+# serialport pulls libudev on Linux for port enumeration. musl (the Android/arm64 Stone build) has
+# no libudev, so drop it there — open() and /sys-based listing still work, and device identity comes
+# from probing. Desktop/glibc keeps the richer libudev enumeration.
+[target.'cfg(not(target_env = "musl"))'.dependencies]
+serialport = "4.3"
+
+[target.'cfg(target_env = "musl")'.dependencies]
+serialport = { version = "4.3", default-features = false }
+
+# Event-driven hotplug via libudev on glibc Linux (firefly etc.); the cross-platform PollMonitor is
+# the fallback. libudev is absent on musl, so gate udev/mio out there — musl uses PollMonitor.
+[target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]
 udev = "0.9"
 mio = { version = "1", features = ["os-poll", "os-ext"] }
 

@@ -10,14 +10,16 @@
     architecture tag (arm64-musl). The package keeps Platform="linux" so package.json.platform is
     "linux" — which the deploy handler already accepts on the phone (moss is target_os=linux).
 
-    cricket is excluded on arm64-musl: it links GNU libasound, absent on Android/bionic. See
-    docs/notes/cricket-android-audio-research.md for the target-agnostic follow-on.
+    Companions are target-agnostic on arm64-musl: cricket builds --no-default-features (null audio
+    backend, no libasound), and firefly gates libudev behind cfg(not(target_env = "musl")) so it
+    uses the cross-platform PollMonitor USB path. Only lantern (registry + web frontend) is not a
+    phone-Stone component and is excluded.
 
 .PARAMETER Version
     Version string (e.g., "0.2.202601251234").
 
 .PARAMETER Tier
-    "core" (moss + rake) or "full" (+ lantern, firefly). Default: core — a phone Stone needs little.
+    "core" (moss + rake) or "full" (+ cricket, firefly companions; lantern excluded). Default: core.
 
 .PARAMETER DebugBuild / Release / Fast / ForceRebuild / SkipPackage / Jobs
     As build-linux-arm64.ps1.
@@ -61,10 +63,12 @@ Write-Host "Version: $Version" -ForegroundColor Cyan
 Write-Host "Tier: $Tier" -ForegroundColor Cyan
 Write-Host ""
 
-# Targets for this tier. cricket is target-agnostic (compiled --no-default-features → null audio
-# backend, no libasound). firefly still needs the USB domain (libudev), not yet available on
-# Android/musl; lantern (registry + web frontend) isn't a phone-Stone component — exclude both.
-$buildTargets = @(Get-CargoBuildTargets -Config $config -Tier $Tier | Where-Object { $_ -ne 'garden-firefly' -and $_ -ne 'garden-lantern' })
+# Targets for this tier. cricket is target-agnostic (--no-default-features → null audio backend, no
+# libasound). firefly is now target-agnostic too: garden-companion-usb gates libudev behind
+# cfg(not(target_env = "musl")), so on musl it uses the cross-platform PollMonitor path (no libudev)
+# — it builds and runs, ready to stream to an RP2040/ESP32 the moment one appears on /dev/ttyACM*.
+# Only lantern (registry + web frontend) is excluded — it isn't a phone-Stone component.
+$buildTargets = @(Get-CargoBuildTargets -Config $config -Tier $Tier | Where-Object { $_ -ne 'garden-lantern' })
 Write-Host "Building: $($buildTargets -join ', ')" -ForegroundColor Yellow
 
 $buildScript = Join-Path $PSScriptRoot "compile-linux-arm64-musl.ps1"

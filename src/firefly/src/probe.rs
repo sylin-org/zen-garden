@@ -27,6 +27,8 @@ const _: () = assert!(
 pub enum ProbeError {
     #[error("device did not respond within deadline")]
     Timeout,
+    #[error("legacy firefly firmware (pre-JSON identity) — re-run NewFirefly to update the board")]
+    LegacyFirmware,
     #[error("i/o error: {0}")]
     Io(String),
     #[error("line stream closed")]
@@ -81,6 +83,15 @@ impl FireflyProbe {
                         );
                         return Ok(Firefly::new(device, identity));
                     }
+                    if is_legacy_identity(&line) {
+                        tracing::debug!(
+                            device = %device.id(),
+                            elapsed_ms = started.elapsed().as_millis() as u64,
+                            line = %line,
+                            "probe: legacy (pre-JSON) firefly identity"
+                        );
+                        return Err(ProbeError::LegacyFirmware);
+                    }
                 }
                 Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
                     tracing::debug!(device = %device.id(), skipped = n, "probe: broadcast lagged");
@@ -116,6 +127,18 @@ fn try_parse_identity(line: &str) -> Option<Identity> {
     }
     let value: Value = serde_json::from_str(json_str).ok()?;
     Identity::parse(value).ok()
+}
+
+/// Detect a legacy (pre-JSON) firefly identity reply. Old firmware answers `I`
+/// with a CSV line like `OK,firefly-oled,esp8266,...` rather than JSON. Recognising
+/// it lets the probe report a clear "update the firmware" reason instead of a
+/// misleading timeout — the board *is* a firefly, just on the old protocol.
+fn is_legacy_identity(line: &str) -> bool {
+    let line = line.trim();
+    let rest = line.strip_prefix("OK,").unwrap_or(line);
+    let rest = rest.strip_prefix("* HELLO,").unwrap_or(rest);
+    let rest = rest.trim_start();
+    rest.starts_with("firefly-") || rest.starts_with("firefly,")
 }
 
 #[cfg(test)]
@@ -156,5 +179,25 @@ mod tests {
         assert!(try_parse_identity("booting...").is_none());
         assert!(try_parse_identity("OK,ready").is_none());
         assert!(try_parse_identity("").is_none());
+    }
+
+    #[test]
+    fn detects_legacy_csv_identity() {
+        assert!(is_legacy_identity(
+            "OK,firefly-oled,esp8266,128x64,dual-zone:yellow:16:blue:48,v0.2.0"
+        ));
+        assert!(is_legacy_identity("OK,firefly-oled-v2,esp8266,128x64"));
+        assert!(is_legacy_identity("* HELLO,firefly-matrix,rp2040"));
+        // a legacy line is not a valid (JSON) identity — so the probe would
+        // otherwise loop to a misleading timeout
+        assert!(try_parse_identity("OK,firefly-oled,esp8266,128x64,v0.2.0").is_none());
+    }
+
+    #[test]
+    fn legacy_detector_ignores_json_and_noise() {
+        assert!(!is_legacy_identity(r#"OK,{"family":"firefly","variant":"oled"}"#));
+        assert!(!is_legacy_identity("booting..."));
+        assert!(!is_legacy_identity("OK,ready"));
+        assert!(!is_legacy_identity(""));
     }
 }

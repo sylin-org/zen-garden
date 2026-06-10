@@ -15,7 +15,7 @@
 
 use crate::adapters::{MatrixAdapter, OledV1Adapter, OledV2Adapter, TDisplayAdapter};
 use crate::firefly::{Firefly, FireflyKind};
-use crate::probe::FireflyProbe;
+use crate::probe::{FireflyProbe, ProbeError};
 use garden_companion_sdk::adapters::{Adapter, Adapters};
 use garden_companion_usb::{RegistryEvent, UsbRegistry, UsbSerialDevice};
 use std::path::PathBuf;
@@ -112,7 +112,14 @@ async fn evaluate_and_spawn(
         }
         Err(e) => {
             let reason = e.to_string();
-            info!(device = %id, reason = %reason, "not a firefly; rejecting");
+            match e {
+                ProbeError::LegacyFirmware => warn!(
+                    device = %id,
+                    reason = %reason,
+                    "firefly on legacy firmware — re-run NewFirefly to update the board"
+                ),
+                _ => info!(device = %id, reason = %reason, "not a firefly; rejecting"),
+            }
             let _ = device.reject(reason);
         }
     }

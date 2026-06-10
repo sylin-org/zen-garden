@@ -147,9 +147,40 @@ pub fn get_local_ip() -> String {
         }
     }
 
+    // Route-based fallback: works where interface enumeration is unavailable or
+    // incomplete — notably a musl binary on Android, where the LAN interface is
+    // present and routable but `if-addrs`/netlink returns nothing. Uses the
+    // routing table (via a UDP `connect`) rather than enumerating interfaces.
+    if let Some(ip) = get_local_ip_via_route() {
+        tracing::debug!(ip = %ip, "Local IP detected via route lookup");
+        return ip;
+    }
+
     // Last resort fallback
     tracing::warn!("All IP detection methods failed, using 127.0.0.1");
     "127.0.0.1".to_string()
+}
+
+/// Route-based source-IP detection (the UDP `connect` trick).
+///
+/// Opens a UDP socket and `connect()`s it toward a public address. No packets
+/// are sent — `connect` on a datagram socket only makes the kernel resolve which
+/// local source address it would use to reach that destination, which we then
+/// read back via `local_addr()`. This succeeds where `getifaddrs`/netlink
+/// enumeration (`if-addrs`) does not: e.g. a musl binary on Android, where the
+/// LAN interface is routable but not enumerable. Requires a default route
+/// (present on any Wi-Fi/ethernet-connected stone); returns `None` otherwise.
+fn get_local_ip_via_route() -> Option<String> {
+    use std::net::UdpSocket;
+
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    // 8.8.8.8:80 is never contacted — it only anchors the route lookup.
+    socket.connect("8.8.8.8:80").ok()?;
+    let ip = socket.local_addr().ok()?.ip();
+    if ip.is_loopback() || ip.is_unspecified() {
+        return None;
+    }
+    Some(ip.to_string())
 }
 
 /// Try to get local IP with priority-based selection
@@ -354,5 +385,16 @@ mod tests {
     fn test_parse_mac_address_invalid_hex() {
         let result = parse_mac_address("AA:BB:CC:DD:EE:GG");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn route_based_ip_is_never_loopback() {
+        // Environment-dependent: may be None in sandboxes without a default
+        // route. The invariant is that it never yields a loopback/unspecified
+        // address — that's the whole point (a usable address or nothing).
+        if let Some(ip) = get_local_ip_via_route() {
+            assert!(!ip.starts_with("127."), "got loopback: {ip}");
+            assert_ne!(ip, "0.0.0.0");
+        }
     }
 }

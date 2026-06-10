@@ -245,6 +245,16 @@ async fn build_state(
     let stone_id = infra::load_or_generate_stone_id().await;
     tracing::info!(stone_id = %stone_id, stone_name = %stone_name, "Stone identity loaded");
 
+    // Phase 0.05: Heal the OS hostname to match stone_name on EVERY boot.
+    // koi's mDNS responder advertises `<system-hostname>.local`; the first-boot
+    // baptism sets the hostname once, but platforms with a transient hostname
+    // (Android — the kernel hostname resets to "localhost" on reboot) drift back,
+    // so `http://stone-<name>` stops resolving. Re-applying each boot keeps it
+    // correct. Idempotent: a no-op when the hostname already matches (Linux).
+    // Windows has its own every-boot DNS hostname maintenance task.
+    #[cfg(not(target_os = "windows"))]
+    heal_system_hostname(&stone_name).await;
+
     // Phase 0.1: Self-heal systemd unit file if stale (legacy migration).
     // On stones that still have the old `moss-update-helper.sh` as ExecStartPre,
     // `garden-moss pre-start` never runs. This bootstrap check regenerates the
@@ -1250,6 +1260,57 @@ async fn configure_resolved_for_containers(bridge_gw: &str) -> anyhow::Result<()
 #[cfg(not(target_os = "linux"))]
 async fn configure_resolved_for_containers(_bridge_gw: &str) -> anyhow::Result<()> {
     Ok(())
+}
+
+/// Heal the OS hostname to match `stone_name` on every boot (non-Windows).
+///
+/// koi's mDNS responder advertises `<system-hostname>.local`. On Android the kernel
+/// hostname is transient and resets to "localhost" on reboot, and the first-boot
+/// baptism only runs once — so the live hostname drifts and `stone-<name>` stops
+/// resolving over mDNS. Re-applying here each boot keeps it correct. Idempotent: a
+/// no-op when the hostname already matches (the common case on Linux, where
+/// /etc/hostname persists it).
+#[cfg(not(target_os = "windows"))]
+async fn heal_system_hostname(stone_name: &str) {
+    let current = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_default();
+    if current == stone_name {
+        return;
+    }
+    tracing::warn!(
+        current = %current,
+        target = %stone_name,
+        "system hostname does not match stone_name; healing (mDNS advertises <hostname>.local)"
+    );
+
+    // Persist to the hostname file where the platform has a writable one (Linux).
+    // On Android this is `Skip` (no /etc/hostname, read-only /etc), where only the
+    // live kernel hostname matters.
+    if let garden_common::host::WritePolicy::Write(path) =
+        &garden_common::host::profile().identity.hostname
+    {
+        if let Err(e) = tokio::fs::write(path, format!("{stone_name}\n")).await {
+            tracing::warn!(error = %e, path = %path.display(), "hostname-file heal write failed (non-fatal)");
+        }
+    }
+
+    // Set the live kernel hostname (transient on Android — re-applied next boot).
+    match tokio::process::Command::new("hostname")
+        .arg(stone_name)
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => {
+            tracing::info!(hostname = %stone_name, "system hostname healed")
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            tracing::warn!(stderr = %stderr.trim(), "hostname command failed during heal");
+        }
+        Err(e) => tracing::warn!(error = %e, "could not run hostname command during heal"),
+    }
 }
 
 /// Finish first-boot: restart-to-apply on a supervised (systemd) host, else keep running.

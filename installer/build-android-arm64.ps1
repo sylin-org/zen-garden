@@ -61,8 +61,10 @@ Write-Host "Version: $Version" -ForegroundColor Cyan
 Write-Host "Tier: $Tier" -ForegroundColor Cyan
 Write-Host ""
 
-# Targets for this tier, minus cricket (no ALSA on Android/bionic).
-$buildTargets = @(Get-CargoBuildTargets -Config $config -Tier $Tier | Where-Object { $_ -ne 'garden-cricket' })
+# Targets for this tier. cricket is target-agnostic (compiled --no-default-features → null audio
+# backend, no libasound). firefly still needs the USB domain (libudev), not yet available on
+# Android/musl; lantern (registry + web frontend) isn't a phone-Stone component — exclude both.
+$buildTargets = @(Get-CargoBuildTargets -Config $config -Tier $Tier | Where-Object { $_ -ne 'garden-firefly' -and $_ -ne 'garden-lantern' })
 Write-Host "Building: $($buildTargets -join ', ')" -ForegroundColor Yellow
 
 $buildScript = Join-Path $PSScriptRoot "compile-linux-arm64-musl.ps1"

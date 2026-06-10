@@ -165,7 +165,9 @@ try {
     foreach ($target in $buildTargets) {
         Write-Host "  -> Building $target (aarch64-musl, static)..." -ForegroundColor Cyan
         $cargoArgs = @("cargo", "build", "--frozen", "--target", $RUST_TARGET, "-j", "$parallelJobs") + $profileArgs
-        if ($target -eq "garden-moss") { $cargoArgs += "--no-default-features" }
+        # moss drops the udev feature; cricket drops the rodio/libasound feature (null audio
+        # backend) — both need --no-default-features to build on musl/Android (no libudev/libasound).
+        if ($target -eq "garden-moss" -or $target -eq "garden-cricket") { $cargoArgs += "--no-default-features" }
         $cargoArgs += @("--bin", $target)
         docker exec -e CARGO_BUILD_NUMBER=$env:CARGO_BUILD_NUMBER -e CARGO_TARGET_DIR=/target $CONTAINER_NAME $cargoArgs
         if ($LASTEXITCODE -ne 0) { throw "Build failed for $target" }

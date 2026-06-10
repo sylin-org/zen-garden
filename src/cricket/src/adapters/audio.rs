@@ -53,7 +53,6 @@ pub struct AudioFactory {
     mixer: Arc<Mixer>,
     tunes: Arc<Tunes>,
     enabled: Arc<Mutex<bool>>,
-    produced: std::sync::atomic::AtomicBool,
 }
 
 impl AudioFactory {
@@ -62,7 +61,6 @@ impl AudioFactory {
             mixer,
             tunes,
             enabled,
-            produced: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -73,12 +71,11 @@ impl AdapterFactory for AudioFactory {
     }
 
     fn discover(&self) -> Vec<Box<dyn Adapter>> {
-        // Singleton: produce on first tick, never again. The supervisor
-        // dedupes by (kind, id) anyway, but this is the honest signal.
-        use std::sync::atomic::Ordering;
-        if self.produced.swap(true, Ordering::SeqCst) {
-            return Vec::new();
-        }
+        // Always advertise the singleton adapter. The supervisor reaps any adapter absent from a
+        // discovery tick (past the grace window); it dedupes by `info.id`, so re-advertising just
+        // refreshes the running adapter's `last_seen` (no duplicate spawn) and keeps it alive.
+        // (Producing only once let the supervisor reap it after ~one interval, which silently
+        // killed command handling — moss command-forwards then timed out with 504.)
         vec![Box::new(AudioAdapter {
             id: "default".to_string(),
             mixer: self.mixer.clone(),

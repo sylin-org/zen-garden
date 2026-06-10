@@ -28,7 +28,10 @@ function Get-DistConfig {
         $config.staging | Add-Member -NotePropertyName 'linuxX86' -NotePropertyValue (Resolve-ConfigPath $config.staging.'linux-x86' $configDir) -Force
     }
     $config.staging.'windows-x64' = Resolve-ConfigPath $config.staging.'windows-x64' $configDir
-    
+    if ($config.staging.'linux-arm64-musl') {
+        $config.staging.'linux-arm64-musl' = Resolve-ConfigPath $config.staging.'linux-arm64-musl' $configDir
+    }
+
     return $config
 }
 

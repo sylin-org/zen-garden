@@ -12,6 +12,11 @@ tokio = { workspace = true, features = ["sync", "time", "macros", "fs", "io-util
 chrono = { workspace = true, features = ["serde"] }
 thiserror.workspace = true
 reqwest = { workspace = true, features = ["json", "webpki-roots"] }
+# Bundled TLS roots for the profile-driven HTTP client factory (http.rs) — the one place that
+# builds reqwest clients with roots chosen by HostProfile.tls.root_source (works on Android/bionic
+# where there's no system trust store and reqwest's rustls platform-verifier would fail at build).
+rustls = "0.23"
+webpki-roots = "1"
 anyhow.workspace = true
 async-stream.workspace = true
 tokio-stream.workspace = true

@@ -41,8 +41,10 @@ use tokio_util::sync::CancellationToken;
 
 /// Shared HTTP client for SSE connections. No overall timeout because SSE
 /// streams are long-lived; per-attempt error recovery is handled in-loop.
+/// Built via the per-profile HTTP factory (`garden_common::http`) so TLS roots are
+/// platform-correct (Android/bionic lacks a system trust store).
 static SSE_HTTP: LazyLock<reqwest::Client> =
-    LazyLock::new(|| reqwest::Client::builder().build().expect("SSE HTTP client"));
+    LazyLock::new(|| garden_common::http::client_builder().build().expect("SSE HTTP client"));
 
 /// Exponential backoff schedule (seconds) for reconnection.
 const BACKOFF_SECS: [u64; 6] = [1, 2, 4, 8, 16, 32];

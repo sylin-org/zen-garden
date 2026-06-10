@@ -13,6 +13,7 @@ pub mod detection;
 pub mod discovery;
 pub mod domain;
 pub mod host;
+pub mod http;
 pub mod election;
 pub mod errors;
 pub mod events;

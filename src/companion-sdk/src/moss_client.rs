@@ -19,17 +19,19 @@ use std::time::Duration;
 /// on loopback — anything slower than this is moss being unhealthy.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Shared `reqwest::Client` — connection pooling matters even for
-/// loopback because adapter-side rehydration may fire repeatedly.
+/// Shared `reqwest::Client` — connection pooling matters even for loopback because adapter-side
+/// rehydration may fire repeatedly. Built via the per-profile HTTP factory (`garden_common::http`)
+/// so TLS roots are platform-correct: Android/bionic has no system trust store, where reqwest's
+/// default rustls platform-verifier would otherwise panic at client build.
 fn shared_http() -> Arc<reqwest::Client> {
     static CLIENT: OnceLock<Arc<reqwest::Client>> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
             Arc::new(
-                reqwest::Client::builder()
+                garden_common::http::client_builder()
                     .timeout(DEFAULT_TIMEOUT)
                     .build()
-                    .expect("default reqwest client"),
+                    .expect("companion moss-client"),
             )
         })
         .clone()

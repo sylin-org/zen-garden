@@ -2159,6 +2159,7 @@ dependencies = [
  "rand 0.9.4",
  "regex",
  "reqwest 0.13.1",
+ "rustls",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -2172,6 +2173,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "walkdir",
+ "webpki-roots 1.0.7",
  "windows 0.52.0",
  "windows-sys 0.52.0",
 ]

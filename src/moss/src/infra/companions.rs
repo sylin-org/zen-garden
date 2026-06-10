@@ -272,6 +272,12 @@ impl CompanionRegistry {
 
     /// Scan Companions directory and register all found Companions
     pub async fn scan(&self) -> Result<usize> {
+        // Self-heal: a legacy installer (the old `moss-update-helper.sh`, still the ExecStartPre on
+        // stones whose unit predates the `garden-moss pre-start` migration) hardcodes companions to
+        // `bin_install/companions`, but we scan `profile().paths.companions`. Move any found there
+        // into the scan dir so the scan registers them regardless of which installer ran.
+        consolidate_legacy_companions(&self.companions_path);
+
         let companions_path = &self.companions_path;
 
         // Ensure directory exists
@@ -1035,6 +1041,83 @@ fn sigterm_process_by_pid(pid: u32) {
 /// Scans for any executable file in the Companion folder.
 /// On Windows: looks for .exe files
 /// On Linux: looks for files with execute permission
+/// Move companions a legacy installer left in `bin_install/companions` into the canonical scan dir.
+///
+/// The legacy `moss-update-helper.sh` updater hardcodes `/usr/local/bin/companions`
+/// (= `bin_install/companions` on a standard Linux stone), while the running moss scans
+/// `profile().paths.companions` (`{data}/companions`). On a stone still running that legacy
+/// ExecStartPre, companions land outside the scan dir and never register. Copy any the scan dir is
+/// MISSING into it (never overwriting one already present, so a healthy stone with a stale legacy
+/// dir beside the current one is untouched). Idempotent — once the scan dir holds the binary, the
+/// `has_companion_binary` guard short-circuits.
+fn consolidate_legacy_companions(scan_dir: &Path) {
+    let legacy = garden_common::host::profile().paths.bin_install.join("companions");
+    if legacy == *scan_dir || !legacy.exists() {
+        return;
+    }
+    let Ok(companions) = std::fs::read_dir(&legacy) else {
+        return;
+    };
+    for entry in companions.flatten() {
+        let src = entry.path();
+        if !src.is_dir() {
+            continue;
+        }
+        let dest = scan_dir.join(entry.file_name());
+        if has_companion_binary(&dest) {
+            continue; // scan dir already has this companion — never overwrite
+        }
+        if std::fs::create_dir_all(&dest).is_err() {
+            continue;
+        }
+        if let Ok(files) = std::fs::read_dir(&src) {
+            for file in files.flatten() {
+                let fp = file.path();
+                if fp.is_file() {
+                    let _ = std::fs::copy(&fp, dest.join(file.file_name()));
+                }
+            }
+        }
+        tracing::info!(
+            companion = %entry.file_name().to_string_lossy(),
+            from = %legacy.display(),
+            to = %dest.display(),
+            "consolidated legacy companion into the scan dir"
+        );
+    }
+}
+
+/// True if `dir` holds a runnable companion binary — same name shape as `find_companion_executable`
+/// (no extension on unix, `.exe` on Windows), so a `.old` backup or data file does not count.
+fn has_companion_binary(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        #[cfg(windows)]
+        if path.extension().map(|e| e == "exe").unwrap_or(false) {
+            return true;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if path.extension().is_none()
+                && path
+                    .metadata()
+                    .map(|m| m.permissions().mode() & 0o111 != 0)
+                    .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 async fn find_companion_executable(companion_dir: &Path) -> Option<PathBuf> {
     // Find the companion binary. It is named `garden-<id>` with no extension on unix (`.exe` on
     // Windows). Other files in the folder may carry the executable bit and MUST NOT be launched —

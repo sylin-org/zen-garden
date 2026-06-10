@@ -21,8 +21,13 @@ use super::version::{InstallMethod, InstalledVersion};
 /// prints the current version and exits quickly.
 pub fn run(dry_run: bool) -> anyhow::Result<()> {
     // ── Legacy migration (runs every boot, fast no-op when clean) ───
+    // Non-fatal: a read-only /etc can block unit regeneration, but that must never abort pre-start
+    // (bailing here is what stranded ExecStartPre at a deleted script and bricked stones on restart).
+    // Apply the staged upgrade regardless; migrate_legacy maintains a shim in that case.
     if !dry_run {
-        migrate_legacy()?;
+        if let Err(e) = migrate_legacy() {
+            eprintln!("[pre-start] legacy migration warning (non-fatal): {e}");
+        }
     }
 
     let staging_dir = validated_staging_dir();
@@ -66,64 +71,125 @@ pub fn run(dry_run: bool) -> anyhow::Result<()> {
 
 // ── Legacy migration ────────────────────────────────────────────────
 
-/// One-time self-healing migration from the old shell-script updater.
+/// Self-healing migration onto the single canonical installer (`garden-moss pre-start`).
 ///
-/// 1. Removes legacy shell scripts replaced by `garden-moss pre-start`.
-/// 2. Regenerates the systemd unit file if it contains stale directives
-///    (old ExecStartPre, Type=simple, ProtectSystem, missing WatchdogSec).
+/// Order matters and is the whole point:
+/// 1. **Regenerate the unit if stale** — but *non-fatally*. On an immutable/read-only `/etc` the
+///    write fails with `EROFS`; we log and keep the legacy `ExecStartPre` rather than aborting.
+/// 2. **Reconcile legacy scripts against the unit** — NEVER delete a script the unit still
+///    references (that strands `ExecStartPre` at a missing file — the exact bricking this recovers
+///    from). On a read-only-`/etc` stone the legacy `ExecStartPre` is kept and turned into a thin
+///    shim → `garden-moss pre-start`. On a writable stone the unit was regenerated to drop it, so
+///    it is removed.
 ///
-/// Each check is a file-exists or string-contains test — fast on every boot.
-/// Once the artifacts are gone and the unit file is current, this is a no-op.
-fn migrate_legacy() -> anyhow::Result<()> {
+/// Fast on every boot (string-contains + file-exists), a no-op once converged. Called from BOTH
+/// `pre-start` and the main daemon bootstrap — the bootstrap call is essential because a stone whose
+/// unit still has the legacy `ExecStartPre=moss-update-helper.sh` never runs `garden-moss pre-start`.
+pub(crate) fn migrate_legacy() -> anyhow::Result<()> {
     // Systemd-only: legacy unit/script migration is meaningless where there's no systemd
-    // (Android runs under the watchdog). Skip to avoid futile systemctl calls.
+    // (Android runs under the watchdog; Windows under the SCM). Skip to avoid futile work.
     if garden_common::host::profile().runtime.scheduler != garden_common::host::Scheduler::Systemd {
         return Ok(());
     }
-    let mut changed = false;
 
-    // ── Remove legacy scripts ──────────────────────────────────────
-    #[cfg(target_os = "linux")]
-    for path_str in super::linux::LEGACY_SCRIPTS {
-        let path = Path::new(path_str);
-        if path.exists() {
-            match std::fs::remove_file(path) {
-                Ok(()) => {
-                    println!("[pre-start] Removed legacy script: {path_str}");
-                    changed = true;
-                }
-                Err(e) => {
-                    eprintln!("[pre-start] Warning: could not remove {path_str}: {e}");
-                }
-            }
-        }
-    }
-
-    // ── Regenerate unit file if stale ──────────────────────────────
     #[cfg(target_os = "linux")]
     {
+        let mut changed = false;
+
+        // ── 1. Regenerate the unit file if stale (non-fatal) ───────
+        // On a read-only /etc the write fails (EROFS). Keep the legacy ExecStartPre and shim it
+        // below instead of bailing. Read the unit first so the reconciliation knows what
+        // ExecStartPre still references after the (attempted) regen.
+        let mut unit_contents = String::new();
         let unit_path = Path::new(super::linux::UNIT_FILE_PATH);
-        if unit_path.exists() {
-            if let Ok(current) = std::fs::read_to_string(unit_path) {
-                if unit_file_needs_regeneration(&current) {
-                    let new_contents = super::linux::generate_unit_file();
-                    std::fs::write(unit_path, &new_contents).with_context(|| {
-                        format!("failed to regenerate unit file at {}", unit_path.display())
-                    })?;
-                    println!("[pre-start] Regenerated systemd unit file (legacy migration).");
-                    changed = true;
+        if let Ok(current) = std::fs::read_to_string(unit_path) {
+            unit_contents = current;
+            if unit_file_needs_regeneration(&unit_contents) {
+                let new_contents = super::linux::generate_unit_file();
+                match std::fs::write(unit_path, &new_contents) {
+                    Ok(()) => {
+                        println!("[pre-start] Regenerated systemd unit file (legacy migration).");
+                        unit_contents = new_contents;
+                        changed = true;
+                    }
+                    Err(e) => eprintln!(
+                        "[pre-start] Unit not regenerated ({e}); keeping legacy ExecStartPre and shimming it."
+                    ),
                 }
             }
         }
-    }
 
-    // ── daemon-reload if anything changed ──────────────────────────
-    if changed {
-        println!("[pre-start] Running systemctl daemon-reload...");
-        let _ = Command::new("systemctl").args(["daemon-reload"]).output();
+        // ── 2. Reconcile legacy scripts against the unit ───────────
+        for path_str in super::linux::LEGACY_SCRIPTS {
+            let path = Path::new(path_str);
+            let referenced = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|name| unit_contents.contains(name))
+                .unwrap_or(false);
+            if referenced {
+                // Unit still calls this script (read-only /etc). Keep it as a canonical shim.
+                ensure_legacy_shim(path);
+            } else if path.exists() {
+                match std::fs::remove_file(path) {
+                    Ok(()) => {
+                        println!("[pre-start] Removed legacy script: {path_str}");
+                        changed = true;
+                    }
+                    Err(e) => eprintln!("[pre-start] Warning: could not remove {path_str}: {e}"),
+                }
+            }
+        }
+
+        if changed {
+            println!("[pre-start] Running systemctl daemon-reload...");
+            let _ = Command::new("systemctl").args(["daemon-reload"]).output();
+        }
     }
 
     Ok(())
+}
+
+/// Maintain a legacy `ExecStartPre` script as a thin shim to `garden-moss pre-start`.
+///
+/// Used only on stones whose systemd unit is on a read-only `/etc` and therefore cannot be
+/// regenerated to drop the legacy `ExecStartPre`. Deleting the referenced script would strand
+/// `ExecStartPre` at a missing file (the brick); instead we make it delegate to the canonical
+/// updater. Idempotent — a no-op once the file already delegates to `pre-start`.
+#[cfg(target_os = "linux")]
+fn ensure_legacy_shim(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let moss = garden_common::host::profile()
+        .paths
+        .bin_install
+        .join("garden-moss");
+    let shim = format!(
+        "#!/bin/sh\n\
+         # Canonical shim (DEPLOY-0001). This stone's systemd unit is on a read-only /etc and still\n\
+         # references this path as ExecStartPre; the unit cannot be regenerated in place, so delegate\n\
+         # to the canonical updater. `garden-moss pre-start` is idempotent and a no-op when nothing\n\
+         # is staged.\n\
+         exec {} pre-start \"$@\"\n",
+        moss.display()
+    );
+    let already = std::fs::read_to_string(path)
+        .map(|c| c.contains("pre-start"))
+        .unwrap_or(false);
+    if already {
+        return;
+    }
+    if let Err(e) = std::fs::write(path, &shim) {
+        eprintln!(
+            "[pre-start] Warning: could not maintain shim {}: {e}",
+            path.display()
+        );
+        return;
+    }
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
+    println!(
+        "[pre-start] Maintained ExecStartPre shim -> garden-moss pre-start: {}",
+        path.display()
+    );
 }
 
 /// Returns true if the unit file contains legacy directives that indicate

@@ -70,6 +70,16 @@ pub async fn run(
     let file_config = config.file_config.clone();
     let (state, artifacts) = build_state(config, log).await?;
 
+    // DEPLOY-0001 convergence: the running daemon is always the new binary (`ExecStart`), so it can
+    // self-heal the host's systemd unit regardless of what a stale unit's `ExecStartPre` is. This is
+    // what migrates a stone off the legacy `moss-update-helper.sh` (which installs companions to the
+    // wrong path and never self-migrates) onto the canonical `garden-moss pre-start`. The migration
+    // cannot live only in `pre-start` — a stale unit never invokes it. No-op once the unit is current.
+    #[cfg(target_os = "linux")]
+    if let Err(e) = crate::infra::installer::pre_start::migrate_legacy() {
+        tracing::warn!(error = %e, "host config migration failed (non-fatal)");
+    }
+
     // Write MOTD on every startup with whatever is known at this point.
     // Hardware may not be fully detected yet (that happens in background), so
     // cpu/ram/gpu may be None -- the MOTD writer handles that gracefully.

@@ -21,16 +21,19 @@
     mongo up, docker healthy. Recovery escape hatch: re-run `deploy-android.ps1` bootstrap.
 - ✅ `build.ps1 -IncludeAndroid` + `dist.json` `android-arm64` entry + `deploy.ps1` aarch64 routing
   (commit `e30be405`) — **one pipeline now builds AND deploys the phone**, same as every stone.
-- **Remaining:** (1) wyse `stone-silent-cascade` linux-x64 HTTP-deploy confirmation — **BLOCKED on
-  identification**: a LAN `:7185` scan found 7 stones up — five linux/x86_64 on `0.2.0.202606041036`
-  (`192.168.1.82/.97/.111/.168/.222`), the phone (`.120`, aarch64, new build), and a windows stone
-  (`.145`). `/health` returns no stone name, UDP discovery doesn't work from the dev box (virtual-adapter
-  interfaces), and SSHing the production stones to read hostnames is out of scope (`.222`=gentle-cliff
-  is explicitly off-limits). **Need the user to confirm the wyse's IP** before deploying — won't touch
-  an unidentified production stone. The Linux path is low-risk (moss installs to `/usr/local/bin`
-  unchanged; only companions moved to the scan dir, which is a fix; systemd ignores the exit code).
-  (2) SSH on Android; (3) cricket target-agnostic audio. The core "phone updates via HTTP, one
-  flow + one pipeline" is DONE + proven.
+- ✅ **LINUX HTTP DEPLOY VALIDATED on halcyon-savanna (`192.168.1.109`, x86_64, systemd).** Built a
+  real linux-x64 package (`build-linux-x64.ps1`, `0.2.202606072000`). Deploy #1: `POST /deploy` →
+  systemd restart → `ExecStartPre=garden-moss pre-start` → version `202606041036 → 202606072000`,
+  healthy. Deploy #2 (new handler + new pre-start): `systemctl status` shows
+  `ExecStartPre=... pre-start (status=0/SUCCESS)`, moss from `/usr/local/bin`, and **firefly running
+  from `/var/lib/zen-garden/companions/firefly`** — the companions install≠scan fix confirmed live.
+  Both platform types proven: Android (watchdog) + Linux (systemd).
+- **Remaining (follow-ons):** (1) SSH on Android — needs a static dropbear/sshd binary sourced + a
+  boot hook. (2) cricket target-agnostic audio (research: `docs/notes/cricket-android-audio-research.md`).
+  The core — phone via HTTP, one flow, one pipeline, validated on both platform types — is DONE.
+- SSH to authorized stones via plink with `-hostkey` (host-key prompt + `-batch` don't mix); halcyon
+  key fp `SHA256:clHWjuMiaZ0DZnFHzLKtq/hf07ApLMIfpXFJKWGjC8Y`. `sudo journalctl` hangs under `-batch`
+  (password prompt); use non-sudo `systemctl status` instead.
 - adb-over-TCP persistent (`persist.adb.tcp.port=5555`).
 
 ## Access + safety nets

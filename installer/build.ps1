@@ -65,6 +65,7 @@ param(
     [switch]$SkipLinux,
     [switch]$SkipWindows,
     [switch]$IncludeX86,
+    [switch]$IncludeAndroid,
     [switch]$DebugBuild,
     [switch]$Release,
     [switch]$Fast,
@@ -222,6 +223,35 @@ if ($IncludeX86) {
     catch {
         $buildErrors += "Linux x86: $_"
         Write-Host "X Linux x86 build failed: $_`n" -ForegroundColor Red
+    }
+}
+
+# Build Android (aarch64-musl, native phone Stone)
+if ($IncludeAndroid) {
+    Write-Host "===================================================" -ForegroundColor Magenta
+    Write-Host " Android (aarch64-musl) Build" -ForegroundColor Magenta
+    Write-Host "===================================================`n" -ForegroundColor Magenta
+
+    $androidScript = Join-Path $PSScriptRoot $config.'android-arm64'.buildScript
+    try {
+        & $androidScript `
+            -Version $version `
+            -Tier $Tier `
+            -DebugBuild:$DebugBuild `
+            -Fast:($Fast -or (-not $DebugBuild -and -not $Release)) `
+            -ForceRebuild:$ForceRebuild `
+            -Jobs $Jobs
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Android build failed with exit code $LASTEXITCODE"
+        }
+
+        $builtPlatforms += "linux-arm64-musl"
+        Write-Host "OK Android (aarch64-musl) build complete`n" -ForegroundColor Green
+    }
+    catch {
+        $buildErrors += "Android (aarch64-musl): $_"
+        Write-Host "X Android build failed: $_`n" -ForegroundColor Red
     }
 }
 

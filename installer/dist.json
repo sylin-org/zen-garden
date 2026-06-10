@@ -11,7 +11,8 @@
   "staging": {
     "linux-x64": "../dist/staging/linux-x64",
     "linux-x86": "../dist/staging/linux-x86",
-    "windows-x64": "../dist/staging/windows-x64"
+    "windows-x64": "../dist/staging/windows-x64",
+    "linux-arm64-musl": "../dist/staging/linux-arm64-musl"
   },
 
   "packages": {
@@ -106,5 +107,11 @@
     "buildScript": "build-windows-x64.ps1",
     "distDir": "../dist/windows-x64",
     "architecture": "x64"
+  },
+
+  "android-arm64": {
+    "buildScript": "build-android-arm64.ps1",
+    "distDir": "../dist/linux-arm64-musl",
+    "architecture": "arm64-musl"
   }
 }

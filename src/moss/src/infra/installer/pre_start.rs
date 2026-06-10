@@ -245,6 +245,117 @@ pub(crate) fn commit_upgrade() {
     }
 }
 
+/// Restore the rollback snapshot over the live binaries — the in-process analogue of the Android
+/// watchdog's `mv "$MOSS_BACKUP" "$BIN"`, used by [`crash_loop_guard`]. The previous binaries are
+/// mirrored under [`rollback_root`] by [`deploy_bin`]; re-prefix each with `/` to reconstruct its
+/// absolute dest. Returns true if anything was restored.
+///
+/// The live moss binary is *running* (this is the crash-looping new binary), so a plain copy over it
+/// fails with `ETXTBSY`. Rename the live file aside first — `rename` always succeeds (the running
+/// process keeps its open inode) — then write the snapshot into the freed path; the next respawn
+/// executes it.
+#[cfg(target_os = "linux")]
+pub(crate) fn restore_rollback() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let root = rollback_root();
+    if !root.exists() {
+        return false;
+    }
+    let mut restored = false;
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !path.is_file() {
+                continue;
+            }
+            let Ok(rel) = path.strip_prefix(&root) else {
+                continue;
+            };
+            let dest = Path::new("/").join(rel);
+            if let Some(parent) = dest.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let mut aside = dest.clone().into_os_string();
+            aside.push(".rollback-aside");
+            let aside = PathBuf::from(aside);
+            let _ = std::fs::rename(&dest, &aside); // move the live (bad) file aside; running inode survives
+            if std::fs::copy(&path, &dest).is_ok() {
+                let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
+                let _ = std::fs::remove_file(&aside);
+                restored = true;
+                println!("[crash-loop] rolled back: {}", dest.display());
+            } else {
+                let _ = std::fs::rename(&aside, &dest); // copy failed — put the live file back
+            }
+        }
+    }
+    restored
+}
+
+/// Counter file for [`crash_loop_guard`] — boots since the current upgrade that have not reached
+/// mark-good. Lives in `data_dir` (writable on every platform, unlike `/etc`).
+#[cfg(target_os = "linux")]
+fn boot_attempts_path() -> PathBuf {
+    Path::new(&garden_common::constants::paths::data_dir()).join(".upgrade-boot-attempts")
+}
+
+/// Clear the boot-attempt counter. Called from mark-good — once moss has survived `MARK_GOOD_SECS`
+/// the upgrade is good and the count is meaningless.
+#[cfg(target_os = "linux")]
+pub(crate) fn reset_boot_attempts() {
+    let _ = std::fs::remove_file(boot_attempts_path());
+}
+
+/// DEPLOY-0001 Linux crash-loop rollback — the resilience the Android watchdog has, brought to
+/// systemd without a unit change (so it covers read-only-`/etc` stones too). Called very early on
+/// every boot:
+///
+/// - **No rollback snapshot** → no upgrade in flight → clear any stale counter and return.
+/// - **Snapshot present** → count this boot. `MARK_GOOD_SECS` after a successful start, mark-good
+///   resets the counter; so a count that keeps climbing means moss keeps crashing before it ever
+///   becomes healthy. After [`MAX_UPGRADE_BOOTS`] such boots, restore the previous binaries and exit
+///   `RESTART` — `Restart=always` respawns the rolled-back binary, which then marks good and commits.
+#[cfg(target_os = "linux")]
+pub(crate) fn crash_loop_guard() {
+    /// Boots since an upgrade (without reaching mark-good) before we give up and roll back.
+    const MAX_UPGRADE_BOOTS: u32 = 3;
+
+    if !rollback_root().exists() {
+        reset_boot_attempts();
+        return;
+    }
+
+    let path = boot_attempts_path();
+    let count = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+        + 1;
+
+    if count >= MAX_UPGRADE_BOOTS {
+        eprintln!(
+            "[crash-loop] {count} boots since upgrade without reaching mark-good — rolling back"
+        );
+        let restored = restore_rollback();
+        reset_boot_attempts();
+        if restored {
+            std::process::exit(garden_common::constants::server::exit::RESTART);
+        }
+        // Nothing actually restored (snapshot empty/unreadable) — let this boot proceed.
+        return;
+    }
+
+    let _ = std::fs::write(&path, count.to_string());
+}
+
 // ── Binary deployment ───────────────────────────────────────────────
 
 fn deploy_bin(staging_dir: &Path) -> anyhow::Result<()> {

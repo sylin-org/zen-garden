@@ -67,6 +67,13 @@ pub async fn run(
     config: DaemonConfig,
     log: tokio::sync::broadcast::Sender<String>,
 ) -> anyhow::Result<()> {
+    // DEPLOY-0001 crash-loop rollback (Linux): before any heavy init, check whether this boot is a
+    // repeated fast crash on a fresh upgrade and, if so, restore the previous binaries and exit
+    // RESTART (systemd then respawns the rolled-back binary). Must run before build_state so a crash
+    // *during* init still counts toward the threshold. No-op when no upgrade is in flight.
+    #[cfg(target_os = "linux")]
+    crate::infra::installer::pre_start::crash_loop_guard();
+
     let file_config = config.file_config.clone();
     let (state, artifacts) = build_state(config, log).await?;
 

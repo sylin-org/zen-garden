@@ -1036,29 +1036,35 @@ fn sigterm_process_by_pid(pid: u32) {
 /// On Windows: looks for .exe files
 /// On Linux: looks for files with execute permission
 async fn find_companion_executable(companion_dir: &Path) -> Option<PathBuf> {
-    // Scan for any executable in the folder
+    // Find the companion binary. It is named `garden-<id>` with no extension on unix (`.exe` on
+    // Windows). Other files in the folder may carry the executable bit and MUST NOT be launched —
+    // most importantly the DEPLOY-0001 `.old` rollback backup that sits beside the new binary during
+    // the apply/mark-good window (launching it would run the *previous* build: the firefly/cricket
+    // "stuck idle" regression), plus data files like `device-bus-cache.json`. Requiring the binary's
+    // name shape (no extension / `.exe`) excludes all of them regardless of readdir order.
     if let Ok(mut entries) = tokio::fs::read_dir(companion_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
             if path.is_file() {
                 let is_executable = if cfg!(windows) {
+                    // `garden-<id>.exe`; a `.exe.old` backup has extension `old`, so it is skipped.
                     path.extension().map(|e| e == "exe").unwrap_or(false)
                 } else {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
-                        if let Ok(meta) = path.metadata() {
-                            meta.permissions().mode() & 0o111 != 0
-                        } else {
-                            false
-                        }
+                        path.extension().is_none()
+                            && path
+                                .metadata()
+                                .map(|m| m.permissions().mode() & 0o111 != 0)
+                                .unwrap_or(false)
                     }
                     #[cfg(not(unix))]
                     false
                 };
 
                 if is_executable {
-                    debug!(path = %path.display(), "Found executable file");
+                    debug!(path = %path.display(), "Found companion executable");
                     return Some(path);
                 }
             }

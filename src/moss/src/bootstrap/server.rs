@@ -206,9 +206,10 @@ pub async fn run(
     });
 
     // DEPLOY-0001 mark-good: once moss survives startup (MARK_GOOD_SECS), commit the upgrade by
-    // deleting the `.old` rollback backups. If moss crashes before this fires, the process dies and
-    // `.old` survives so the supervisor (the Android watchdog) can roll back. Linux/Android only —
-    // pre_start (and thus the `.old` backups) exist only there; the Windows updater self-manages.
+    // deleting the rollback snapshot. If moss crashes before this fires, the process dies and the
+    // snapshot survives so the supervisor (the Android watchdog) can roll back. Linux/Android only —
+    // pre_start (and thus the snapshot) exist only there (the phone runs a linux-musl build, so
+    // target_os = "linux" covers it); the Windows updater self-manages.
     #[cfg(target_os = "linux")]
     tokio::spawn(async {
         tokio::time::sleep(tokio::time::Duration::from_secs(
@@ -216,7 +217,7 @@ pub async fn run(
         ))
         .await;
         crate::infra::installer::pre_start::commit_upgrade();
-        tracing::info!("Upgrade marked good — removed .old rollback backups");
+        tracing::info!("Upgrade marked good — removed rollback snapshot");
     });
 
     // SIGTERM all companions immediately when shutdown is triggered.

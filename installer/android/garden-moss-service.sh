@@ -10,13 +10,18 @@
 #   0  STOP          -> operator stop / uninstall; watchdog stops.
 #   10 RESTART_APPLY -> staged upgrade pending; pre-start applied it; respawn.
 #   11 RESTART       -> restart requested (no payload); respawn.
-#   *  FATAL/crash   -> respawn with exponential backoff; roll back to .old after repeated fast crashes.
+#   *  FATAL/crash   -> respawn with exponential backoff; roll back from the rollback snapshot after repeated fast crashes.
 
 LOG=/data/garden-moss.log
 # Align with HostProfile.paths.bin_install (Android default = /data/zen-garden/bin). pre-start
 # applies staged binaries here, so the watchdog must run moss from the same path.
 BIN=/data/zen-garden/bin/garden-moss
 LOCK=/data/zen-garden/moss-watchdog.pid
+# DEPLOY-0001 rollback snapshot: `garden-moss pre-start` stashes the binaries it replaces here,
+# OUTSIDE bin_install + companions (so nothing scans/launches a backup). Backups mirror their
+# absolute path, so the moss backup is $ROLLBACK followed by $BIN.
+ROLLBACK=/data/zen-garden/rollback
+MOSS_BACKUP="$ROLLBACK$BIN"
 
 # dockerd binaries + standard tools on PATH; moss shells out to a few host tools.
 export PATH=/data/docker/bin:/system/bin:/system/xbin:$PATH
@@ -70,7 +75,8 @@ crashes=0   # consecutive fast crashes
 backoff=1   # seconds, exponential, capped
 while :; do
     # Apply any staged upgrade (no-op when nothing is staged). This is the Android equivalent of
-    # systemd ExecStartPre. It writes to bin_install via rename-aside, keeping <bin>.old.
+    # systemd ExecStartPre. It writes to bin_install via rename-aside, stashing the previous
+    # binaries in the rollback snapshot ($ROLLBACK) for the crash-loop recovery below.
     "$BIN" pre-start
 
     start=$(date +%s)
@@ -100,12 +106,12 @@ while :; do
     crashes=$((crashes + 1))
     echo "crash rc=$rc (consecutive=$crashes)"
 
-    # Roll back to the previous binary after repeated fast crashes (a bad self-update). The .old
-    # was kept by pre-start's rename-aside; a healthy moss deletes it (mark-good), so this only
-    # fires for a binary that never became healthy.
-    if [ "$crashes" -ge 3 ] && [ -f "$BIN.old" ]; then
-        echo "ROLLBACK: restoring $BIN.old after $crashes fast crashes"
-        mv -f "$BIN.old" "$BIN"
+    # Roll back to the previous binary after repeated fast crashes (a bad self-update). pre-start
+    # stashed the previous moss in the rollback snapshot; a healthy moss deletes the snapshot
+    # (mark-good), so this only fires for a binary that never became healthy.
+    if [ "$crashes" -ge 3 ] && [ -f "$MOSS_BACKUP" ]; then
+        echo "ROLLBACK: restoring $MOSS_BACKUP after $crashes fast crashes"
+        mv -f "$MOSS_BACKUP" "$BIN"
         chmod 755 "$BIN"
         crashes=0
         backoff=1

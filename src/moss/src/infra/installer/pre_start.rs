@@ -142,26 +142,39 @@ fn current_version() -> String {
     format!("v{}", crate::cli::VERSION)
 }
 
-/// Mark the running binaries "good" (DEPLOY-0001): delete the `.old` rollback backups in
-/// `bin_install` + `companions`. Called once the process has proven it survives startup — until
-/// then the supervisor (the Android watchdog) can roll back to `.old`; after, the upgrade is
-/// committed. On Linux this is just cleanup (systemd doesn't roll back).
-pub(crate) fn commit_upgrade() {
-    let profile = garden_common::host::profile();
-    remove_old_backups(&profile.paths.bin_install);
-    remove_old_backups(&profile.paths.companions);
+/// Root of the rollback snapshot. DEPLOY-0001 keeps the binaries being replaced here so a bad
+/// self-update can be rolled back — but OUTSIDE `bin_install` and the companions scan path, so the
+/// companion launcher (or anything scanning the live tree) can never pick up a backup binary. Each
+/// backup mirrors its absolute path under this root. Lives under `data_dir`.
+fn rollback_root() -> PathBuf {
+    Path::new(&garden_common::constants::paths::data_dir()).join("rollback")
 }
 
-fn remove_old_backups(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            remove_old_backups(&path);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("old") {
-            let _ = std::fs::remove_file(&path);
+/// The rollback slot for a live file: its absolute path's normal components mirrored under
+/// [`rollback_root`] (cross-platform — drops the root/drive prefix).
+fn rollback_path_for(dest: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut rel = PathBuf::new();
+    for comp in dest.components() {
+        if let Component::Normal(c) = comp {
+            rel.push(c);
+        }
+    }
+    rollback_root().join(rel)
+}
+
+/// Mark the running binaries "good" (DEPLOY-0001): delete the rollback snapshot. Called once the
+/// process has proven it survives startup — until then the supervisor (the Android watchdog) can
+/// roll back from the snapshot; after, the upgrade is committed. On Linux this is just cleanup
+/// (systemd doesn't roll back).
+pub(crate) fn commit_upgrade() {
+    let rollback = rollback_root();
+    if rollback.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&rollback) {
+            eprintln!(
+                "[mark-good] Warning: could not remove rollback snapshot {}: {e}",
+                rollback.display()
+            );
         }
     }
 }
@@ -352,35 +365,63 @@ fn copy_dir_contents(src: &Path, dest: &Path) -> anyhow::Result<()> {
 
 /// Replace a file at `dest` with `src`, handling running executables.
 ///
-/// Uses rename-aside: atomically renames the existing file to `.old`, then copies the new file
-/// to the original path (fresh inode). This avoids ETXTBSY (errno 26) because `rename(2)` detaches
-/// the directory entry while the kernel keeps the old inode alive for any running process (and on
-/// Windows you can rename a locked .exe even though you can't overwrite it).
+/// Rename-aside in three moves: (1) atomically rename the existing file to a same-directory `.old`
+/// (frees the path for a fresh inode without ETXTBSY — `rename(2)` detaches the directory entry
+/// while the kernel keeps the old inode alive for any running process; on Windows you can rename a
+/// locked `.exe` even though you can't overwrite it), (2) copy the new file into place, (3) stash
+/// the `.old` into the rollback snapshot, OUT of the live tree.
 ///
-/// DEPLOY-0001: the `.old` backup is KEPT as the rollback artifact — the mark-good step deletes it
-/// once the new binary proves healthy, and rollback restores it on repeated failure.
+/// Step 3 is the fix for the firefly/cricket "launched the `.old` backup" regression: the live tree
+/// is left containing only the new binary, so the companion launcher (which scans that tree) can
+/// never pick up a backup. The backup lives in [`rollback_root`]; mark-good deletes the snapshot
+/// once the new binary proves healthy, and the supervisor restores from it on repeated failure.
 fn replace_file(src: &Path, dest: &Path) -> anyhow::Result<()> {
     if dest.exists() {
-        let backup = dest.with_extension("old");
-        // Clear any stale prior backup first (Unix rename overwrites; Windows rename fails if the
-        // destination already exists — keep this portable).
-        let _ = std::fs::remove_file(&backup);
-        // Atomic rename: running process keeps the old inode via page mapping.
-        // The path is now free for a fresh file.
-        std::fs::rename(dest, &backup).with_context(|| {
+        let aside = dest.with_extension("old");
+        // Clear any stale aside first (Unix rename overwrites; Windows rename fails if it exists).
+        let _ = std::fs::remove_file(&aside);
+        // Atomic rename: running process keeps the old inode via page mapping; the path is now free.
+        std::fs::rename(dest, &aside).with_context(|| {
             format!(
                 "failed to rename {} -> {} before copy",
                 dest.display(),
-                backup.display()
+                aside.display()
             )
         })?;
-        // Copy new file to original path (new inode — no ETXTBSY). KEEP `backup` for rollback.
+        // Copy new file to original path (new inode — no ETXTBSY).
         std::fs::copy(src, dest)
             .with_context(|| format!("failed to copy {} -> {}", src.display(), dest.display()))?;
+        // Move the backup OUT of the live tree into the rollback snapshot.
+        stash_backup(&aside, dest)?;
     } else {
         std::fs::copy(src, dest)
             .with_context(|| format!("failed to copy {} -> {}", src.display(), dest.display()))?;
     }
+    Ok(())
+}
+
+/// Move the just-created `.old` aside-file out of the live tree into the rollback snapshot. Tries an
+/// atomic rename first, then falls back to copy+remove across filesystems (the install paths and the
+/// rollback root can be separate mounts — e.g. `/usr/local/bin` vs `/var/lib/zen-garden` on Linux).
+fn stash_backup(aside: &Path, dest: &Path) -> anyhow::Result<()> {
+    let backup = rollback_path_for(dest);
+    if let Some(parent) = backup.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create rollback dir {}", parent.display()))?;
+    }
+    let _ = std::fs::remove_file(&backup); // clear any stale backup from a prior aborted apply
+    if std::fs::rename(aside, &backup).is_ok() {
+        return Ok(());
+    }
+    // Cross-filesystem fallback (reading the aside is fine — no process executes it via this path).
+    std::fs::copy(aside, &backup).with_context(|| {
+        format!(
+            "failed to copy backup {} -> {}",
+            aside.display(),
+            backup.display()
+        )
+    })?;
+    let _ = std::fs::remove_file(aside);
     Ok(())
 }
 

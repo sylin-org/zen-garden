@@ -11,13 +11,26 @@
 
 use super::device::{DeviceId, UsbDescriptor, UsbSerialDevice};
 use super::monitor::{Monitor, MonitorEvent};
+use super::state::DeviceState;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 const REGISTRY_EVENT_CAPACITY: usize = 32;
+
+/// How often the re-probe sweep runs. A device that fails its probe is never permanently abandoned:
+/// it could be a firefly that was still settling/booting, or a port that later gets a firefly
+/// plugged into the same device node, or one reflashed in place. The sweep re-opens (which resets
+/// the device) and re-probes rejected-but-still-present devices.
+const REPROBE_CHECK: Duration = Duration::from_secs(2);
+/// First re-probe after a rejection — long enough for a slow ESP boot to settle.
+const REPROBE_INITIAL: Duration = Duration::from_secs(5);
+/// Backoff cap. After the initial fast retries, a confirmed non-firefly is re-probed at this steady
+/// interval forever (it could become a firefly at any time) — gentle enough to barely disturb it.
+const REPROBE_MAX: Duration = Duration::from_secs(60);
 
 /// Domain event emitted by the registry. Carries the `Arc` so
 /// subscribers never do a by-id lookup.
@@ -34,6 +47,8 @@ pub struct UsbRegistry {
     devices: RwLock<HashMap<DeviceId, Arc<UsbSerialDevice>>>,
     events: broadcast::Sender<RegistryEvent>,
     baud: u32,
+    /// Per-device re-probe schedule for rejected devices: `(next_attempt, current_backoff)`.
+    reprobe: Mutex<HashMap<DeviceId, (Instant, Duration)>>,
 }
 
 impl UsbRegistry {
@@ -43,6 +58,7 @@ impl UsbRegistry {
             devices: RwLock::new(HashMap::new()),
             events,
             baud,
+            reprobe: Mutex::new(HashMap::new()),
         })
     }
 
@@ -71,9 +87,14 @@ impl UsbRegistry {
         shutdown: CancellationToken,
     ) {
         info!("UsbRegistry starting");
+        let mut reprobe_tick = tokio::time::interval(REPROBE_CHECK);
+        reprobe_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
+                _ = reprobe_tick.tick() => {
+                    self.reprobe_due().await;
+                }
                 next = monitor.next() => match next {
                     Some(MonitorEvent::Added(descriptor)) => {
                         // Serialize inline so a second udev ADD for the
@@ -129,6 +150,7 @@ impl UsbRegistry {
     }
 
     fn handle_removed(&self, id: DeviceId) {
+        self.reprobe.lock().unwrap().remove(&id);
         let device = self.devices.write().unwrap().remove(&id);
         let Some(device) = device else {
             return;
@@ -136,5 +158,71 @@ impl UsbRegistry {
         device.dispose();
         info!(device = %id, "device removed");
         let _ = self.events.send(RegistryEvent::Disappeared(device));
+    }
+
+    /// Re-probe sweep: re-open one rejected-but-still-present device whose backoff has elapsed.
+    ///
+    /// A failed probe is never permanent — re-opening resets the device (clearing a stuck-on-open
+    /// state and giving a still-booting ESP another chance) and yields a fresh `New` device, so the
+    /// orchestrator evaluates it again. Accepted (claimed) devices are never touched. One device per
+    /// sweep keeps a re-open's ~3s open/boot from stalling monitor handling.
+    async fn reprobe_due(&self) {
+        let now = Instant::now();
+
+        // Snapshot currently-rejected devices.
+        let rejected: Vec<(DeviceId, Arc<UsbSerialDevice>)> = {
+            let devices = self.devices.read().unwrap();
+            devices
+                .iter()
+                .filter(|(_, d)| matches!(d.state(), DeviceState::Rejected { .. }))
+                .map(|(id, d)| (id.clone(), Arc::clone(d)))
+                .collect()
+        };
+
+        // Pick the first device whose re-probe is due; advance its backoff. Drop schedule entries
+        // for devices no longer rejected (claimed) or gone.
+        let due = {
+            let mut reprobe = self.reprobe.lock().unwrap();
+            let rejected_ids: std::collections::HashSet<&DeviceId> =
+                rejected.iter().map(|(id, _)| id).collect();
+            reprobe.retain(|id, _| rejected_ids.contains(id));
+
+            let mut pick = None;
+            for (id, device) in &rejected {
+                let entry = reprobe
+                    .entry(id.clone())
+                    .or_insert((now + REPROBE_INITIAL, REPROBE_INITIAL));
+                if now >= entry.0 {
+                    let next_backoff = (entry.1 * 2).min(REPROBE_MAX);
+                    *entry = (now + next_backoff, next_backoff);
+                    pick = Some((id.clone(), Arc::clone(device)));
+                    break;
+                }
+            }
+            pick
+        };
+
+        let Some((id, old)) = due else {
+            return;
+        };
+
+        // Close the old port (resets the device), then open a fresh handle on the same descriptor
+        // and re-announce it for evaluation.
+        let descriptor = old.descriptor().clone();
+        old.dispose();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        match UsbSerialDevice::open(descriptor, self.baud).await {
+            Ok(device) => {
+                info!(device = %id, "re-probe: re-opened rejected device");
+                self.devices
+                    .write()
+                    .unwrap()
+                    .insert(id.clone(), Arc::clone(&device));
+                let _ = self.events.send(RegistryEvent::Appeared(device));
+            }
+            Err(e) => {
+                warn!(device = %id, error = %e, "re-probe: re-open failed; will retry");
+            }
+        }
     }
 }

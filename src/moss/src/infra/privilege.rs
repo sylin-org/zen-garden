@@ -14,11 +14,20 @@
 
 use garden_common::host::{self, PrivilegeMode};
 
-/// True when the process runs as uid 0.
+/// True when the process runs with full privileges (uid 0 on Unix).
+#[cfg(unix)]
 fn is_root() -> bool {
     // SAFETY: getuid() always succeeds — it reads the caller's real uid and has no
     // preconditions or side effects.
     unsafe { libc::getuid() == 0 }
+}
+
+/// Windows has no uid-0 / `sudo` model, so privileged-command prefixing never applies; the Linux
+/// host operations this module guards (mount/ip/chown) do not exist there. Treat as "already
+/// privileged" so `use_sudo()` is always false.
+#[cfg(not(unix))]
+fn is_root() -> bool {
+    true
 }
 
 /// Whether privileged commands should be prefixed with `sudo`.

@@ -28,9 +28,23 @@
   `ExecStartPre=... pre-start (status=0/SUCCESS)`, moss from `/usr/local/bin`, and **firefly running
   from `/var/lib/zen-garden/companions/firefly`** — the companions install≠scan fix confirmed live.
   Both platform types proven: Android (watchdog) + Linux (systemd).
-- **Remaining (follow-ons):** (1) SSH on Android — needs a static dropbear/sshd binary sourced + a
-  boot hook. (2) cricket target-agnostic audio (research: `docs/notes/cricket-android-audio-research.md`).
-  The core — phone via HTTP, one flow, one pipeline, validated on both platform types — is DONE.
+- **SSH on Android — BLOCKED on this device (investigated 2026-06-07).** LineageOS ships native
+  OpenSSH (`/product/bin/sshd` + `ssh`, OpenSSH_9.0/BoringSSL) with a ready key-auth-only config
+  (`/product/etc/ssh/sshd_config`: host keys + `authorized_keys` in `/data/ssh`, `PasswordAuthentication
+  no`). But sshd fails to start: `Unable to shield host key: unexpected internal error` +
+  `ssh_digest_start` — and there is **no SELinux AVC denial** (checked logcat+dmesg; SELinux is
+  Enforcing but not the cause), while `ssh-keygen` crypto works. So it's an **OpenSSH/BoringSSL
+  host-key-shielding incompatibility** in this build, with no config to disable shielding.
+  Path forward (a separate effort): build a **static aarch64 dropbear** (doesn't use OpenSSH
+  shielding) — plus handle Android's missing passwd db for auth (root@ + key; dropbear needs a
+  minimal passwd entry or its `-A`/authorized_keys path set). Note: password auth (`stone/stone`)
+  isn't achievable on Android regardless (no PAM/passwd) — access would be `root@<phone>` by key.
+  adb-over-TCP (`:5555`) remains the working shell channel meanwhile.
+- **cricket target-agnostic** (research: `docs/notes/cricket-android-audio-research.md`). Device
+  note: this Pixel's `/dev/snd` has only `timer` (no PCM playback nodes), so real audio from a musl
+  binary isn't possible here — the deliverable is the target-agnostic BUILD (compiles for arm64-musl,
+  runs as a companion, headless audio backend on this device; real audio where `/dev/snd` PCM exists).
+- The core — phone via HTTP, one flow, one pipeline, validated on both platform types — is DONE.
 - SSH to authorized stones via plink with `-hostkey` (host-key prompt + `-batch` don't mix); halcyon
   key fp `SHA256:clHWjuMiaZ0DZnFHzLKtq/hf07ApLMIfpXFJKWGjC8Y`. `sudo journalctl` hangs under `-batch`
   (password prompt); use non-sudo `systemctl status` instead.

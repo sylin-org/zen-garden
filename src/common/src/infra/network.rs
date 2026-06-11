@@ -156,6 +156,15 @@ pub fn get_local_ip() -> String {
         return ip;
     }
 
+    // Kernel-routing fallback: ask `ip route get` for the source address. This works where BOTH
+    // interface enumeration and the UDP-connect trick fail — notably a musl binary on Android,
+    // where if-addrs returns nothing and a connected UDP socket's local_addr reports loopback,
+    // yet the kernel's own route lookup still reports the correct LAN source.
+    if let Some(ip) = get_local_ip_via_iproute() {
+        tracing::debug!(ip = %ip, "Local IP detected via `ip route get`");
+        return ip;
+    }
+
     // Last resort fallback
     tracing::warn!("All IP detection methods failed, using 127.0.0.1");
     "127.0.0.1".to_string()
@@ -181,6 +190,44 @@ fn get_local_ip_via_route() -> Option<String> {
         return None;
     }
     Some(ip.to_string())
+}
+
+/// Kernel-routing source-IP detection via `ip route get`. The most robust option on Android
+/// (toybox `ip`): getifaddrs/netlink enumeration returns nothing there and a connected UDP socket's
+/// `local_addr()` reports loopback, but the kernel's own route lookup reports the correct source.
+/// Parses the `src <addr>` field. Unix-only — `ip` is absent on Windows, which uses the if-addrs
+/// path above.
+#[cfg(unix)]
+fn get_local_ip_via_iproute() -> Option<String> {
+    let output = std::process::Command::new("ip")
+        .args(["route", "get", "8.8.8.8"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    // e.g. "8.8.8.8 via 192.168.1.1 dev eth0 table eth0 src 192.168.1.120 uid 0"
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut tokens = text.split_whitespace();
+    while let Some(tok) = tokens.next() {
+        if tok == "src" {
+            if let Some(addr) = tokens.next() {
+                if addr
+                    .parse::<std::net::Ipv4Addr>()
+                    .map(|a| !a.is_loopback())
+                    .unwrap_or(false)
+                {
+                    return Some(addr.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(unix))]
+fn get_local_ip_via_iproute() -> Option<String> {
+    None
 }
 
 /// Try to get local IP with priority-based selection

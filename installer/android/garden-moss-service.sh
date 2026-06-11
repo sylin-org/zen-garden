@@ -17,6 +17,11 @@ LOG=/data/garden-moss.log
 # applies staged binaries here, so the watchdog must run moss from the same path.
 BIN=/data/zen-garden/bin/garden-moss
 LOCK=/data/zen-garden/moss-watchdog.pid
+# Lock DIRECTORY for the atomic single-instance guard below (created with `mkdir`, which is atomic).
+# Kept separate from the .pid file above (the pidfile stays informational and is how
+# deploy-moss-native.sh finds + stops a running watchdog). The dir records its holder's boot-id and
+# pid so a lock left behind by a hard reboot is detectable as stale.
+GUARD=/data/zen-garden/moss-watchdog.lock
 # DEPLOY-0001 rollback snapshot: `garden-moss pre-start` stashes the binaries it replaces here,
 # OUTSIDE bin_install + companions (so nothing scans/launches a backup). Backups mirror their
 # absolute path, so the moss backup is $ROLLBACK followed by $BIN.
@@ -45,17 +50,30 @@ if [ ! -x "$BIN" ] && [ -x /data/garden-moss ]; then
     mv -f /data/garden-moss "$BIN"
 fi
 
-# Single-instance guard: a second boot-trigger must not start a second watchdog (the #1 Magisk
-# double-spawn bug). If a live watchdog already holds the lock, bail.
-if [ -f "$LOCK" ]; then
-    oldpid=$(cat "$LOCK" 2>/dev/null)
-    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+# Atomic, reboot-safe single-instance guard. `mkdir` is atomic, so two concurrent Magisk
+# boot-triggers can't both win the lock (the old `[ -f LOCK ] && kill -0` check was check-then-act
+# and allowed a double-spawn). The lock dir survives a hard reboot (the EXIT trap can't run when the
+# kernel kills us at shutdown), so on a failed mkdir the lock is STALE unless its recorded boot-id
+# matches the current boot AND its pid is still alive — otherwise the pid is a leftover from a prior
+# boot (since recycled — the bug this fixes: `kill -0` on the recycled pid wrongly read as "running")
+# or a killed instance; clear it and retry. (flock-on-fd is unusable here: the phone's /system/bin/sh
+# is mksh, which marks exec-opened fds close-on-exec, so the locked fd never reaches the flock child.)
+bootid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+until mkdir "$GUARD" 2>/dev/null; do
+    oldboot=$(cat "$GUARD/boot_id" 2>/dev/null)
+    oldpid=$(cat "$GUARD/pid" 2>/dev/null)
+    if [ -n "$bootid" ] && [ "$oldboot" = "$bootid" ] && [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
         echo "watchdog already running (pid $oldpid) — exiting"
         exit 0
     fi
-fi
+    echo "clearing stale watchdog lock (pid ${oldpid:-none}; prior boot or dead holder)"
+    rm -rf "$GUARD" || { echo "FATAL: cannot clear stale lock $GUARD"; exit 1; }
+done
+printf '%s\n' "$bootid" >"$GUARD/boot_id"
+echo $$ >"$GUARD/pid"
+# Mirror the pid to the legacy pidfile so deploy-moss-native.sh can still find + stop the watchdog.
 echo $$ >"$LOCK"
-trap 'rm -f "$LOCK"' EXIT
+trap 'rm -rf "$GUARD"; rm -f "$LOCK"' EXIT
 
 [ -x "$BIN" ] || { echo "FATAL: $BIN not found — run installer/deploy-android.ps1 to bootstrap"; exit 1; }
 

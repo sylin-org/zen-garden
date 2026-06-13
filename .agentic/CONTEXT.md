@@ -9,6 +9,9 @@
 **Stack canon (cross-repo)**: [../docs/decisions/STACK-0001-sylin-stack-canon.md](../docs/decisions/STACK-0001-sylin-stack-canon.md)
 - Zen Garden is the middle layer of the Sylin stack (Koi → Zen Garden → Koan). STACK-0001 is canon: ZG depends only on Koi (published crates) and never on Koan; the UDP-7184 garden mesh is ZG-internal, never a cross-project contract; the `ollama` orchestrator is the AI contract target. Do not contradict it without an upstream architect decision.
 
+**Surface ledger (cross-repo)**: [../docs/SURFACES.md](../docs/SURFACES.md)
+- Records which surfaces are exercised by what, when last, and what guard protects them. Its top is the **rotation contract** (binding): before a lane leaves a surface, leave a tripwire and update that surface's row (`Last exercised` → today, `Guard` → the tripwire). Honesty rule: unknown exercise status is written `unknown since <date>`, never a guessed "works". NOTE: this repo has no CI yet, so tested surfaces read guard `tests, unwired` until a CI lane runs them.
+
 **Read code standards**: [../docs/code-standards.md](../docs/code-standards.md)
 - Naming, namespacing, type system usage, channel conventions, DDD patterns
 

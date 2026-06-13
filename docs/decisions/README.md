@@ -14,6 +14,12 @@ canonical: true
 
 ## Active ADRs
 
+### Cross-Repo Stack Canon
+- **[STACK-0001](STACK-0001-sylin-stack-canon.md)**: The Sylin stack — layering, contracts, and trust topology — Accepted (2026-06-13)
+  - **Status**: Accepted
+  - **Rationale**: First governed artifact binding all three sibling repos (Koi → Zen Garden → Koan): layering law (names never flow down), contract types per seam, discovery doctrine, trust topology, AI succession, sovereign composition, mission canon — ten decisions
+  - **Impact**: No future session in any repo may contradict the cross-repo decisions; identical copies live in Koi (`docs/adr/`) and Koan (`docs/decisions/`), edits propagate to all three
+
 ### Architecture
 - **[ARCH-0001](ARCH-0001-soc-ddd-architecture.md)**: SoC/DDD Architecture for Moss — Accepted (2026-01-20)
 - **[ARCH-0002](ARCH-0002-platform-runtime-trait.md)**: PlatformRuntime Trait — Accepted (2026-03-10)
@@ -256,6 +262,7 @@ We will [ACTION] by [METHOD].
 - `PAVILION-` - Pavilion (Windows client) decisions
 - `URI-` - URI scheme and intent resolution decisions
 - `DISC-` - Discovery (mDNS, UDP, cache, providers)
+- `STACK-` - Cross-repo stack canon (shared verbatim across Koi, Zen Garden, Koan)
 
 **Examples**:
 - `BUILD-0001-versioning.md`

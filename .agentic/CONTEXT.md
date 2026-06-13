@@ -6,6 +6,9 @@
 
 ## 🎯 Before Writing Code
 
+**Stack canon (cross-repo)**: [../docs/decisions/STACK-0001-sylin-stack-canon.md](../docs/decisions/STACK-0001-sylin-stack-canon.md)
+- Zen Garden is the middle layer of the Sylin stack (Koi → Zen Garden → Koan). STACK-0001 is canon: ZG depends only on Koi (published crates) and never on Koan; the UDP-7184 garden mesh is ZG-internal, never a cross-project contract; the `ollama` orchestrator is the AI contract target. Do not contradict it without an upstream architect decision.
+
 **Read code standards**: [../docs/code-standards.md](../docs/code-standards.md)
 - Naming, namespacing, type system usage, channel conventions, DDD patterns
 

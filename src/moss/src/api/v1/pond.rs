@@ -1222,6 +1222,12 @@ async fn execute_pond_init_from_ceremony(
         .unwrap_or("auto");
     let passphrase_for_file = bag.get("passphrase").and_then(|v| v.as_str()).unwrap_or("");
 
+    // Set when a TOTP unlock slot was requested but could not be created — the
+    // lean build has no OS credential store to seal the secret in. Surfaced to
+    // the user as a clear, non-fatal message once the `bag` borrow is released,
+    // so they are not left with a scanned TOTP QR for a slot that never existed.
+    let mut totp_unlock_unavailable = false;
+
     match unlock_method {
         "auto" => {
             // Delegate to the domain — single source of truth
@@ -1251,8 +1257,17 @@ async fn execute_pond_init_from_ceremony(
                             Ok(master_key) => {
                                 match token_type {
                                     "totp" => {
-                                        // Read the unlock TOTP secret from the ceremony bag
-                                        if let Some(secret_hex) =
+                                        // TOTP unlock slots seal the shared secret in the OS
+                                        // credential store. On a lean build (no koi `keyring`
+                                        // feature) that store is absent, so the slot cannot be
+                                        // created — skip the attempt and flag it, rather than
+                                        // accept a scanned QR for a slot that will never exist.
+                                        if !koi_crypto::tpm::is_available() {
+                                            totp_unlock_unavailable = true;
+                                            tracing::warn!(
+                                                "TOTP unlock requested but no OS credential store is available on this build — skipping slot; pond uses passphrase unlock"
+                                            );
+                                        } else if let Some(secret_hex) =
                                             bag.get("_unlock_totp_secret").and_then(|v| v.as_str())
                                         {
                                             match koi_common::encoding::hex_decode(secret_hex) {
@@ -1272,6 +1287,7 @@ async fn execute_pond_init_from_ceremony(
                                                             }
                                                         }
                                                         Err(e) => {
+                                                            totp_unlock_unavailable = true;
                                                             tracing::error!(error = %e, "Failed to add TOTP unlock slot")
                                                         }
                                                     }
@@ -1400,6 +1416,19 @@ async fn execute_pond_init_from_ceremony(
     );
     safe_data.insert("profile".into(), serde_json::json!(effective_profile));
     response.result_data = Some(safe_data);
+
+    // If a TOTP unlock slot was requested but couldn't be created on this build,
+    // tell the user plainly — the pond is created and unlockable by passphrase.
+    if totp_unlock_unavailable {
+        response.messages.push(koi_common::ceremony::Message {
+            kind: koi_common::ceremony::MessageKind::Error,
+            title: "TOTP unlock unavailable".to_string(),
+            content: "This stone has no OS credential store, so an authenticator (TOTP) \
+                      unlock could not be configured. The pond was created — unlock it \
+                      with your passphrase."
+                .to_string(),
+        });
+    }
 
     Ok(Json(response))
 }

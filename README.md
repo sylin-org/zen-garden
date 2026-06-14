@@ -93,6 +93,19 @@ garden-rake find mongodb
 
 ---
 
+## Building from source
+
+```bash
+git clone https://github.com/sylin-org/zen-garden && cd zen-garden
+cargo build --workspace                       # moss, rake, lantern, companions
+cd src/orchestrators/ollama && cargo build    # orchestrators build standalone
+```
+
+Developing against a local [koi](https://github.com/sylin-org/koi) checkout? Copy
+`.cargo/config.local.toml.example` to `.cargo/config.local.toml` (gitignored).
+
+---
+
 ## Examples
 
 A typical garden runs on whatever hardware you have. 31 offering templates ship across 17 categories including databases, AI, networking, observability, storage, and search.

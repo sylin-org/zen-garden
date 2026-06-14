@@ -8,6 +8,9 @@
 .env
 /samples
 
+# Local koi development override (copied from .cargo/config.local.toml.example)
+.cargo/config.local.toml
+
 # Proptest regression files (generated on failure, not committed)
 **/proptest-regressions/
 

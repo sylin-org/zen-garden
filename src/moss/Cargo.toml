@@ -59,7 +59,7 @@ tracing.workspace = true
 tracing-appender = "0.2"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
-# Docker
+# Docker — moss owns its own bollard; koi 0.4's lean build pulls none
 bollard = "0.20"
 
 # Crypto / hashing

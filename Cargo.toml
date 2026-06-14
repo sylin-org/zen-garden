@@ -1,12 +1,6 @@
 ﻿[workspace]
 members = [
-  # Old structure - will be removed in Phase 6
-  # "src/linux/common",
-  # "src/linux/moss",
-  # "src/windows/garden-rake",
   "src/lantern",
-
-  # New structure
   "src/common",
   "src/discovery",
   "src/moss",
@@ -94,12 +88,17 @@ rust-embed = "8"
 open = "5"
 tempfile = "3"
 
-# Koi framework
-koi-embedded = { path = "../koi/crates/koi-embedded" }
-koi-certmesh = { path = "../koi/crates/koi-certmesh" }
-koi-common = { path = "../koi/crates/koi-common" }
-koi-crypto = { path = "../koi/crates/koi-crypto" }
-koi-truststore = { path = "../koi/crates/koi-truststore" }
+# Koi framework — published on crates.io (github.com/sylin-org/koi).
+# Lean consumption: `default-features = false` drops koi's optional `docker`
+# (bollard) and `keyring` (OS-keychain) backends — zen never uses koi's runtime
+# backend, and the vault falls back to its machine-bound passphrase store. `qr`
+# is armed on koi-crypto so the pond ceremony still renders PNG QR codes.
+# For local koi development, see .cargo/config.local.toml.example.
+koi-embedded = { version = "0.4", default-features = false }
+koi-certmesh = { version = "0.4", default-features = false }
+koi-common = "0.4"
+koi-crypto = { version = "0.4", default-features = false, features = ["qr"] }
+koi-truststore = "0.4"
 
 # ============================================================================
 # Workspace-wide lint policy — enforces code-standards.md mechanically

@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+    branches: [dev]
+  pull_request: {}
+
+# zen consumes koi via path deps to a sibling ../koi (see docs/guides/koi-dependency.md).
+# Jobs that compile zen check out koi alongside zen-garden so `../koi` resolves.
+env:
+  # koi ref to build against. Empty = koi's default branch ("whatever's available").
+  # Set to a branch or SHA to pin. The default branch must carry the koi that zen
+  # currently builds against, or the workspace job will not compile.
+  KOI_REF: ""
+
+jobs:
+  # Quality gate for the zen workspace (moss, rake, lantern, companions, pavilion).
+  workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout zen-garden
+        uses: actions/checkout@v4
+        with:
+          path: zen-garden
+
+      # koi as the sibling ../koi. (On a self-hosted runner that already has a koi
+      # checkout beside the workspace, this step can be removed.)
+      - name: Checkout koi (sibling ../koi)
+        uses: actions/checkout@v4
+        with:
+          repository: sylin-org/koi
+          ref: ${{ env.KOI_REF }}
+          path: koi
+          # token: ${{ secrets.KOI_RO_PAT }}   # uncomment if koi is private
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zen-garden
+
+      # Fast-failing checks first.
+      - name: cargo check
+        working-directory: zen-garden
+        run: cargo check --workspace --all-targets
+
+      # TODO(quality-gate): ratchet to `-D warnings` after the lint backlog is
+      # cleared (prompt 03). Today the workspace has clippy warnings; see FINDINGS.md.
+      - name: cargo clippy
+        working-directory: zen-garden
+        run: cargo clippy --workspace -- -W warnings
+
+      - name: cargo test
+        working-directory: zen-garden
+        run: cargo test --workspace
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: zen-garden/Cargo.toml
+
+  # Orchestrators are standalone crates excluded from the workspace and do not
+  # depend on koi, so they need no koi checkout.
+  orchestrators:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Values are DIRECTORY names under src/orchestrators/ (package names differ,
+        # e.g. common -> orchestrator-common). ai joins or leaves per prompt 04.
+        crate: [common, ollama, mongodb, postgresql, valkey, weaviate]
+    steps:
+      - name: Checkout zen-garden
+        uses: actions/checkout@v4
+        with:
+          path: zen-garden
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Orchestrators are excluded from the root workspace, so scope the cache to
+          # the specific crate dir — otherwise rust-cache keys off the root workspace
+          # (which omits orchestrators) and every matrix leg cache-misses.
+          workspaces: zen-garden/src/orchestrators/${{ matrix.crate }}
+      # `cargo check` emits metadata only and never links, so the mongodb leg needs no
+      # libmongocrypt on the runner (mongocrypt-sys ships pregenerated bindings and only
+      # emits a link directive). A future `cargo build`/`test` here WOULD need it.
+      - name: cargo check (${{ matrix.crate }})
+        working-directory: zen-garden/src/orchestrators/${{ matrix.crate }}
+        run: cargo check --all-targets

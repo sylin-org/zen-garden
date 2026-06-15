@@ -35,7 +35,9 @@ pub fn build_clap_app(manifest: &CommandManifest) -> clap::Command {
         .version(concat!(
             env!("CARGO_PKG_VERSION"),
             ".",
-            env!("BUILD_NUMBER")
+            env!("BUILD_NUMBER"),
+            "+",
+            env!("GIT_SHA")
         ))
         .subcommand_required(false)
         .arg_required_else_help(false)

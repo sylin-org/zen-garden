@@ -9,7 +9,7 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(name = "garden-moss")]
 #[command(about = "Zen Garden Moss - Service orchestration daemon")]
-#[command(version = concat!(env!("CARGO_PKG_VERSION"), ".", env!("BUILD_NUMBER")))]
+#[command(version = concat!(env!("CARGO_PKG_VERSION"), ".", env!("BUILD_NUMBER"), "+", env!("GIT_SHA")))]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -105,8 +105,9 @@ pub fn parse() -> Cli {
 }
 
 /// Moss version string (compile-time constant)
-/// Format: {major}.{minor}.{moment} e.g., "0.1.202601231053"
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), ".", env!("BUILD_NUMBER"));
+/// Format: {major}.{minor}.{moment}+{sha} e.g., "0.2.202601231053+abc1234"
+pub const VERSION: &str =
+    concat!(env!("CARGO_PKG_VERSION"), ".", env!("BUILD_NUMBER"), "+", env!("GIT_SHA"));
 
 /// Get the moss version string (version.build)
 /// Prefer using VERSION const directly when possible to avoid allocation.

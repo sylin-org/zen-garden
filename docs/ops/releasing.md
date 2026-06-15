@@ -18,9 +18,13 @@ from the sibling `../koi` checkout (see [koi-dependency.md](../guides/koi-depend
 
 ## Planned: tag-driven CI release
 
-> **Status: not yet committed.** `.github/workflows/release.yml` is the koi-dependent follow-up to this
-> guide. The steps below describe its intended shape so the local pipeline and the future workflow stay
-> aligned; until it lands, cut releases with the local pipeline above.
+> **Status: deferred pending a stable koi version surface.** `.github/workflows/release.yml` is not yet
+> built. A released binary statically embeds koi, so reproducible releases require koi to guarantee a
+> version surface — published semver crates, or stable tags zen can depend on with a range (see
+> [koi-dependency.md](../guides/koi-dependency.md)). While koi is pre-1.0 and dogfooded from a local
+> `../koi` (a moving target that makes breaking changes), release automation is on hold — cut releases
+> with the local pipeline above. The steps below describe the intended shape so the local pipeline and
+> the future workflow stay aligned; resume this work once koi offers a version surface.
 
 A release will be cut by tagging:
 

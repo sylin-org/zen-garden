@@ -34,21 +34,17 @@ pub struct PondInitResult {
 // Trust profile translation
 // ============================================================================
 
-/// Parse a trust profile string into the certmesh enum.
+/// Resolve a trust-profile preset name into the three booleans certmesh stores.
 ///
-/// Accepts pond-vocabulary names ("just-me", "my-team", "my-organization")
-/// and shorthand numeric codes ("1", "2", "3").
-pub fn parse_trust_profile(input: Option<&str>) -> Result<koi_certmesh::profiles::TrustProfile> {
-    match input {
-        Some("just-me") | Some("1") | None => Ok(koi_certmesh::profiles::TrustProfile::JustMe),
-        Some("my-team") | Some("2") => Ok(koi_certmesh::profiles::TrustProfile::MyTeam),
-        Some("my-organization") | Some("3") => {
-            Ok(koi_certmesh::profiles::TrustProfile::MyOrganization)
-        }
-        Some(other) => anyhow::bail!(
-            "Unknown trust profile: '{other}'. Valid: just-me, my-team, my-organization"
-        ),
-    }
+/// koi flattened trust profiles to `(enrollment_open, requires_approval,
+/// auto_unlock)`; the named presets ("just-me", "my-team", "my-organization",
+/// numeric "1"/"2"/"3") survive only as UX labels, resolved here via koi's
+/// `preset_bools`. `None` defaults to "just-me" (the single-stone pond).
+pub fn parse_trust_profile(input: Option<&str>) -> Result<koi_certmesh::profiles::PresetBools> {
+    let name = input.unwrap_or("just-me");
+    koi_certmesh::profiles::preset_bools(name).ok_or_else(|| {
+        anyhow::anyhow!("Unknown trust profile: '{name}'. Valid: just-me, my-team, my-organization")
+    })
 }
 
 // ============================================================================
@@ -67,7 +63,8 @@ pub async fn init(
     core: Arc<koi_certmesh::CertmeshCore>,
     input: PondInitInput,
 ) -> Result<PondInitResult> {
-    let profile = parse_trust_profile(input.profile.as_deref())?;
+    let (enrollment_open, requires_approval, auto_unlock) =
+        parse_trust_profile(input.profile.as_deref())?;
 
     // Generate cryptographic entropy for CA creation
     let entropy = {
@@ -77,14 +74,16 @@ pub async fn init(
         hex::encode(buf)
     };
 
-    // Build certmesh CreateCA request
+    // Build certmesh CreateCA request. The security posture is the two real
+    // booleans; `auto_unlock` is the create-time vault decision (configured
+    // inside CertmeshCore::create from this flag).
     let create_req = koi_certmesh::protocol::CreateCaRequest {
         passphrase: input.passphrase.clone(),
         entropy_hex: entropy,
-        profile,
         operator: None,
-        enrollment_open: None,
-        requires_approval: None,
+        enrollment_open,
+        requires_approval,
+        auto_unlock,
         totp_secret_hex: None,
     };
 
@@ -118,23 +117,15 @@ pub async fn init(
     let create_resp: koi_certmesh::protocol::CreateCaResponse =
         serde_json::from_slice(&resp_bytes).context("Failed to parse certmesh response")?;
 
-    // Extract TOTP URI from auth setup
-    let totp_uri = match &create_resp.auth_setup {
-        koi_crypto::auth::AuthSetup::Totp { totp_uri } => Some(totp_uri.clone()),
-        _ => None,
-    };
+    // Extract TOTP URI from auth setup (TOTP is the only auth method).
+    let koi_crypto::auth::AuthSetup::Totp { totp_uri } = &create_resp.auth_setup;
+    let totp_uri = Some(totp_uri.clone());
 
     // Update pond state
     refresh_pond_active(state).await;
 
-    // Auto-unlock: the trust profile determines whether the passphrase is
-    // saved for automatic unlock on reboot (single source of truth).
-    if let Err(e) = core.configure_auto_unlock_for_profile(profile, &input.passphrase) {
-        tracing::warn!(
-            error = %e,
-            "Failed to configure auto-unlock (pond will require manual unlock on reboot)"
-        );
-    }
+    // Auto-unlock is configured inside CertmeshCore::create() from the request's
+    // `auto_unlock` flag (koi's single source of truth) — no separate call here.
 
     // Generate or use provided pond name
     let pond_name = resolve_pond_name(input.name.as_deref());
@@ -154,7 +145,9 @@ pub async fn init(
     tracing::info!(
         cornerstone = %state.current.stone.name,
         pond_name = %pond_name,
-        profile = ?profile,
+        enrollment_open,
+        requires_approval,
+        auto_unlock,
         fingerprint = %create_resp.ca_fingerprint,
         "Pond initialized — keystone placed"
     );

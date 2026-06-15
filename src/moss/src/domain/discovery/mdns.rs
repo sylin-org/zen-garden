@@ -219,6 +219,52 @@ impl Drop for MdnsHandle {
 // Certmesh CA mDNS Registration
 // ============================================================================
 
+/// mDNS descriptor for the certmesh CA service (`_certmesh._tcp`).
+struct CaAnnouncement {
+    name: String,
+    port: u16,
+    txt: std::collections::HashMap<String, String>,
+}
+
+/// Build the `_certmesh._tcp` descriptor from CA status. Returns `None` unless
+/// this stone is an unlocked cornerstone with a primary CA — mirroring the
+/// gating of koi's removed `CertmeshCore::ca_announcement` (shed with automatic
+/// failover in koi's P08 certmesh diet).
+async fn build_ca_announcement(
+    koi_handle: &std::sync::Arc<KoiHandle>,
+    http_port: u16,
+) -> Option<CaAnnouncement> {
+    let core = koi_handle.certmesh().ok()?.core().ok()?;
+    let status = core.certmesh_status().await;
+    if !status.ca_initialized || status.ca_locked {
+        return None;
+    }
+    let primary = status.members.iter().find(|m| m.role == "primary")?;
+
+    // Informational posture label, derived from the two booleans certmesh stores.
+    let profile = match (status.enrollment_open, status.requires_approval) {
+        (true, false) => "just-me",
+        (true, true) => "my-team",
+        (false, true) => "my-organization",
+        (false, false) => "custom",
+    };
+
+    let mut txt = std::collections::HashMap::new();
+    txt.insert("role".to_string(), "primary".to_string());
+    txt.insert(
+        "fingerprint".to_string(),
+        status.ca_fingerprint.unwrap_or_default(),
+    );
+    txt.insert("profile".to_string(), profile.to_string());
+    txt.insert("auth".to_string(), "totp".to_string());
+
+    Some(CaAnnouncement {
+        name: format!("koi-ca-{}", primary.hostname),
+        port: http_port,
+        txt,
+    })
+}
+
 /// Register the certmesh CA service (`_certmesh._tcp`) on mDNS.
 ///
 /// Only registers when this stone is an unlocked cornerstone (primary CA).
@@ -229,16 +275,10 @@ impl Drop for MdnsHandle {
 /// without any HTTP calls — solving the chicken-and-egg problem where
 /// `/api/v1/pond/status` may be behind HTTPS.
 pub async fn register_certmesh_service(koi_handle: &std::sync::Arc<KoiHandle>, http_port: u16) {
-    // Only the cornerstone (primary CA) should announce
-    let announcement = match koi_handle.certmesh() {
-        Ok(handle) => match handle.core() {
-            Ok(core) => core.ca_announcement(http_port).await,
-            Err(_) => None,
-        },
-        Err(_) => None,
-    };
-
-    let Some(ca_info) = announcement else {
+    // Only an unlocked cornerstone (primary CA) should announce. koi removed
+    // CertmeshCore::ca_announcement (P08 failover shed), so the _certmesh._tcp
+    // descriptor is rebuilt here from the CA status.
+    let Some(ca_info) = build_ca_announcement(koi_handle, http_port).await else {
         tracing::debug!("Not registering _certmesh._tcp: not an unlocked cornerstone");
         return;
     };

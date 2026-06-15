@@ -639,8 +639,6 @@ async fn build_state(
                         tracing::info!(
                             "Pond CA locked -- unlock with TOTP code via 'POST /api/v1/pond/unlock' or 'garden-rake pond unlock --totp'"
                         );
-                    } else if methods.contains(&"fido2") {
-                        tracing::info!("Pond CA locked -- unlock with security key via pond UI");
                     } else {
                         tracing::info!(
                             "Pond CA locked -- run 'garden-rake pond unlock' with passphrase"

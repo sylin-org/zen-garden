@@ -77,10 +77,6 @@ pub struct PondUnlockRequest {
     /// TOTP code for authenticator-based unlock
     #[serde(default)]
     pub totp_code: Option<String>,
-    /// FIDO2 credential ID (base64) for security key unlock.
-    /// The caller must have already verified the WebAuthn assertion.
-    #[serde(default)]
-    pub fido2_credential_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -402,10 +398,22 @@ pub async fn pond_status_v1(State(state): State<Moss>) -> PondResult<PondStatusR
         name: state.security.pond_name().await,
         cornerstone,
         stones,
-        profile: format!("{:?}", status.profile),
+        profile: trust_profile_label(status.enrollment_open, status.requires_approval).to_string(),
         ca_fingerprint: status.ca_fingerprint,
         enrollment_state: format!("{:?}", status.enrollment_state),
     })
+}
+
+/// Derive a display label for the trust posture from the two booleans certmesh
+/// stores. The inverse of koi's preset table; `(open, approval)` that matches no
+/// named preset reads as "custom".
+fn trust_profile_label(enrollment_open: bool, requires_approval: bool) -> &'static str {
+    match (enrollment_open, requires_approval) {
+        (true, false) => "just-me",
+        (true, true) => "my-team",
+        (false, true) => "my-organization",
+        (false, false) => "custom",
+    }
 }
 
 /// POST /api/v1/pond/join — Join pond with TOTP code
@@ -775,33 +783,30 @@ pub async fn pond_invite_v1(
         .await
         .map_err(certmesh_err)?;
 
-    let totp_uri = match auth_setup {
-        koi_crypto::auth::AuthSetup::Totp { totp_uri } => totp_uri,
-        _ => {
-            return Err(internal(
-                "UNEXPECTED_AUTH_METHOD",
-                "Expected TOTP auth setup but got a different method.",
-            ));
-        }
-    };
+    // TOTP is the only auth method certmesh offers.
+    let koi_crypto::auth::AuthSetup::Totp { totp_uri } = auth_setup;
 
-    // Open enrollment window with deadline
-    let ttl_minutes = payload.ttl_minutes.unwrap_or(30);
-    let deadline = chrono::Utc::now() + chrono::Duration::minutes(ttl_minutes as i64);
-    core.open_enrollment(Some(deadline))
-        .await
-        .map_err(certmesh_err)?;
+    // Open the enrollment window. koi's enrollment is now a simple toggle: it
+    // stays open until explicitly closed (no auto-expiry deadline). `ttl_minutes`
+    // is accepted for wire-compatibility but is no longer enforced, so the invite
+    // advertises no expiry.
+    if payload.ttl_minutes.is_some() {
+        tracing::warn!(
+            "ttl_minutes is accepted for compatibility but no longer enforced — \
+             enrollment stays open until explicitly closed (use pond rest/close to end it)"
+        );
+    }
+    core.open_enrollment().await.map_err(certmesh_err)?;
 
     tracing::info!(
         inviter = %state.current.stone.name,
-        ttl_minutes = ttl_minutes,
         "Pond enrollment opened with fresh invitation"
     );
 
     crate::api::ok(PondInviteResponse {
         totp_uri,
-        expires_at: Some(deadline.to_rfc3339()),
-        ttl_seconds: Some(ttl_minutes * 60),
+        expires_at: None,
+        ttl_seconds: None,
         inviter_stone: state.current.stone.name.clone(),
         enrollment_state: "open".to_string(),
     })
@@ -812,10 +817,9 @@ pub async fn pond_invite_v1(
 /// After a reboot, the CA private key is locked (encrypted at rest).
 /// This endpoint decrypts the key so certmesh can issue/renew certificates.
 ///
-/// Supports three unlock methods (provide exactly one):
+/// Supports two unlock methods (provide exactly one):
 /// - `passphrase`: traditional passphrase-based unlock
 /// - `totp_code`: authenticator app code (requires TOTP unlock slot)
-/// - `fido2_credential_id`: security key (requires FIDO2 unlock slot, assertion pre-verified)
 pub async fn pond_unlock_v1(
     State(state): State<Moss>,
     Json(payload): Json<PondUnlockRequest>,
@@ -839,20 +843,6 @@ pub async fn pond_unlock_v1(
             .await
             .map_err(certmesh_err)?;
         tracing::info!("Pond unlocked via TOTP code");
-    } else if let Some(ref credential_id_b64) = payload.fido2_credential_id {
-        // FIDO2-based unlock (assertion already verified by caller)
-        use base64::Engine;
-        let b64 = base64::engine::general_purpose::STANDARD;
-        let credential_id = b64.decode(credential_id_b64).map_err(|e| {
-            bad_request(
-                "INVALID_CREDENTIAL",
-                format!("Invalid base64 credential ID: {e}"),
-            )
-        })?;
-        core.unlock_with_fido2(&credential_id)
-            .await
-            .map_err(certmesh_err)?;
-        tracing::info!("Pond unlocked via FIDO2 security key");
     } else if let Some(ref passphrase) = payload.passphrase {
         // Passphrase-based unlock (original path)
         core.unlock(passphrase).await.map_err(certmesh_err)?;
@@ -860,7 +850,7 @@ pub async fn pond_unlock_v1(
     } else {
         return Err(bad_request(
             "NO_UNLOCK_METHOD",
-            "Provide one of: passphrase, totp_code, or fido2_credential_id",
+            "Provide one of: passphrase or totp_code",
         ));
     }
 
@@ -1092,9 +1082,7 @@ pub async fn pond_ceremony_v1(
             .result_data
             .as_ref()
             .map(|d| {
-                d.contains_key("passphrase")
-                    || d.contains_key("_unlock_totp_input")
-                    || d.contains_key("_unlock_fido2_assertion")
+                d.contains_key("passphrase") || d.contains_key("_unlock_totp_input")
             })
             .unwrap_or(false);
         if is_unlock {
@@ -1119,18 +1107,20 @@ async fn execute_pond_init_from_ceremony(
     })?;
     let core = get_certmesh_core(state)?;
 
+    // Trust profile flattened to two booleans: resolve the named preset, then
+    // let any explicit ceremony overrides win.
     let effective_profile = bag
         .get("_effective_profile")
         .and_then(|v| v.as_str())
         .unwrap_or("just_me");
-    let profile = match effective_profile {
-        "just_me" | "JustMe" => koi_certmesh::profiles::TrustProfile::JustMe,
-        "my_team" | "MyTeam" => koi_certmesh::profiles::TrustProfile::MyTeam,
-        "my_organization" | "MyOrganization" => {
-            koi_certmesh::profiles::TrustProfile::MyOrganization
-        }
-        _ => koi_certmesh::profiles::TrustProfile::JustMe,
-    };
+    let (preset_open, preset_approval, preset_auto_unlock) =
+        koi_certmesh::profiles::preset_bools(effective_profile).unwrap_or_else(|| {
+            tracing::warn!(
+                profile = effective_profile,
+                "Unrecognized trust profile preset — defaulting to just-me"
+            );
+            (true, false, true)
+        });
 
     let passphrase = bag
         .get("passphrase")
@@ -1146,20 +1136,35 @@ async fn execute_pond_init_from_ceremony(
         .get("operator")
         .and_then(|v| v.as_str())
         .map(String::from);
-    let enrollment_open = bag.get("_enrollment_open").and_then(|v| v.as_bool());
-    let requires_approval = bag.get("_requires_approval").and_then(|v| v.as_bool());
+    let enrollment_open = bag
+        .get("_enrollment_open")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(preset_open);
+    let requires_approval = bag
+        .get("_requires_approval")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(preset_approval);
     let totp_secret_hex = bag
         .get("_totp_secret_hex")
         .and_then(|v| v.as_str())
         .map(String::from);
 
+    // Auto-unlock is the preset's choice, but only when the user kept the
+    // automatic unlock method (a token unlock means manual/token unlock instead).
+    let auto_unlock = preset_auto_unlock
+        && bag
+            .get("_unlock_method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto")
+            == "auto";
+
     let create_req = koi_certmesh::protocol::CreateCaRequest {
         passphrase,
         entropy_hex,
-        profile,
         operator,
         enrollment_open,
         requires_approval,
+        auto_unlock,
         totp_secret_hex,
     };
 
@@ -1215,10 +1220,10 @@ async fn execute_pond_init_from_ceremony(
     // Update pond state
     refresh_pond_active(state).await;
 
-    // ── Unlock method: domain-driven decision ───────────────────────
-    // The trust profile determines whether auto-unlock is configured.
-    // Token-based unlock (TOTP/FIDO2) is handled separately below
-    // because it requires ceremony-specific data from the bag.
+    // ── Unlock method ───────────────────────────────────────────────
+    // Auto-unlock is configured inside CertmeshCore::create() from the request's
+    // `auto_unlock` flag. A token unlock (TOTP) is registered separately below
+    // because it needs ceremony-specific data from the bag.
     let unlock_method = bag
         .get("_unlock_method")
         .and_then(|v| v.as_str())
@@ -1233,10 +1238,8 @@ async fn execute_pond_init_from_ceremony(
 
     match unlock_method {
         "auto" => {
-            // Delegate to the domain — single source of truth
-            if let Err(e) = core.configure_auto_unlock_for_profile(profile, passphrase_for_file) {
-                tracing::warn!(error = %e, "Failed to configure auto-unlock (pond will require manual unlock on reboot)");
-            }
+            // Auto-unlock was already configured inside CertmeshCore::create()
+            // from the request's `auto_unlock` flag (koi's single source of truth).
         }
         "token" => {
             let token_type = bag
@@ -1302,61 +1305,6 @@ async fn execute_pond_init_from_ceremony(
                                             );
                                         }
                                     }
-                                    "fido2" => {
-                                        // Read FIDO2 credential from the ceremony bag
-                                        if let Some(fido2_data) = bag.get("_fido2_registered") {
-                                            let credential_id = fido2_data
-                                                .get("credential_id")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("");
-                                            let public_key = fido2_data
-                                                .get("public_key")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("");
-                                            let rp_id = fido2_data
-                                                .get("rp_id")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("localhost");
-
-                                            if credential_id.is_empty() || public_key.is_empty() {
-                                                tracing::error!(
-                                                    "FIDO2 credential data incomplete — skipping slot creation"
-                                                );
-                                            } else {
-                                                use base64::Engine;
-                                                let b64 = base64::engine::general_purpose::STANDARD;
-                                                let cred_bytes =
-                                                    b64.decode(credential_id).unwrap_or_default();
-                                                let pk_bytes =
-                                                    b64.decode(public_key).unwrap_or_default();
-
-                                                match table.add_fido2_slot(
-                                                    &master_key,
-                                                    &cred_bytes,
-                                                    &pk_bytes,
-                                                    rp_id,
-                                                ) {
-                                                    Ok(()) => {
-                                                        if let Err(e) = table.save(&slot_table_path)
-                                                        {
-                                                            tracing::error!(error = %e, "Failed to save slot table after adding FIDO2 slot");
-                                                        } else {
-                                                            tracing::info!(
-                                                                "FIDO2 unlock slot registered — pond can be unlocked with security key"
-                                                            );
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        tracing::error!(error = %e, "Failed to add FIDO2 unlock slot")
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            tracing::error!(
-                                                "Token type is FIDO2 but _fido2_registered is missing from ceremony bag"
-                                            );
-                                        }
-                                    }
                                     other => {
                                         tracing::warn!(
                                             token_type = other,
@@ -1398,7 +1346,10 @@ async fn execute_pond_init_from_ceremony(
     tracing::info!(
         cornerstone = %state.current.stone.name,
         pond_name = %pond_name,
-        profile = ?profile,
+        profile = %effective_profile,
+        enrollment_open,
+        requires_approval,
+        auto_unlock,
         fingerprint = %create_resp.ca_fingerprint,
         "Pond initialized via ceremony — keystone placed"
     );
@@ -1453,27 +1404,6 @@ async fn execute_pond_unlock_from_ceremony(
     let unlock_result =
         if let Some(totp_code) = bag.get("_unlock_totp_input").and_then(|v| v.as_str()) {
             core.unlock_with_totp(totp_code).await
-        } else if let Some(fido2_data) = bag.get("_unlock_fido2_assertion") {
-            // FIDO2 — the ceremony collected assertion data
-            let credential_id = fido2_data
-                .get("credential_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if credential_id.is_empty() {
-                return Err(bad_request(
-                    "INVALID_CREDENTIAL",
-                    "FIDO2 assertion missing credential_id",
-                ));
-            }
-            use base64::Engine;
-            let b64 = base64::engine::general_purpose::STANDARD;
-            let cred_bytes = b64.decode(credential_id).map_err(|e| {
-                bad_request(
-                    "INVALID_CREDENTIAL",
-                    format!("Invalid base64 credential ID: {e}"),
-                )
-            })?;
-            core.unlock_with_fido2(&cred_bytes).await
         } else if let Some(passphrase) = bag.get("passphrase").and_then(|v| v.as_str()) {
             core.unlock(passphrase).await
         } else {

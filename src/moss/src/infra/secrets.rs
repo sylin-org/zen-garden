@@ -8,7 +8,7 @@
 //! - Machine-bound Argon2id derivation as fallback on headless systems
 //! - AES-256-GCM encryption for individual secrets
 //!
-//! Pond CA secrets (passphrase, TOTP, FIDO2) are handled separately by
+//! Pond CA secrets (passphrase, TOTP) are handled separately by
 //! `koi-certmesh` via its unlock-slot envelope encryption.
 
 pub use koi_crypto::vault::{Vault, VaultError};

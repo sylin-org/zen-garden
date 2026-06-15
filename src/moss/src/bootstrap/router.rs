@@ -815,6 +815,10 @@ pub fn configure(state: Moss) -> Router {
             get(api::v1::banks::get_bank),
         )
         .route(
+            "/api/v1/stone/banks/{moniker}/seeds",
+            get(api::v1::bank_snapshots::list_bank_seeds_v1),
+        )
+        .route(
             "/api/v1/stone/banks/{moniker}/pin",
             post(api::v1::banks::pin_bank),
         )

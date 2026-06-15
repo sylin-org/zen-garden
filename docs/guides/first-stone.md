@@ -538,16 +538,11 @@ dns-sd -G v4 blue-stone.local  # macOS
 
 **Symptom:** Cannot SSH into Stone after installation
 
-**Note:** SSH is **disabled by default** in production preseed for security.
-
-**Enable SSH (development only):**
-
-1. Edit `installer/preseed.cfg` before USB creation
-2. Uncomment SSH server installation:
-   ```
-   d-i pkgsel/include string openssh-server
-   ```
-3. Regenerate USB with `NewStone-linux-x64.ps1`
+**Note:** SSH is **enabled by default** — the Debian preseed installs `ssh-server` (via tasksel) and
+creates the `stone` account with NOPASSWD sudo. This is convenient on a trusted LAN but is **not safe to
+expose**: change the `stone` password (and disable password authentication in `sshd_config`) before
+putting a Stone on an untrusted network. Hardening the preseed to disable password auth post-enrollment
+is a tracked follow-up.
 
 **Alternative access methods:**
 

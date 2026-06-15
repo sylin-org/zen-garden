@@ -1,1 +1,0 @@
-   Compiling garden-moss v0.1.0 (F:\Replica\NAS\Files\repo\github\zen-garden\src\moss)

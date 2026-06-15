@@ -38,7 +38,7 @@ Stones (devices running Moss) provide service discovery, orchestration, and fail
 | Orchestration    | Docker containers from curated offering templates                  |
 | Failure recovery | Clients retry mDNS — new Stone, same service type, auto-reconnect |
 | Security         | Optional mTLS via Pond (explicit trust boundary)                   |
-| Scaling          | mDNS for up to 30 Stones; Lantern registry recommended beyond 20  |
+| Scaling          | mDNS for up to 30 Stones; Lantern dashboard for garden-wide visibility |
 
 - **Set up real hardware** — [First Stone Guide](docs/guides/first-stone.md)
 - **Understand the protocol** — [Discovery Spec](docs/specs/discovery.md)
@@ -73,7 +73,7 @@ Zen Garden runs on Linux and Windows, detects GPU hardware automatically, and sh
 | **Stone**   | A device offering services (laptop, desktop, Raspberry Pi, thin client) |
 | **Moss**    | The daemon running on each Stone (port 7185)                            |
 | **Rake**    | The CLI tool for managing the garden                                    |
-| **Lantern** | Optional registry for multi-subnet gardens                              |
+| **Lantern** | Optional garden dashboard (topology, resolve, events) — registry features are roadmap |
 | **Pond**    | Optional security boundary (mTLS)                                       |
 
 ---

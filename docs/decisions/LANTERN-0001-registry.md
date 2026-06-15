@@ -4,6 +4,15 @@
 **Date:** 2026-01-16  
 **Context:** Zen Garden stones rely on UDP broadcast for peer discovery, which fails across subnets/VLANs and limits operational visibility
 
+> **Status update (2026-06-15): the registry design below is parked; only the dashboard shipped.**
+> What landed in `src/lantern` is a **garden topology dashboard**, not the registry this ADR specifies:
+> passive mDNS browse, opt-in heartbeat (`LANTERN_ENDPOINT`-gated), 15s Moss polling, the
+> `GET /api/v1/resolve` TTL contract, an SSE event stream, and a React dashboard. The three unbuilt
+> pillars — **SQLite persistence, leader election, and multi-active high availability** — are
+> `superseded: parked` (a one-day BLAKE3 election prototype existed 2026-01-24 and was removed
+> 2026-01-25, commit 7ed41af4). Revisit when multi-subnet/HA demand is real; the README frames Lantern
+> as the dashboard it is.
+
 ---
 
 ## Problem

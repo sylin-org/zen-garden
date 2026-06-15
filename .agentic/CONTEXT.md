@@ -118,7 +118,7 @@ src/
 ├── rake/                   # CLI client
 ├── cricket/                # Audio companion
 ├── firefly/                # LED companion
-├── lantern/                # Service registry
+├── lantern/                # Topology dashboard (resolve, events; registry features are roadmap)
 └── orchestrators/          # Standalone crates (excluded from root workspace)
     ├── common/             # Shared orchestrator infra (gateway, topology, streams)
     ├── ollama/             # Ollama orchestrator (Docker image)

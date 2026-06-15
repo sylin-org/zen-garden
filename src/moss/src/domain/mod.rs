@@ -58,7 +58,6 @@ pub mod scoring;
 pub mod security;
 pub mod service_discovery;
 pub mod service_lifecycle;
-pub mod service_manager;
 pub mod services;
 pub mod services_internal;
 pub mod storage;

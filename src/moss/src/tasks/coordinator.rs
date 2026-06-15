@@ -98,11 +98,7 @@ pub(crate) async fn start_background_tasks(
         let _transport_tap_handle =
             infra::spawn_transport_tap(pulse.clone(), shutdown_token.clone());
 
-        // TimerListener: Manages nurturing schedule timers (stub - no callback yet)
-        let timer_listener = Arc::new(infra::TimerListener::new());
-        let _timer_handle = infra::spawn_listener(&event_bus, timer_listener);
-
-        tracing::info!("Domain event listeners started (chirp, pulse, timer)");
+        tracing::info!("Domain event listeners started (chirp, pulse)");
     }
 
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)

@@ -1088,25 +1088,11 @@ pub fn configure(state: Moss) -> Router {
             get(api::v1::jobs::stream_job),
         )
         // ══════════════════════════════════════════════════════════════════
-        // /api/v1/helpers/* - Internal utility endpoints
-        // ══════════════════════════════════════════════════════════════════
-        .route(
-            "/api/v1/helpers/json-transform",
-            post(api::v1::helpers::json_transform),
-        )
-        // ══════════════════════════════════════════════════════════════════
         // /api/v1/manifest - API documentation
         // ══════════════════════════════════════════════════════════════════
         .route(
             "/api/v1/manifest",
             get(api::v1::manifest::get_api_manifest_v1),
-        )
-        // ══════════════════════════════════════════════════════════════════
-        // /api/v1/election - Election protocol (testing)
-        // ══════════════════════════════════════════════════════════════════
-        .route(
-            "/api/v1/election/start",
-            post(api::v1::election::start_election),
         )
         // ══════════════════════════════════════════════════════════════════
         // /api/v1/pond/* - Security & trust management

@@ -4,7 +4,6 @@
 //! - Communications (UDP P2P, mDNS)
 //! - Container runtime (Podman/Docker)
 //! - File system operations
-//! - Authentication implementation (NoAuth for v0.1.0)
 //! - Platform-specific utilities
 //! - API response helpers
 //! - Archive operations (centralized compression/checksum)
@@ -15,7 +14,6 @@
 //! No business logic here - pure I/O Companions.
 
 pub mod api_helpers;
-pub mod auth;
 pub mod ceremony_journal;
 pub mod cross_stone;
 // Cloud Filter integration moved to garden-pavilion per PAVILION-0001.
@@ -61,7 +59,6 @@ pub mod topology;
 pub mod update_transaction;
 
 pub use api_helpers::{error_response, require_docker};
-pub use auth::NoAuth;
 pub use ceremony_journal::CeremonyJournal;
 pub use companions::CompanionRegistry;
 pub use config::{AdoptionConfig, MossConfig, NetworkConfig, StaticIpPoolConfig};
@@ -86,8 +83,7 @@ pub use hardware_id::{load_cached_stone_name, save_stone_name_cache};
 pub use harvest::{create_harvest, restore_harvest, verify_harvest};
 pub use harvest_store::HarvestStore;
 pub use listeners::{
-    ChirpListener, DomainPulse, PulseDomainBridge, PulseEvent, TimerListener, TransportPulse,
-    spawn_transport_tap,
+    ChirpListener, DomainPulse, PulseDomainBridge, PulseEvent, TransportPulse, spawn_transport_tap,
 };
 pub use manifests::{
     AdoptedConfig, BorrowedConfig, HwEntry, HwManifests, ManagedConfig, ManifestRegistry, Offering,

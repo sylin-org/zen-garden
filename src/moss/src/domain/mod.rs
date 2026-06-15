@@ -19,7 +19,6 @@ pub mod capabilities;
 pub mod capacity;
 pub mod catalog;
 pub mod ceremony;
-pub mod cloud_drive;
 pub mod companion;
 pub mod compatibility;
 pub mod config_compose;
@@ -71,7 +70,6 @@ pub mod topology;
 pub mod traits;
 
 pub use adoption::{AdoptionResult, adopt_existing_containers, adopt_offering_container};
-pub use cloud_drive::{DriveAction, classify_rename};
 // compatibility: use crate::domain::compatibility::{...} directly
 pub use capacity::{
     Budget, Capacity, CapacityChanged, Pressure, Reclaimable, ReclaimLevel, ReclaimPriority,

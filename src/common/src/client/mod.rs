@@ -6,11 +6,7 @@
 //! Stone discovery (TTL cache, DiscoveryProvider trait, mDNS/UDP) moved
 //! to the `garden-discovery` crate per DISC-0001.
 
-pub mod api;
 pub mod stone_api;
-
-// Re-export API client types for backward compatibility
-pub use api::{GardenApiResponse, GardenHttpClient};
 
 // Re-export typed client (ARCH-0012)
 pub use stone_api::{StoneApi, StoneApiError};

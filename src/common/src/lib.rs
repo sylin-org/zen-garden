@@ -1,5 +1,5 @@
 //! Zen Common Library
-//! Shared types, networking, errors, utilities, constants, responses, and jobs for Zen Garden
+//! Shared types, networking, utilities, constants, and responses for Zen Garden
 
 pub mod api_manifest;
 pub mod api_utils;
@@ -15,11 +15,8 @@ pub mod domain;
 pub mod host;
 pub mod http;
 pub mod election;
-pub mod errors;
-pub mod events;
 pub mod firefly_roster;
 pub mod infra;
-pub mod jobs;
 pub mod manifests;
 pub mod mdns;
 pub mod notifications;
@@ -31,7 +28,6 @@ pub mod platform_runtime;
 pub mod presence;
 pub mod resources;
 pub mod responses;
-pub mod stone;
 pub mod storage;
 pub mod templates;
 pub mod tools;
@@ -42,14 +38,12 @@ pub mod utils;
 
 pub use platform_runtime::PlatformRuntime;
 
-// Canonical stone value objects (ARCH-0003 Wave 1b)
-pub use stone::{Current, Environment, OsKind, Stone};
 // Canonical companion value objects (ARCH-0003 Wave 1b)
 pub use companion::{Companion, Manifest};
 
 // ── Explicit re-exports (narrowed from wildcard dumps) ──────────────
 
-pub use client::{GardenApiResponse, GardenHttpClient, StoneApi, StoneApiError};
+pub use client::{StoneApi, StoneApiError};
 pub use types::peer_address::PeerAddress;
 pub use types::topology::TopologyEntry;
 pub use utils::{format_bytes, format_uptime};

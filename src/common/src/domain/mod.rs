@@ -54,5 +54,4 @@ pub use seed_bank::SeedBank;
 // types module. Future books may promote more of moss's domain types
 // into `garden-common::domain` as sharing needs emerge.
 pub use crate::offerings::OfferingFqn;
-pub use crate::stone::Stone;
 pub use crate::types::discovery::StoneStatus;

@@ -67,7 +67,7 @@ jobs:
       matrix:
         # Values are DIRECTORY names under src/orchestrators/ (package names differ,
         # e.g. common -> orchestrator-common). ai joins or leaves per prompt 04.
-        crate: [common, ollama, mongodb, postgresql, valkey, weaviate]
+        crate: [common, ollama, mongodb]
     steps:
       - name: Checkout zen-garden
         uses: actions/checkout@v4

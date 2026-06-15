@@ -4,7 +4,6 @@
 //! tending state persistence, and dashboard SSE helpers — common to all
 //! orchestrators (Ollama, MongoDB, future).
 
-pub mod cluster;
 pub mod dashboard;
 pub mod discovery;
 pub mod events;

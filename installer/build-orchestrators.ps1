@@ -12,7 +12,7 @@
 
 .PARAMETER Include
     Orchestrators to build (comma-separated). Default: all.
-    Valid names: ollama, mongodb, postgresql, valkey, weaviate
+    Valid names: ollama, mongodb
 
 .PARAMETER Exclude
     Orchestrators to skip (comma-separated).
@@ -32,8 +32,8 @@
     Build only Ollama and MongoDB orchestrators
 
 .EXAMPLE
-    .\build-orchestrators.ps1 -Exclude postgresql
-    Build all except PostgreSQL
+    .\build-orchestrators.ps1 -Exclude mongodb
+    Build all except MongoDB
 
 .EXAMPLE
     .\build-orchestrators.ps1 -Push
@@ -57,9 +57,6 @@ $ErrorActionPreference = "Stop"
 $orchestrators = @(
     @{ Name = "ollama";     Dir = "ollama";     Image = "sylinorg/zen-garden-ollama-orchestrator";     Port = "7190" }
     @{ Name = "mongodb";    Dir = "mongodb";    Image = "sylinorg/zen-garden-mongodb-orchestrator";    Port = "7191" }
-    @{ Name = "postgresql"; Dir = "postgresql"; Image = "sylinorg/zen-garden-postgresql-orchestrator"; Port = "7192" }
-    @{ Name = "valkey";     Dir = "valkey";     Image = "sylinorg/zen-garden-valkey-orchestrator";     Port = "7193" }
-    @{ Name = "weaviate";   Dir = "weaviate";   Image = "sylinorg/zen-garden-weaviate-orchestrator";   Port = "7194" }
 )
 
 # ── Resolve paths ──────────────────────────────────────────────────────

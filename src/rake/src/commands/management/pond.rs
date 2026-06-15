@@ -316,14 +316,11 @@ async fn execute_pond_invite(
     api: &StoneApi,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
-    let pass = passphrase.unwrap_or_else(|| {
-        println!(
-            "{}{} Using default passphrase for invite. Use --passphrase to specify.",
-            " ".repeat(ui::constants::DEFAULT_INDENT),
-            ui::status_indicator("info", ctx.term.supports_color)
-        );
-        "changeme".to_string()
-    });
+    let pass = passphrase.ok_or_else(|| {
+        anyhow::anyhow!(
+            "--passphrase is required for invite (it protects the invitation; there is no default)"
+        )
+    })?;
 
     let payload = serde_json::json!({ "passphrase": pass });
 
@@ -819,14 +816,11 @@ async fn execute_pond_unlock(
     let payload = if let Some(code) = totp {
         serde_json::json!({ "totp_code": code })
     } else {
-        let pass = passphrase.unwrap_or_else(|| {
-            println!(
-                "{}{} Using default passphrase for unlock. Use --passphrase to specify.",
-                " ".repeat(ui::constants::DEFAULT_INDENT),
-                ui::status_indicator("info", ctx.term.supports_color)
-            );
-            "changeme".to_string()
-        });
+        let pass = passphrase.ok_or_else(|| {
+            anyhow::anyhow!(
+                "provide --totp or --passphrase to unlock (there is no default passphrase)"
+            )
+        })?;
         serde_json::json!({ "passphrase": pass })
     };
 
@@ -861,14 +855,9 @@ async fn execute_pond_promote(
     api: &StoneApi,
     passphrase: Option<String>,
 ) -> anyhow::Result<()> {
-    let pass = passphrase.unwrap_or_else(|| {
-        println!(
-            "{}{} Using default passphrase for promote. Use --passphrase to specify.",
-            " ".repeat(ui::constants::DEFAULT_INDENT),
-            ui::status_indicator("info", ctx.term.supports_color)
-        );
-        "changeme".to_string()
-    });
+    let pass = passphrase.ok_or_else(|| {
+        anyhow::anyhow!("--passphrase is required for promote (there is no default passphrase)")
+    })?;
 
     let payload = serde_json::json!({ "passphrase": pass });
 

@@ -95,14 +95,17 @@ garden-rake find mongodb
 
 ## Building from source
 
+Zen Garden currently builds [koi](https://github.com/sylin-org/koi) from a sibling
+`../koi` checkout while the two are co-developed — clone koi alongside zen-garden
+first. See [docs/guides/koi-dependency.md](docs/guides/koi-dependency.md) for the
+rationale and the procedure to switch back to crates.io once koi stabilizes.
+
 ```bash
+git clone https://github.com/sylin-org/koi           # required sibling checkout
 git clone https://github.com/sylin-org/zen-garden && cd zen-garden
 cargo build --workspace                       # moss, rake, lantern, companions
 cd src/orchestrators/ollama && cargo build    # orchestrators build standalone
 ```
-
-Developing against a local [koi](https://github.com/sylin-org/koi) checkout? Copy
-`.cargo/config.local.toml.example` to `.cargo/config.local.toml` (gitignored).
 
 ---
 

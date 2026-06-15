@@ -69,6 +69,9 @@ param(
     [switch]$DebugBuild,
     [switch]$Release,
     [switch]$Fast,
+    # Skip the cargo test suite during the build. Default: run tests. CI is the
+    # primary test gate, but the local pipeline must not silently skip tests.
+    [switch]$SkipTests,
     [switch]$ForceRebuild,
     [int]$Jobs = 0
 )
@@ -181,7 +184,7 @@ if (-not $SkipWindows) {
             -Tier $Tier `
             -DebugBuild:$DebugBuild `
             -Fast:($Fast -or (-not $DebugBuild -and -not $Release)) `
-            -SkipTests `
+            -SkipTests:$SkipTests `
             -Jobs $Jobs
         
         if ($LASTEXITCODE -ne 0) {

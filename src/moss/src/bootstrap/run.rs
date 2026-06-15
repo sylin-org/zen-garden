@@ -564,7 +564,7 @@ async fn build_state(
 
     let koi_handle = {
         let koi = koi_embedded::Builder::new()
-            .data_dir(koi_data_dir)
+            .data_dir(koi_data_dir.clone())
             .service_mode(koi_embedded::ServiceMode::EmbeddedOnly)
             .http(true)
             .http_port(garden_common::constants::KOI_HTTP)
@@ -631,7 +631,7 @@ async fn build_state(
         } else if status.ca_initialized {
             // CA is initialized but still locked --" no auto-unlock key
             // existed, or decryption failed.  Report available methods.
-            let slot_table_path = koi_certmesh::CertmeshPaths::default().slot_table_path();
+            let slot_table_path = core.paths().slot_table_path();
             if slot_table_path.exists() {
                 if let Ok(table) = koi_crypto::unlock_slots::SlotTable::load(&slot_table_path) {
                     let methods = table.available_methods();
@@ -864,7 +864,9 @@ async fn build_state(
             pond_active.clone(),
             Arc::new(infra::stone_client::StoneClient::new(&stone_name)),
             Arc::new(koi_common::ceremony::CeremonyHost::new(
-                koi_certmesh::pond_ceremony::PondCeremonyRules,
+                koi_certmesh::pond_ceremony::PondCeremonyRules::new(
+                    koi_certmesh::CertmeshPaths::with_data_dir(koi_data_dir.clone()),
+                ),
             )),
             ceremony_registry,
             ceremony_journal,
@@ -1658,8 +1660,15 @@ pub(crate) async fn activate_pond_security(
     }
 
     // --- Chirp verification ---
-    let ca_cert_path = koi_certmesh::CertmeshPaths::default().ca_cert_path();
-    if ca_cert_path.exists()
+    let ca_cert_path = state
+        .discovery
+        .koi()
+        .certmesh()
+        .ok()
+        .and_then(|handle| handle.core().ok())
+        .map(|core| core.paths().ca_cert_path());
+    if let Some(ca_cert_path) = ca_cert_path
+        && ca_cert_path.exists()
         && let Ok(_ca_pem) = std::fs::read_to_string(&ca_cert_path)
     {
         let _ = garden_common::infra::communications::p2p::set_envelope_verifier(Box::new(

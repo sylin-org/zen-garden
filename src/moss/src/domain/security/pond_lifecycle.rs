@@ -129,9 +129,7 @@ pub async fn init(
 
     // Auto-unlock: the trust profile determines whether the passphrase is
     // saved for automatic unlock on reboot (single source of truth).
-    if let Err(e) =
-        koi_certmesh::CertmeshCore::configure_auto_unlock_for_profile(profile, &input.passphrase)
-    {
+    if let Err(e) = core.configure_auto_unlock_for_profile(profile, &input.passphrase) {
         tracing::warn!(
             error = %e,
             "Failed to configure auto-unlock (pond will require manual unlock on reboot)"
@@ -163,10 +161,7 @@ pub async fn init(
 
     Ok(PondInitResult {
         cornerstone: state.current.stone.name.clone(),
-        keystone_path: koi_certmesh::CertmeshPaths::default()
-            .ca_dir()
-            .display()
-            .to_string(),
+        keystone_path: core.paths().ca_dir().display().to_string(),
         totp_uri,
         ca_fingerprint: create_resp.ca_fingerprint,
         pond_name,

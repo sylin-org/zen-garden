@@ -698,10 +698,12 @@ async fn write_enrollment_certs(
     service_cert: &str,
     service_key: &str,
 ) -> Result<(), (StatusCode, Json<ApiErrorResponse>)> {
-    let certs_dir = std::path::PathBuf::from(garden_common::constants::paths::data_dir())
-        .join("koi")
-        .join("certs")
-        .join(hostname);
+    // koi data lives under {data_dir}/koi (see Builder::data_dir in bootstrap/run.rs);
+    // derive the certmesh paths from that single root rather than re-resolving.
+    let paths = koi_certmesh::CertmeshPaths::with_data_dir(
+        std::path::PathBuf::from(garden_common::constants::paths::data_dir()).join("koi"),
+    );
+    let certs_dir = paths.certs_dir().join(hostname);
 
     tokio::fs::create_dir_all(&certs_dir).await.map_err(|e| {
         internal(
@@ -745,7 +747,7 @@ async fn write_enrollment_certs(
 
     // Also store CA cert at the certmesh CA cert path so chirp verification
     // works on non-cornerstone stones (activate_pond_security reads from there).
-    let ca_cert_dest = koi_certmesh::CertmeshPaths::default().ca_cert_path();
+    let ca_cert_dest = paths.ca_cert_path();
     if let Some(parent) = ca_cert_dest.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
@@ -903,8 +905,9 @@ pub async fn pond_remove_v1(State(state): State<Moss>) -> PondResult<serde_json:
     let path = std::path::PathBuf::from(garden_common::constants::paths::pond_metadata_file());
     let _ = std::fs::remove_file(&path);
 
-    // Clean up auto-unlock key if present
-    koi_certmesh::CertmeshCore::delete_auto_unlock_key();
+    // Auto-unlock cleanup rides on koi's CA destroy above; any residual
+    // auto-unlock vault entry is inert once the CA key is gone (and is
+    // overwritten on the next pond init).
 
     crate::api::ok(serde_json::json!({
         "destroyed": true,
@@ -1000,7 +1003,7 @@ pub async fn pond_promote_v1(
 
     crate::api::ok(serde_json::json!({
         "promoted": true,
-        "ca_fingerprint": koi_certmesh::ca::ca_fingerprint_from_disk(&koi_certmesh::CertmeshPaths::default())
+        "ca_fingerprint": koi_certmesh::ca::ca_fingerprint_from_disk(core.paths())
             .unwrap_or_else(|_| "unavailable".to_string()),
     }))
 }
@@ -1023,7 +1026,7 @@ pub async fn pond_ca_cert_v1(
     }
 
     // Read CA cert from disk
-    let ca_cert_path = koi_certmesh::CertmeshPaths::default().ca_cert_path();
+    let ca_cert_path = core.paths().ca_cert_path();
     let ca_pem = tokio::fs::read_to_string(&ca_cert_path)
         .await
         .map_err(|e| {
@@ -1231,10 +1234,7 @@ async fn execute_pond_init_from_ceremony(
     match unlock_method {
         "auto" => {
             // Delegate to the domain — single source of truth
-            if let Err(e) = koi_certmesh::CertmeshCore::configure_auto_unlock_for_profile(
-                profile,
-                passphrase_for_file,
-            ) {
+            if let Err(e) = core.configure_auto_unlock_for_profile(profile, passphrase_for_file) {
                 tracing::warn!(error = %e, "Failed to configure auto-unlock (pond will require manual unlock on reboot)");
             }
         }
@@ -1244,7 +1244,7 @@ async fn execute_pond_init_from_ceremony(
                 .and_then(|v| v.as_str())
                 .unwrap_or("totp");
 
-            let slot_table_path = koi_certmesh::CertmeshPaths::default().slot_table_path();
+            let slot_table_path = core.paths().slot_table_path();
             if !slot_table_path.exists() {
                 tracing::error!(
                     "Slot table not found after CA creation — cannot register unlock token"

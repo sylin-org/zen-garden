@@ -103,7 +103,11 @@ mod tests {
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
             Arc::new(NoopPondClient),
             Arc::new(koi_common::ceremony::CeremonyHost::new(
-                koi_certmesh::pond_ceremony::PondCeremonyRules,
+                koi_certmesh::pond_ceremony::PondCeremonyRules::new(
+                    koi_certmesh::CertmeshPaths::with_data_dir(
+                        std::env::temp_dir().join("zen-garden-security-test").join("koi"),
+                    ),
+                ),
             )),
             Arc::new(CeremonyRegistry::new()),
             Arc::new(NoopCeremonyJournal),

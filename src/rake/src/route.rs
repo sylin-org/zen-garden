@@ -5,8 +5,8 @@
 //! The `Runtime` handles all dispatch middleware (endpoint resolution, stone
 //! headers, context building).
 //!
-//! For a handful of commands that don't implement the Command trait (presence,
-//! election, api) or need pre-resolved endpoints (launch, refresh), the function
+//! For a handful of commands that don't implement the Command trait (election,
+//! api) or need pre-resolved endpoints (launch, refresh), the function
 //! executes them directly and returns `None`.
 //!
 //! ### Before vs After

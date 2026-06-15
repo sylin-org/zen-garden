@@ -3627,8 +3627,6 @@ dependencies = [
 [[package]]
 name = "koi-certmesh"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e0e9a77805514dfce6201dfe1c3fbe3819a88174b282886b4079d2b4bc30a68"
 dependencies = [
  "axum",
  "chrono",
@@ -3656,14 +3654,10 @@ dependencies = [
 [[package]]
 name = "koi-client"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "211677966b613f9e69900b5236693c2f4eb56e3ae75dc4145e59f21d8bd9bccf"
 dependencies = [
  "hickory-proto",
  "koi-common",
  "koi-config",
- "koi-health",
- "koi-mdns",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3673,8 +3667,6 @@ dependencies = [
 [[package]]
 name = "koi-common"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d7664285c1ee80358c2038387b25eac6722a3264665e74caa0eb8e39cf15537"
 dependencies = [
  "axum",
  "chrono",
@@ -3689,8 +3681,6 @@ dependencies = [
 [[package]]
 name = "koi-config"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c020f14b1918f88bb815dc6bb6c6b4b37c4923f622f3c4fb309cbbca5feb038e"
 dependencies = [
  "koi-common",
  "serde",
@@ -3703,8 +3693,6 @@ dependencies = [
 [[package]]
 name = "koi-crypto"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95264f8a55ceb494dbe3d1163b85fc71cc740b51b0ca8bfd5309b1b172c54151"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -3732,8 +3720,6 @@ dependencies = [
 [[package]]
 name = "koi-dashboard"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3a1763659aaf12983899a768ba1994c34a86f44aa69251f6887ef8b1f523de4"
 dependencies = [
  "async-stream",
  "axum",
@@ -3759,8 +3745,6 @@ dependencies = [
 [[package]]
 name = "koi-dns"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49ea801779b8e3f3c0e957d5a1002c4cf9cf91e29b95b7a21ca7af8fd8b36154"
 dependencies = [
  "async-trait",
  "axum",
@@ -3781,8 +3765,6 @@ dependencies = [
 [[package]]
 name = "koi-embedded"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b6696e6f00b53c847cf0472eaa58a3caa922624a6e38d1d422213a8fff5fb33"
 dependencies = [
  "axum",
  "futures-util",
@@ -3817,8 +3799,6 @@ dependencies = [
 [[package]]
 name = "koi-health"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a121312e1d7d7890f1c657a3d15d550523de9654ba3a36536d94b8a203b60a2"
 dependencies = [
  "axum",
  "chrono",
@@ -3836,8 +3816,6 @@ dependencies = [
 [[package]]
 name = "koi-mdns"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60c4bca2b2ce49fce9c4cda8db82d8752b12f36cfe34af95f16c5a0850b5caae"
 dependencies = [
  "async-stream",
  "axum",
@@ -3860,8 +3838,6 @@ dependencies = [
 [[package]]
 name = "koi-proxy"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4aefef4168a7f45b43f529e5dd88bf034c997dcf97d9ea5b3abb97c54ac0affd"
 dependencies = [
  "axum",
  "hostname",
@@ -3885,8 +3861,6 @@ dependencies = [
 [[package]]
 name = "koi-runtime"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e19c0564874891602ec353077e18f097fffb63a48cce1d431004a4c8fee06341"
 dependencies = [
  "async-trait",
  "axum",
@@ -3905,8 +3879,6 @@ dependencies = [
 [[package]]
 name = "koi-truststore"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16e69750aca2395f06739ae7662c241711aaea550a0239a1209bfd627f88bda3"
 dependencies = [
  "koi-common",
  "thiserror 2.0.18",
@@ -3916,8 +3888,6 @@ dependencies = [
 [[package]]
 name = "koi-udp"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18f34ad80dbb40dcdedd140628a0d8af10524a80fd5b2f46bf2a23fce5929a16"
 dependencies = [
  "async-stream",
  "axum",

@@ -1,13 +1,6 @@
 # Build optimization configuration
 # Improves compile and link times significantly
 
-# Optional local koi development override. Copy config.local.toml.example to
-# config.local.toml (gitignored) to build against a sibling ../koi checkout.
-# `optional = true` means a clean clone without the file is skipped silently, so
-# the committed tree (and Docker builds, which mount this config) resolve koi
-# from crates.io.
-include = [{ path = "config.local.toml", optional = true }]
-
 [build]
 incremental = true
 

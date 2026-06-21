@@ -13,10 +13,11 @@ canonical: true
 **Deciders**: Enterprise Architect (Epic analysis `epic-assessment/03`–`04`)
 **Tags**: [cross-repo, canon, layering, contracts, trust, discovery, mission]
 
-> **Cross-repo canonical ADR.** Identical copies live in all three repos and must stay in sync — **edits propagate to all three**:
+> **Cross-repo canonical ADR.** Identical copies live in every Sylin repo and must stay in sync — **edits propagate to all copies** (the three stack layers — Koi, Zen Garden, Koan — plus the `agyo-tools` tooling repo, split out after this ADR was first written):
 > - `koan-framework/docs/decisions/STACK-0001-sylin-stack-canon.md`
 > - `zen-garden/docs/decisions/STACK-0001-sylin-stack-canon.md`
 > - `koi/docs/adr/STACK-0001-sylin-stack-canon.md`
+> - `agyo-tools/docs/decisions/STACK-0001-sylin-stack-canon.md`
 >
 > This is **transcription, not design**: every decision traces to the Epic analysis cited below. Do not edit a decision here without an upstream architect decision. The Epic analysis itself lives outside this repo (the portable `epic-assessment/` set); cited paths like `epic-assessment/04` are relative to it.
 

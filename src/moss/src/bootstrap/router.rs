@@ -370,6 +370,13 @@ pub fn configure_public(state: Moss) -> Router {
             state.clone(),
             inject_stone_identity,
         ))
+        // Stage 4: verify clear-signed envelopes on the control plane. Outermost
+        // so it inspects/rejects before the handler; internally scoped to mutating
+        // /api/v1/stone & /api/v1/garden routes and gated by ZG_POND_ENFORCE.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::domain::security::enforcement::enforce_envelope,
+        ))
         .with_state(state)
 }
 
@@ -1158,6 +1165,13 @@ pub fn configure(state: Moss) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             inject_stone_identity,
+        ))
+        // Stage 4: verify clear-signed envelopes on the control plane. Outermost
+        // so it inspects/rejects before the handler; internally scoped to mutating
+        // /api/v1/stone & /api/v1/garden routes and gated by ZG_POND_ENFORCE.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::domain::security::enforcement::enforce_envelope,
         ))
         .with_state(state)
 }

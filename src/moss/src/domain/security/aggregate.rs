@@ -75,6 +75,13 @@ pub struct Security<P: PondClient = crate::infra::stone_client::StoneClient> {
 
     /// Metrics injection.
     metrics: Arc<Metrics>,
+
+    /// Stage 4 control-plane enforcement posture, read once from
+    /// `ZG_POND_ENFORCE` at startup (off | observe | enforce; default observe).
+    enforce_mode: super::enforcement::PondEnforceMode,
+
+    /// Single-use nonce cache — replay defence for enforced control-plane ops.
+    nonce_cache: Arc<super::replay::NonceCache>,
 }
 
 impl<P: PondClient> Security<P> {
@@ -103,6 +110,9 @@ impl<P: PondClient> Security<P> {
             .register_domain(Self::NAME, SecurityChangeKind::ALL_NAMES)
             .await;
 
+        let enforce_mode = super::enforcement::PondEnforceMode::from_env();
+        tracing::info!(?enforce_mode, "Pond control-plane enforcement posture");
+
         Self {
             state: RwLock::new(State::new()),
             active,
@@ -113,6 +123,8 @@ impl<P: PondClient> Security<P> {
             ceremony_journal,
             changed,
             metrics,
+            enforce_mode,
+            nonce_cache: Arc::new(super::replay::NonceCache::new()),
         }
     }
 
@@ -147,6 +159,16 @@ impl<P: PondClient> Security<P> {
     /// Access the inter-stone HTTP client.
     pub fn stone_client(&self) -> &Arc<P> {
         &self.client
+    }
+
+    /// The Stage 4 control-plane enforcement posture (off | observe | enforce).
+    pub fn enforce_mode(&self) -> super::enforcement::PondEnforceMode {
+        self.enforce_mode
+    }
+
+    /// The single-use nonce cache (replay defence for enforced mutations).
+    pub fn nonce_cache(&self) -> &Arc<super::replay::NonceCache> {
+        &self.nonce_cache
     }
 
     /// Access the ceremony host (koi-common pond ceremony protocol).

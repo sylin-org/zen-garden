@@ -584,7 +584,7 @@ fn parse_envelope_header(
 /// Map a non-identity [`Assurance`] to an HTTP error. An expired or unknown
 /// signer is a warm `POND_REJOIN_REQUIRED`, not an opaque 403 — a stone that went
 /// dark past its grace window is welcomed back rather than stonewalled.
-fn reject_to_response(
+pub(crate) fn reject_to_response(
     assurance: &koi_common::envelope::Assurance,
 ) -> (StatusCode, Json<ApiErrorResponse>) {
     use koi_common::envelope::{Assurance, RejectReason};

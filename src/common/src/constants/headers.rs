@@ -19,11 +19,11 @@ pub const HEADER_REQUESTING_STONE_ID: &str = "x-requesting-stone-id";
 /// Requesting stone name header (used for audit metadata)
 pub const HEADER_REQUESTING_STONE_NAME: &str = "x-requesting-stone-name";
 
-/// Carries a koi clear-signed [`Envelope`](koi_common::envelope::Envelope) (JSON)
-/// authenticating a pond request. The signature covers the canonical request
-/// bytes (verb + path + audience stone + body hash, see [`crate::pond`]), so a
-/// captured envelope cannot be lifted to another operation or replayed to a
-/// different stone within the freshness window. See [`crate::pond_authz`].
+/// Carries a koi clear-signed envelope (JSON) authenticating a pond request. The
+/// signature covers the canonical request bytes (verb + path + audience stone +
+/// body hash; see [`crate::pond_authz`]), so a captured envelope cannot be lifted
+/// to another operation or replayed to a different stone within the freshness
+/// window.
 pub const HEADER_KOI_ENVELOPE: &str = "x-koi-envelope";
 
 // ── Response headers ────────────────────────────────────────────────────

@@ -9,4 +9,4 @@
 pub mod stone_api;
 
 // Re-export typed client (ARCH-0012)
-pub use stone_api::{StoneApi, StoneApiError};
+pub use stone_api::{PondSigning, StoneApi, StoneApiError};

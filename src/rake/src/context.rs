@@ -73,9 +73,28 @@ impl Context {
         output_format: OutputFormat,
         field: Option<String>,
     ) -> Self {
+        let endpoint = stone.endpoint().to_string();
+        // When the target stone's name is known, sign every mutating request via
+        // the LOCAL Moss loopback sign oracle, binding the audience to that name
+        // (so a captured signature can't be replayed to another stone). When the
+        // name is unknown, send unsigned and let the target decide.
+        let api = match &stone_name {
+            Some(audience) => StoneApi::with_signing(
+                client.clone(),
+                endpoint.clone(),
+                garden_common::client::PondSigning {
+                    sign_url: format!(
+                        "http://127.0.0.1:{}/api/v1/pond/sign",
+                        garden_common::constants::MOSS_SIGN_LOOPBACK
+                    ),
+                    audience: audience.clone(),
+                },
+            ),
+            None => StoneApi::new(client.clone(), endpoint.clone()),
+        };
         Self {
-            api: Some(StoneApi::new(client.clone(), stone.endpoint().to_string())),
-            endpoint: Some(stone.endpoint().to_string()),
+            api: Some(api),
+            endpoint: Some(endpoint),
             stone_name,
             client,
             quiet,

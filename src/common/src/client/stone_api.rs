@@ -49,6 +49,10 @@ pub enum StoneApiError {
     #[error("failed to parse response: {0}")]
     Parse(#[source] reqwest::Error),
 
+    /// Request body could not be serialized to JSON before sending.
+    #[error("failed to encode request body: {0}")]
+    Encode(String),
+
     /// Resource was not found (404)
     #[error("not found: {0}")]
     NotFound(String),
@@ -84,6 +88,7 @@ impl StoneApiError {
                 }
             }
             StoneApiError::Parse(e) => format!("Failed to parse response: {e}"),
+            StoneApiError::Encode(m) => format!("Failed to encode request: {m}"),
             StoneApiError::NotFound(resource) => format!("Not found: {resource}"),
         }
     }
@@ -96,6 +101,61 @@ impl StoneApiError {
 // Core client
 // ────────────────────────────────────────────────────────────────────────────
 
+/// Per-request pond signing for the clear-signed authz plane.
+///
+/// When a `StoneApi` carries this, every *mutating* request (POST/PUT/PATCH/
+/// DELETE) is signed before send: the client asks the **local** Moss to sign the
+/// canonical request bytes (verb + path + audience + body hash) and attaches the
+/// returned envelope as the `X-Koi-Envelope` header. Reads are never signed.
+///
+/// The signing Moss is the local one (loopback `sign_url`); the `audience` is the
+/// *target* stone's name, so a captured signature cannot be replayed to another
+/// stone. Signing is best-effort here — if the local sign oracle is unreachable
+/// the request is sent unsigned (the target decides whether to allow it).
+#[derive(Debug, Clone)]
+pub struct PondSigning {
+    /// The local Moss signing oracle URL (loopback `/api/v1/pond/sign`).
+    pub sign_url: String,
+    /// The target stone's name — the audience the signature is bound to.
+    pub audience: String,
+}
+
+impl PondSigning {
+    /// Ask the local Moss to sign these canonical request inputs and return the
+    /// `X-Koi-Envelope` header value (compact JSON of the envelope), or `None`
+    /// when signing is unavailable (the request is then sent unsigned).
+    async fn envelope_header(
+        &self,
+        client: &reqwest::Client,
+        method: &str,
+        path: &str,
+        body: &[u8],
+    ) -> Option<String> {
+        let request = serde_json::json!({
+            "method": method,
+            "path": path,
+            "audience": self.audience,
+            "body_hash": crate::pond_authz::body_hash_hex(body),
+        });
+        let response = match client.post(&self.sign_url).json(&request).send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                tracing::warn!(status = %r.status(), "pond sign oracle returned non-success — sending unsigned");
+                return None;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "pond sign oracle unreachable — sending unsigned");
+                return None;
+            }
+        };
+        // Moss wraps the payload in ApiResponse: { data: { envelope, signed } }.
+        // Treat the envelope as opaque JSON — the target (which has koi) parses it.
+        let value: serde_json::Value = response.json().await.ok()?;
+        let envelope = value.get("data").and_then(|d| d.get("envelope"))?;
+        serde_json::to_string(envelope).ok()
+    }
+}
+
 /// Typed client for the Stone (Moss) REST API.
 ///
 /// Wraps a `reqwest::Client` and endpoint URL, providing typed methods
@@ -105,6 +165,9 @@ impl StoneApiError {
 pub struct StoneApi {
     client: reqwest::Client,
     endpoint: String,
+    /// Per-request pond signing (rake → target). `None` for unsigned clients
+    /// (moss-internal calls, or when the target's name is unknown).
+    signing: Option<PondSigning>,
 }
 
 impl StoneApi {
@@ -115,6 +178,19 @@ impl StoneApi {
         Self {
             client,
             endpoint: endpoint.trim_end_matches('/').to_string(),
+            signing: None,
+        }
+    }
+
+    /// Create a `StoneApi` that signs every mutating request via the local Moss.
+    ///
+    /// Used by `rake` once the target stone's name is known (the audience). All
+    /// other callers use [`new`](Self::new) and send unsigned.
+    pub fn with_signing(client: reqwest::Client, endpoint: String, signing: PondSigning) -> Self {
+        Self {
+            client,
+            endpoint: endpoint.trim_end_matches('/').to_string(),
+            signing: Some(signing),
         }
     }
 
@@ -167,6 +243,36 @@ impl StoneApi {
 
     // ── Core HTTP verbs (private) ────────────────────────────────────
 
+    /// Issue a mutating request, attaching a pond signature (`X-Koi-Envelope`)
+    /// when this client carries [`PondSigning`]. `body` is the exact bytes that
+    /// will be sent (empty for bodyless requests) — the same bytes the
+    /// signature's body hash covers and the verifier re-hashes. Reads never use
+    /// this path.
+    async fn send_signed(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, StoneApiError> {
+        let url = self.url(path);
+        let mut req = self.client.request(method.clone(), &url);
+        if let Some(ref bytes) = body {
+            req = req
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(bytes.clone());
+        }
+        if let Some(signing) = &self.signing {
+            let body_ref = body.as_deref().unwrap_or(&[]);
+            if let Some(header) = signing
+                .envelope_header(&self.client, method.as_str(), path, body_ref)
+                .await
+            {
+                req = req.header(crate::constants::headers::HEADER_KOI_ENVELOPE, header);
+            }
+        }
+        req.send().await.map_err(StoneApiError::Connection)
+    }
+
     /// GET returning `T` unwrapped from `ApiResponse<T>`.
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, StoneApiError> {
         let url = self.url(path);
@@ -191,23 +297,23 @@ impl StoneApi {
         path: &str,
         body: &B,
     ) -> Result<T, StoneApiError> {
-        let url = self.url(path);
-        let response = self.client.post(&url).json(body).send().await?;
-        self.parse_api_response(response, &url).await
+        let bytes = serde_json::to_vec(body).map_err(|e| StoneApiError::Encode(e.to_string()))?;
+        let response = self
+            .send_signed(reqwest::Method::POST, path, Some(bytes))
+            .await?;
+        self.parse_api_response(response, &self.url(path)).await
     }
 
     /// POST without body, returning `T` unwrapped from `ApiResponse<T>`.
     async fn post_empty<T: DeserializeOwned>(&self, path: &str) -> Result<T, StoneApiError> {
-        let url = self.url(path);
-        let response = self.client.post(&url).send().await?;
-        self.parse_api_response(response, &url).await
+        let response = self.send_signed(reqwest::Method::POST, path, None).await?;
+        self.parse_api_response(response, &self.url(path)).await
     }
 
     /// POST without body, returning raw `reqwest::Response`.
     async fn post_raw(&self, path: &str) -> Result<reqwest::Response, StoneApiError> {
-        let url = self.url(path);
-        let response = self.client.post(&url).send().await?;
-        self.check_status(response, &url).await
+        let response = self.send_signed(reqwest::Method::POST, path, None).await?;
+        self.check_status(response, &self.url(path)).await
     }
 
     /// POST with JSON body, returning raw `reqwest::Response`.
@@ -216,16 +322,19 @@ impl StoneApi {
         path: &str,
         body: &B,
     ) -> Result<reqwest::Response, StoneApiError> {
-        let url = self.url(path);
-        let response = self.client.post(&url).json(body).send().await?;
-        self.check_status(response, &url).await
+        let bytes = serde_json::to_vec(body).map_err(|e| StoneApiError::Encode(e.to_string()))?;
+        let response = self
+            .send_signed(reqwest::Method::POST, path, Some(bytes))
+            .await?;
+        self.check_status(response, &self.url(path)).await
     }
 
     /// DELETE returning raw `reqwest::Response`.
     async fn delete_raw(&self, path: &str) -> Result<reqwest::Response, StoneApiError> {
-        let url = self.url(path);
-        let response = self.client.delete(&url).send().await?;
-        self.check_status(response, &url).await
+        let response = self
+            .send_signed(reqwest::Method::DELETE, path, None)
+            .await?;
+        self.check_status(response, &self.url(path)).await
     }
 
     /// PATCH with JSON body, returning `T` unwrapped from `ApiResponse<T>`.
@@ -234,9 +343,11 @@ impl StoneApi {
         path: &str,
         body: &B,
     ) -> Result<T, StoneApiError> {
-        let url = self.url(path);
-        let response = self.client.patch(&url).json(body).send().await?;
-        self.parse_api_response(response, &url).await
+        let bytes = serde_json::to_vec(body).map_err(|e| StoneApiError::Encode(e.to_string()))?;
+        let response = self
+            .send_signed(reqwest::Method::PATCH, path, Some(bytes))
+            .await?;
+        self.parse_api_response(response, &self.url(path)).await
     }
 
     /// PATCH with a JSON body, expecting an empty response (204 No
@@ -247,9 +358,11 @@ impl StoneApi {
         path: &str,
         body: &B,
     ) -> Result<reqwest::Response, StoneApiError> {
-        let url = self.url(path);
-        let response = self.client.patch(&url).json(body).send().await?;
-        self.check_status(response, &url).await
+        let bytes = serde_json::to_vec(body).map_err(|e| StoneApiError::Encode(e.to_string()))?;
+        let response = self
+            .send_signed(reqwest::Method::PATCH, path, Some(bytes))
+            .await?;
+        self.check_status(response, &self.url(path)).await
     }
 
     /// PUT with JSON body, returning `T` unwrapped from `ApiResponse<T>`.
@@ -258,9 +371,11 @@ impl StoneApi {
         path: &str,
         body: &B,
     ) -> Result<T, StoneApiError> {
-        let url = self.url(path);
-        let response = self.client.put(&url).json(body).send().await?;
-        self.parse_api_response(response, &url).await
+        let bytes = serde_json::to_vec(body).map_err(|e| StoneApiError::Encode(e.to_string()))?;
+        let response = self
+            .send_signed(reqwest::Method::PUT, path, Some(bytes))
+            .await?;
+        self.parse_api_response(response, &self.url(path)).await
     }
 
     /// PUT with raw bytes, returning raw `reqwest::Response`.

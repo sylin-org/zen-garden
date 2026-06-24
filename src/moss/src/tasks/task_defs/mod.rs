@@ -6,6 +6,7 @@
 pub mod auto_adoption;
 pub mod capacity_reclaim;
 pub mod catalog_builder;
+pub mod cert_renewal;
 pub mod companion_scan;
 pub mod discovery_handler;
 pub mod docker_events;
@@ -42,6 +43,7 @@ pub mod volume_monitor;
 pub use auto_adoption::AutoAdoptionTask;
 pub use capacity_reclaim::CapacityReclaimTask;
 pub use catalog_builder::CatalogBuilderTask;
+pub use cert_renewal::CertRenewalTask;
 pub use companion_scan::CompanionScanTask;
 pub use discovery_handler::DiscoveryHandlerTask;
 pub use docker_events::DockerEventsTask;

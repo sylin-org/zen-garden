@@ -48,6 +48,7 @@ pub const POND_POSTURE_CHANGED: &str = "pond.posture.changed";
 pub const POND_CERT_RENEWED: &str = "pond.cert.renewed";
 pub const POND_CERT_EXPIRING: &str = "pond.cert.expiring";
 pub const POND_CERT_RENEWAL_FAILED: &str = "pond.cert.renewal.failed";
+pub const POND_REJOIN_REQUIRED: &str = "pond.rejoin.required";
 
 // Job events (installation/removal progress)
 pub const CATEGORY_JOB: &str = "job";

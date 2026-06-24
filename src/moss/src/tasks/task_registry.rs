@@ -52,6 +52,7 @@ pub fn build_task_registry(
         Box::new(PresenceLoadMonitorTask),
         Box::new(PresenceHealthMonitorTask),
         Box::new(PondEnrollmentListenerTask),
+        Box::new(CertRenewalTask),
         Box::new(InitialServiceSyncTask),
         Box::new(PeriodicAnnouncerTask),
         Box::new(HealthMonitorTask),

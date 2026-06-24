@@ -7,9 +7,11 @@
 
 pub mod aggregate;
 pub mod ceremony_persistence;
+pub mod cornerstone;
 pub mod event;
 pub mod pond_client;
 pub mod pond_lifecycle;
+pub mod renewal;
 
 #[cfg(test)]
 mod tests;

@@ -140,6 +140,15 @@ pub enum PondEvent {
         consecutive_failures: u32,
         timestamp: DateTime<Utc>,
     },
+    /// The cornerstone refused renewal because this stone's identity is past its
+    /// grace window (Expired/UnknownSigner). Automatic renewal cannot recover it —
+    /// the operator must rejoin with a fresh TOTP code. Distinct from
+    /// `CertRenewalFailed` (which retries): retrying never helps here, so this is a
+    /// warm "come back" rather than a transient failure.
+    RejoinRequired {
+        reason: String,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 impl PondEvent {
@@ -150,6 +159,7 @@ impl PondEvent {
             Self::CertRenewed { .. } => event_types::POND_CERT_RENEWED,
             Self::CertExpiring { .. } => event_types::POND_CERT_EXPIRING,
             Self::CertRenewalFailed { .. } => event_types::POND_CERT_RENEWAL_FAILED,
+            Self::RejoinRequired { .. } => event_types::POND_REJOIN_REQUIRED,
         }
     }
 
@@ -184,6 +194,9 @@ impl PondEvent {
             Self::CertRenewalFailed { reason, .. } => {
                 format!("Pond identity renewal failed ({reason}) — will retry")
             }
+            // The reason carries the warm, actionable prompt (named when the CA
+            // could attribute the stale identity); surface it verbatim.
+            Self::RejoinRequired { reason, .. } => reason.clone(),
         }
     }
 
@@ -225,6 +238,14 @@ impl PondEvent {
         Self::CertRenewalFailed {
             reason: reason.into(),
             consecutive_failures,
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Builder: the cornerstone requires this stone to rejoin (identity past grace)
+    pub fn rejoin_required(reason: impl Into<String>) -> Self {
+        Self::RejoinRequired {
+            reason: reason.into(),
             timestamp: Utc::now(),
         }
     }

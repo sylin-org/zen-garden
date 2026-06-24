@@ -15,6 +15,7 @@ use crate::{
     Moss, bad_gateway, bad_request, conflict, error_response, forbidden, internal, not_found,
     unavailable,
 };
+use crate::domain::security::renewal::{POND_RENEW_PATH, PondRenewRequest, PondRenewResponse};
 use axum::{
     Json,
     body::Bytes,
@@ -490,32 +491,11 @@ pub async fn pond_sign_v1(
 // ============================================================================
 // Renewal (zen-native, envelope-signed over the clear plane)
 // ============================================================================
-
-/// The clear-plane renewal endpoint path. Both the member (when signing the
-/// renewal envelope) and the CA (when rebuilding the canonical bytes to
-/// bind-check) must use this exact string, so it lives in one place.
-pub const POND_RENEW_PATH: &str = "/api/v1/pond/renew";
-
-#[derive(Serialize, Deserialize)]
-pub struct PondRenewRequest {
-    /// The renewing member's hostname (CN). Informational only — the
-    /// authoritative identity is the envelope signer, never this field.
-    pub hostname: String,
-    /// PKCS#10 CSR (PEM) for the member's freshly rotated keypair.
-    pub csr: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct PondRenewResponse {
-    /// The renewed CA-signed leaf certificate (PEM).
-    pub service_cert: String,
-    /// The CA root certificate (PEM).
-    pub ca_cert: String,
-    /// CA fingerprint, for the member to cross-check against its pin.
-    pub ca_fingerprint: String,
-    /// RFC 3339 expiry of the renewed leaf.
-    pub expires: String,
-}
+//
+// The wire types (`POND_RENEW_PATH`, `PondRenewRequest`, `PondRenewResponse`)
+// and the member-side renewal flow live in the security domain
+// (`domain::security::renewal`), imported above. This handler is the CA-side
+// verifier — the one place `core.verify` is consumed.
 
 /// POST /api/v1/pond/renew — CA-side rotate-key renewal over the clear plane.
 ///
@@ -879,80 +859,22 @@ async fn proxy_enrollment(
 
 /// Discover the cornerstone's address via the topology cache.
 ///
-/// Queries online peers for `/api/v1/pond/status` to find which stone
-/// holds the CA (role = "primary"). Returns the cornerstone's `PeerAddress`.
+/// Thin HTTP wrapper over [`crate::domain::security::cornerstone::discover`] (the
+/// shared walk used by both enrollment and renewal). Proxy enrollment needs only
+/// the address; each discovery failure maps to its specific HTTP error code.
 async fn discover_cornerstone(
     state: &Moss,
 ) -> Result<garden_common::PeerAddress, (StatusCode, Json<ApiErrorResponse>)> {
-    // Collect online peers, most recently seen first
-    let mut candidates: Vec<_> = state
-        .topology
-        .online_stones()
-        .await
-        .into_iter()
-        .filter(|e| e.stone_name != state.current.stone.name)
-        .collect();
-    candidates.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+    use crate::domain::security::cornerstone::{self, CornerstoneError};
 
-    if candidates.is_empty() {
-        return Err(unavailable(
-            "NO_PEERS_FOUND",
-            "No online peers discovered. Cannot find cornerstone. \
-             Ensure other stones are running and on the same network.",
-        ));
-    }
-
-    for entry in &candidates {
-        let resp = match state
-            .security
-            .stone_client()
-            .get(&entry.address, "/api/v1/pond/status")
-            .timeout(garden_common::constants::timeouts::pond_operation_timeout())
-            .send()
-            .await
-        {
-            Ok(r) if r.status().is_success() => r,
-            _ => continue,
-        };
-
-        let body: serde_json::Value = match resp.json().await {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-
-        let cornerstone_name = body
-            .get("data")
-            .and_then(|d| d.get("cornerstone"))
-            .and_then(|c| c.as_str());
-
-        if let Some(name) = cornerstone_name {
-            // Found the cornerstone hostname — look up its address via
-            // the Topology aggregate.
-            if let Some(found) = state.topology.get_by_name(name).await {
-                tracing::info!(
-                    cornerstone = %name,
-                    endpoint = %found.address,
-                    via = %entry.stone_name,
-                    "Cornerstone discovered via peer"
-                );
-                return Ok(found.address.clone());
-            }
-            // Cornerstone identified but not in our topology cache
-            return Err(unavailable(
-                "CORNERSTONE_NOT_DISCOVERED",
-                format!(
-                    "Cornerstone '{name}' identified but not found in topology. \
-                     Wait for discovery or check network."
-                ),
-            ));
+    match cornerstone::discover(state).await {
+        Ok(found) => Ok(found.address),
+        Err(e @ CornerstoneError::NoPeers) => Err(unavailable("NO_PEERS_FOUND", e.to_string())),
+        Err(e @ CornerstoneError::NotInTopology { .. }) => {
+            Err(unavailable("CORNERSTONE_NOT_DISCOVERED", e.to_string()))
         }
+        Err(e @ CornerstoneError::NoPond) => Err(unavailable("NO_POND_FOUND", e.to_string())),
     }
-
-    Err(unavailable(
-        "NO_POND_FOUND",
-        "No active pond discovered in the garden. \
-         Ensure a keystone has been placed on another stone.",
-    ))
 }
 
 /// POST /api/v1/pond/invite — Open enrollment and rotate auth

@@ -65,6 +65,17 @@ pub const DISCOVERY_UDP: u16 = 7184;
 /// HTTP port for Moss API (default)
 pub const MOSS_HTTP: u16 = 7185;
 
+/// Loopback-only port for the pond request-signing oracle (`/api/v1/pond/sign`).
+///
+/// Bound to `127.0.0.1` exclusively — never `0.0.0.0` — because signing is an
+/// impersonation oracle: anyone who can reach it can have Moss vouch for this
+/// stone's identity. A dedicated loopback listener confines it at the OS level
+/// (a remote packet is never routed to it), independent of any application
+/// guard. `rake` asks its *local* Moss to sign each request here, then sends the
+/// clear request (with the envelope) to the target. Below 7183 to stay clear of
+/// the companion range.
+pub const MOSS_SIGN_LOOPBACK: u16 = 7182;
+
 /// HTTP port for Koi embedded API (mDNS, DNS, certmesh, UDP bridging)
 ///
 /// "KOI" on a phone keypad = 5-6-4 → 564x.  Port 5641 chosen.

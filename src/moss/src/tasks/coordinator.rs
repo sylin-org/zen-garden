@@ -109,6 +109,12 @@ pub(crate) async fn start_background_tasks(
         tracing::info!("Domain event listeners started (chirp, pulse, koi)");
     }
 
+    // Phase 11.post4c: Loopback signing oracle (pond authz plane).
+    // Serves POST /api/v1/pond/sign on 127.0.0.1 only so rake can have its local
+    // Moss sign each request. Non-fatal if the bind fails (signing degrades, the
+    // daemon still runs).
+    crate::bootstrap::sign_listener::spawn(state.clone(), shutdown_token.child_token()).await;
+
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)
     match state.security.recover_ceremonies().await {
         Ok(0) => tracing::debug!("No incomplete ceremonies to recover"),

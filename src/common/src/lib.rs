@@ -25,6 +25,7 @@ pub mod nurturing;
 pub mod offerings;
 pub mod persistence;
 pub mod platform_runtime;
+pub mod pond_authz;
 pub mod presence;
 pub mod resources;
 pub mod responses;

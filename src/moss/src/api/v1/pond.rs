@@ -421,6 +421,64 @@ fn trust_profile_label(enrollment_open: bool, requires_approval: bool) -> &'stat
     }
 }
 
+// ============================================================================
+// Signing oracle (LOOPBACK ONLY)
+// ============================================================================
+
+#[derive(Deserialize)]
+pub struct PondSignRequest {
+    /// HTTP method of the request to be signed (e.g. "POST").
+    pub method: String,
+    /// Request path + query verbatim (e.g. "/api/v1/stone/services?x=1").
+    pub path: String,
+    /// Destination stone name — the audience the signature is bound to.
+    pub audience: String,
+    /// blake3 hex of the request body (`garden_common::pond::body_hash_hex`); the
+    /// body itself never travels to this oracle.
+    pub body_hash: String,
+}
+
+#[derive(Serialize)]
+pub struct PondSignResponse {
+    /// The koi clear-signed envelope to attach as the `X-Koi-Envelope` header.
+    pub envelope: koi_common::envelope::Envelope,
+    /// `true` when actually signed (Authenticated posture); `false` when this
+    /// stone holds no identity yet (Open passthrough — the target sees anonymous).
+    pub signed: bool,
+}
+
+/// POST /api/v1/pond/sign — sign canonical request bytes with this stone's
+/// identity, returning a koi clear-signed envelope for `rake` to attach.
+///
+/// ⚠️ **Impersonation oracle — loopback only.** This is served *exclusively* on
+/// `127.0.0.1:MOSS_SIGN_LOOPBACK` by [`crate::bootstrap::sign_listener`], never on
+/// the `0.0.0.0` API listeners. Anyone who can reach it can make Moss vouch for
+/// this stone, so it must never be exposed off-host. It is deliberately absent
+/// from `router::configure`/`configure_public`.
+///
+/// The signature covers the canonical bytes (verb + path + audience + body hash);
+/// the verifier rebuilds the same bytes from the request it actually receives, so
+/// a signature cannot be lifted to another operation, body, or stone.
+pub async fn pond_sign_v1(
+    State(state): State<Moss>,
+    Json(payload): Json<PondSignRequest>,
+) -> PondResult<PondSignResponse> {
+    let canonical = garden_common::pond_authz::canonical_request_bytes(
+        &payload.method,
+        &payload.path,
+        &payload.audience,
+        &payload.body_hash,
+    );
+    let envelope = state.discovery.koi().sign(&canonical).await.map_err(|e| {
+        unavailable(
+            "SIGN_UNAVAILABLE",
+            format!("Could not sign request: {e}"),
+        )
+    })?;
+    let signed = envelope.sig.is_some();
+    crate::api::ok(PondSignResponse { envelope, signed })
+}
+
 /// POST /api/v1/pond/join — Join pond with TOTP code
 ///
 /// Two modes of operation:

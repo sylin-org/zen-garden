@@ -174,18 +174,20 @@ pub struct PondStoneInfo {
     pub joined_at: Option<String>,
 }
 
-/// This stone's own trust identity — whether it holds a usable identity and how
-/// long that identity's leaf certificate remains valid. The warm "do I belong,
-/// and am I still trusted?" signal behind `garden-rake pond status`.
+/// This stone's own trust identity — whether it holds a usable identity, whether
+/// it is the cornerstone (holds the CA), and how long its leaf remains valid. The
+/// warm "do I belong, and am I still trusted?" signal behind `pond status`.
 #[derive(Serialize)]
 pub struct PondIdentity {
     /// A usable cryptographic identity is present (Authenticated posture).
     pub signed: bool,
-    /// RFC3339 expiry of the local member leaf. `None` for a cornerstone (its
-    /// identity is its own CA, not a member leaf) or a stone with no cert.
+    /// This stone holds the pond CA (it is the keystone), not a member leaf.
+    pub is_cornerstone: bool,
+    /// RFC3339 expiry of this stone's leaf. `None` only when no identity / the
+    /// leaf cannot be parsed.
     pub expires_at: Option<String>,
-    /// Days until the local member leaf expires (negative once expired). `None`
-    /// when `expires_at` is `None`.
+    /// Days until this stone's leaf expires (negative once expired). `None` when
+    /// `expires_at` is `None`.
     pub expires_in_days: Option<i64>,
 }
 
@@ -388,14 +390,19 @@ pub async fn pond_status_v1(State(state): State<Moss>) -> PondResult<PondStatusR
         })
         .collect();
 
-    // This stone's own identity health: posture (do I hold a usable identity?)
-    // and the local member leaf's remaining validity (members only; a cornerstone
-    // has no member leaf — its identity is its own CA).
-    let cert_expiry = core.member_cert_expiry();
+    // This stone's own identity health. Read the leaf's renewal schedule from the
+    // local identity (cert-derived — works for both a member and the cornerstone,
+    // and does not depend on koi's member.json renewal state, which zen does not
+    // arm). `member_cert_expiry()` is member.json-gated and would be `None` for a
+    // zen member, so it is deliberately not used here.
+    let local = core.local_identity().await;
     let identity = PondIdentity {
         signed: core.posture().signed,
-        expires_at: cert_expiry.map(|e| e.to_rfc3339()),
-        expires_in_days: cert_expiry.map(|e| (e - chrono::Utc::now()).num_days()),
+        is_cornerstone: status.ca_initialized,
+        expires_at: local
+            .as_ref()
+            .map(|id| id.renewal.expires_at.to_rfc3339()),
+        expires_in_days: local.as_ref().map(|id| id.renewal.expires_in_days),
     };
 
     crate::api::ok(PondStatusResponse {

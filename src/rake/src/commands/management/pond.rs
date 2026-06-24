@@ -237,14 +237,17 @@ async fn execute_pond_status(ctx: &Context, api: &StoneApi) -> anyhow::Result<()
                 .and_then(|e| e.as_str())
                 .unwrap_or("unknown");
 
-            // This stone's own standing. `signed` = it holds a usable identity
-            // (enrolled member or cornerstone); `expires_in_days` is the member
-            // leaf's remaining life (absent on a cornerstone — its identity is
-            // its own CA).
+            // This stone's own standing. `signed` = it holds a usable identity;
+            // `is_cornerstone` = it holds the CA (the keystone); `expires_in_days`
+            // is its leaf's remaining life.
             let identity = data.get("identity");
             let signed = identity
                 .and_then(|i| i.get("signed"))
                 .and_then(|s| s.as_bool())
+                .unwrap_or(false);
+            let is_cornerstone = identity
+                .and_then(|i| i.get("is_cornerstone"))
+                .and_then(|c| c.as_bool())
                 .unwrap_or(false);
             let expires_in_days = identity
                 .and_then(|i| i.get("expires_in_days"))
@@ -276,14 +279,21 @@ async fn execute_pond_status(ctx: &Context, api: &StoneApi) -> anyhow::Result<()
 
             // The warm "am I still trusted?" line.
             if signed {
-                match expires_in_days {
-                    Some(d) if d < 0 => println!(
-                        "{}{} Identity expired — rejoin to restore trust (garden-rake pond join <code>)",
-                        indent,
-                        ui::status_indicator("error", ctx.term.supports_color)
-                    ),
-                    Some(d) => println!("   Identity valid for {} more days", d),
-                    None => println!("   Holds the keystone (pond certificate authority)"),
+                if is_cornerstone {
+                    println!("   Holds the keystone (pond certificate authority)");
+                    if let Some(d) = expires_in_days.filter(|d| *d >= 0) {
+                        println!("   CA certificate valid for {} more days", d);
+                    }
+                } else {
+                    match expires_in_days {
+                        Some(d) if d < 0 => println!(
+                            "{}{} Identity expired — rejoin to restore trust (garden-rake pond join <code>)",
+                            indent,
+                            ui::status_indicator("error", ctx.term.supports_color)
+                        ),
+                        Some(d) => println!("   Identity valid for {} more days", d),
+                        None => println!("   Identity present (expiry unavailable)"),
+                    }
                 }
             }
 

@@ -285,6 +285,20 @@ async fn broadcast_to_topology(
     // Fan out requests in parallel
     let client = crate::http::COMPANION.clone();
 
+    // Sign each broadcast with this stone's identity (audience = the peer's name)
+    // so it survives Stage 4 enforcement. Best-effort: no core (non-pond) → unsigned.
+    // Serialize the command body once and sign + send the SAME bytes per peer.
+    let core = crate::domain::security::signing::core_for_signing(state);
+    let body = match serde_json::to_vec(request) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to serialize companion command for broadcast");
+            return;
+        }
+    };
+    // Canonical path (no query) — must match the receiver's axum path.
+    let sign_path = format!("/api/v1/stone/companions/{companion_id}/command");
+
     let futures: Vec<_> = other_stones
         .iter()
         .map(|stone| {
@@ -294,11 +308,33 @@ async fn broadcast_to_topology(
                 stone.address.http_base().trim_end_matches('/'),
                 companion_id
             );
-            let request = request.clone();
+            let body = body.clone();
+            let core = core.clone();
+            let sign_path = sign_path.clone();
             let stone_name = stone.stone_name.clone();
 
             async move {
-                match client.post(&url).json(&request).send().await {
+                let envelope = match core.as_ref() {
+                    Some(core) => crate::domain::security::signing::inter_stone_envelope(
+                        core,
+                        "POST",
+                        &stone_name,
+                        &sign_path,
+                        &body,
+                    )
+                    .await,
+                    None => None,
+                };
+                let mut req = client
+                    .post(&url)
+                    .header("content-type", "application/json");
+                if let Some(envelope) = envelope {
+                    req = req.header(
+                        garden_common::constants::headers::HEADER_KOI_ENVELOPE,
+                        envelope,
+                    );
+                }
+                match req.body(body).send().await {
                     Ok(resp) if resp.status().is_success() => {
                         tracing::debug!(stone = %stone_name, "Broadcast succeeded");
                     }

@@ -12,6 +12,7 @@ pub mod event;
 pub mod pond_client;
 pub mod pond_lifecycle;
 pub mod renewal;
+pub mod signing;
 
 #[cfg(test)]
 mod tests;

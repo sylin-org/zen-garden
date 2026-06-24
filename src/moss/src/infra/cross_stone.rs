@@ -201,15 +201,28 @@ pub async fn stream_from_stone(
 
 /// `POST <endpoint><path>` with a JSON-encoded `body`, decode the
 /// response as `ApiResponse<R>`, return the inner `R`.
+///
+/// `envelope_header`, when present, is attached as the `X-Koi-Envelope` header
+/// (Stage 4 inter-stone signing). The signer must have signed the canonical bytes
+/// of the SAME serialized `body` — reqwest's `.json()` serializes identically to
+/// `serde_json::to_vec`, so the bytes match.
 pub async fn post_to_stone<Q: Serialize, R: DeserializeOwned>(
     client: &Client,
     endpoint: &str,
     stone_name: &str,
     path: &str,
     body: &Q,
+    envelope_header: Option<String>,
 ) -> Result<R, CrossStoneError> {
     let url = format!("{}{}", endpoint.trim_end_matches('/'), path);
-    let response = client.post(&url).json(body).send().await.map_err(|source| {
+    let mut builder = client.post(&url).json(body);
+    if let Some(envelope) = envelope_header {
+        builder = builder.header(
+            garden_common::constants::headers::HEADER_KOI_ENVELOPE,
+            envelope,
+        );
+    }
+    let response = builder.send().await.map_err(|source| {
         CrossStoneError::Unreachable {
             stone: stone_name.to_string(),
             source,
@@ -441,7 +454,7 @@ mod tests {
         let body = Greeting {
             message: "hello".into(),
         };
-        let got: Greeting = post_to_stone(&client, &endpoint, "stone-test", "/echo", &body)
+        let got: Greeting = post_to_stone(&client, &endpoint, "stone-test", "/echo", &body, None)
             .await
             .expect("post should succeed");
         assert_eq!(got.message, "HELLO");

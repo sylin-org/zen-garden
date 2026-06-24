@@ -238,6 +238,10 @@ pub async fn execute_garden(
     // Step 2: Dispatch execute request to each affected stone
     let garden_job_id = generate_guidv7();
 
+    // Sign each dispatch with this stone's identity for Stage 4 enforcement
+    // (audience = the target stone's name, set inside dispatch_execute_to_stone).
+    let core = crate::domain::security::signing::core_for_signing(&state);
+
     let dispatch_tasks: Vec<_> = affected_stones
         .iter()
         .map(|(stone_name, endpoint)| {
@@ -245,9 +249,11 @@ pub async fn execute_garden(
             let stone_name = stone_name.clone();
             let endpoint = endpoint.clone();
             let request = request.clone();
+            let core = core.clone();
 
             tokio::spawn(async move {
-                dispatch_execute_to_stone(&client, &stone_name, &endpoint, &request).await
+                dispatch_execute_to_stone(&client, core.as_ref(), &stone_name, &endpoint, &request)
+                    .await
             })
         })
         .collect();
@@ -274,6 +280,7 @@ pub async fn execute_garden(
 /// Dispatch execute request to a single stone
 async fn dispatch_execute_to_stone(
     client: &reqwest::Client,
+    core: Option<&std::sync::Arc<koi_certmesh::CertmeshCore>>,
     stone_name: &str,
     endpoint: &str,
     request: &ExecuteRequest,
@@ -283,7 +290,44 @@ async fn dispatch_execute_to_stone(
         endpoint.trim_end_matches('/')
     );
 
-    match client.post(&url).json(request).send().await {
+    // Sign with this stone's identity (audience = target stone name) so the
+    // dispatch survives Stage 4 enforcement; best-effort (unsigned when no pond
+    // core). Serialize once and sign + send the SAME bytes.
+    let body = match serde_json::to_vec(request) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(stone = %stone_name, error = %e, "Failed to serialize execute request");
+            return StoneJobStatus {
+                stone_name: stone_name.to_string(),
+                job_id: None,
+                state: StoneJobState::Failed,
+                message: Some(format!("Serialize error: {e}")),
+                endpoint: None,
+            };
+        }
+    };
+    let envelope = match core {
+        Some(core) => {
+            crate::domain::security::signing::inter_stone_envelope(
+                core,
+                "POST",
+                stone_name,
+                "/api/v1/stone/updates/execute",
+                &body,
+            )
+            .await
+        }
+        None => None,
+    };
+    let mut builder = client.post(&url).header("content-type", "application/json");
+    if let Some(envelope) = envelope {
+        builder = builder.header(
+            garden_common::constants::headers::HEADER_KOI_ENVELOPE,
+            envelope,
+        );
+    }
+
+    match builder.body(body).send().await {
         Ok(resp) if resp.status().is_success() => {
             match resp.json::<ApiResponse<ExecuteResponse>>().await {
                 Ok(api_response) => {

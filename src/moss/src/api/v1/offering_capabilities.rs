@@ -843,6 +843,10 @@ pub async fn mirror_offering_capabilities_v1(
         .build()
         .unwrap_or_else(|_| crate::http::HTTP.clone());
 
+    // Sign each capability push with this stone's identity (audience = the target
+    // stone name) so the mirror survives Stage 4 enforcement; best-effort.
+    let core = crate::domain::security::signing::core_for_signing(&state);
+
     let source_caps =
         fetch_remote_capabilities(&client, &from_endpoint, from, &offering_fqn).await?;
     let target_caps = fetch_remote_capabilities(&client, &to_endpoint, to, &offering_fqn).await?;
@@ -882,6 +886,8 @@ pub async fn mirror_offering_capabilities_v1(
 
             match add_capability_to_stone(
                 &client,
+                core.as_ref(),
+                to,
                 &to_endpoint,
                 &offering_fqn,
                 &key.0,
@@ -970,8 +976,14 @@ async fn fetch_remote_capabilities(
 /// `mirror_capabilities` aggregates per-capability failures into
 /// a list of strings rather than aborting the whole mirror on the
 /// first error.
+// Eight args because Stage 4 signing needs both the target stone NAME (audience)
+// and the signing core alongside the existing request inputs; bundling them would
+// add a single-use struct for one private call site.
+#[allow(clippy::too_many_arguments)]
 async fn add_capability_to_stone(
     client: &Client,
+    core: Option<&std::sync::Arc<koi_certmesh::CertmeshCore>>,
+    stone_name: &str,
     endpoint: &str,
     offering: &str,
     cap_type: &str,
@@ -984,9 +996,30 @@ async fn add_capability_to_stone(
         "type": cap_type,
         "dry_run": dry_run,
     });
-    cross_stone::post_to_stone::<_, AddCapabilityResponse>(client, endpoint, "remote", &path, &body)
-        .await
-        .map_err(|e| e.to_string())
+    // Sign for Stage 4 enforcement (audience = the target stone name); best-effort.
+    // post_to_stone sends `.json(&body)`, which serializes identically to the bytes
+    // signed here, so the receiver's body-hash bind-check matches.
+    let envelope = match core {
+        Some(core) => match serde_json::to_vec(&body) {
+            Ok(bytes) => {
+                crate::domain::security::signing::inter_stone_envelope(
+                    core,
+                    "POST",
+                    stone_name,
+                    &path,
+                    &bytes,
+                )
+                .await
+            }
+            Err(_) => None,
+        },
+        None => None,
+    };
+    cross_stone::post_to_stone::<_, AddCapabilityResponse>(
+        client, endpoint, stone_name, &path, &body, envelope,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Convert Offering to ServiceInfo for capability executor compatibility

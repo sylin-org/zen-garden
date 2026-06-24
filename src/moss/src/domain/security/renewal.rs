@@ -17,8 +17,11 @@
 //! cornerstone's `identity_for` bind-check (which hashes the body it received)
 //! matches what was signed.
 //!
-//! The cornerstone's *own* self-leaf is not renewed here — the member→CA plane
-//! cannot renew the CA's identity; that is the cornerstone's local re-issue path.
+//! The cornerstone's *own* self leaf is renewed by the sibling
+//! [`renew_cornerstone_self_leaf_if_due`] (koi's local re-issue from its own CA) —
+//! the member→CA plane cannot renew the CA's identity, so [`renew_member_identity`]
+//! skips the cornerstone and that function handles it. zen drives both from its own
+//! renewal timer because it does not run koi's background renewal loop.
 //!
 //! ## Renewal threshold (koi ADR-022 N4)
 //!
@@ -95,12 +98,12 @@ pub async fn renew_member_identity(state: &Moss) -> Result<RenewOutcome> {
         .and_then(|h| h.core())
         .map_err(|e| anyhow!("certmesh core unavailable: {e}"))?;
 
-    // The cornerstone holds the CA; its self-leaf is not renewed over the
-    // member→CA plane (it would have to ask itself). Leave it to the CA's own
-    // local re-issue path.
+    // The cornerstone holds the CA; its self leaf is not renewed over the
+    // member→CA plane (it would have to ask itself). The sibling
+    // `renew_cornerstone_self_leaf_if_due` re-issues it locally instead.
     if core.certmesh_status().await.ca_initialized {
         return Ok(RenewOutcome::Skipped {
-            reason: "this stone is the cornerstone (CA self-leaf is not renewed over the member plane)",
+            reason: "cornerstone — its CA self leaf is renewed locally by renew_cornerstone_self_leaf_if_due, not the member plane",
         });
     }
 
@@ -228,4 +231,43 @@ pub async fn renew_member_identity(state: &Moss) -> Result<RenewOutcome> {
     Ok(RenewOutcome::Renewed {
         expires: renew.expires,
     })
+}
+
+/// Keep this stone's CA **self leaf** fresh when it is the cornerstone.
+///
+/// A cheap no-op on a member (koi returns `NotApplicable`). On the cornerstone it
+/// drives koi's local re-issue ([`CertmeshCore::renew_ca_self_leaf_if_due`]): koi
+/// runs the due-check and, when the self leaf is within the renewal threshold,
+/// re-issues it from the local CA (no network). Historically that re-issue ran
+/// only at daemon start, so a continuously-up cornerstone could cross its
+/// threshold and expire without a restart — this closes that gap on the timer.
+///
+/// koi emits the lifecycle events itself — `CertRenewed` on success;
+/// `CertRenewalFailed` + `CertExpiringSoon` when a locked CA cannot re-issue while
+/// overdue — on its own stream, which the `koi_events` bridge forwards to the
+/// event bus. So the caller only logs a failure and never re-emits (that would
+/// double the PondEvents). zen drives this from its own renewal timer rather than
+/// koi's background loop (which zen does not run); it is the cornerstone
+/// counterpart of the member clear-plane flow in [`renew_member_identity`].
+///
+/// [`CertmeshCore::renew_ca_self_leaf_if_due`]: koi_certmesh::CertmeshCore::renew_ca_self_leaf_if_due
+pub async fn renew_cornerstone_self_leaf_if_due(state: &Moss) -> Result<()> {
+    let core = state
+        .discovery
+        .koi()
+        .certmesh()
+        .and_then(|h| h.core())
+        .map_err(|e| anyhow!("certmesh core unavailable: {e}"))?;
+
+    match core.renew_ca_self_leaf_if_due().await {
+        // NotApplicable (member) / NotDue / Renewed — koi already emitted any
+        // lifecycle event; we only trace the check.
+        Ok(outcome) => {
+            tracing::debug!(?outcome, "CA self-leaf renewal check");
+            Ok(())
+        }
+        // koi has already emitted CertRenewalFailed + CertExpiringSoon on its
+        // stream (forwarded by the bridge); surface the error so the caller logs.
+        Err(e) => Err(anyhow!("CA self-leaf renewal failed (CA locked?): {e}")),
+    }
 }

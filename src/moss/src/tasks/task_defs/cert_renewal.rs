@@ -1,15 +1,20 @@
 //! BackgroundTask: cert-renewal (ARCH-0015, koi authz plane Stage 3C/3D)
 //!
 //! Periodically renews this stone's pond leaf before it expires. zen drives
-//! renewal itself (koi never auto-renews), so this timer is the trigger: each
-//! tick asks [`renewal::renew_member_identity`] whether the leaf is due and, if
-//! so, rotates it over the clear plane. First check 60s after boot (let topology
-//! populate so the cornerstone is reachable), then hourly.
+//! renewal itself (it does not run koi's background loop), so this timer is the
+//! trigger. Each tick does both role paths — each a cheap no-op on the wrong role:
 //!
-//! Outcomes drive felt-safety events: a renewal emits `CertRenewed`, a past-grace
-//! identity emits a warm `RejoinRequired` (retrying never helps — the operator
-//! rejoins), and a transient failure emits `CertRenewalFailed` and retries on the
-//! next tick.
+//! - **cornerstone**: [`renewal::renew_cornerstone_self_leaf_if_due`] re-issues the
+//!   CA's own self leaf locally when due. koi emits its lifecycle events, forwarded
+//!   by the `koi_events` bridge, so the task only logs a failure here.
+//! - **member**: [`renewal::renew_member_identity`] rotates the leaf over the clear
+//!   plane when due. The member's koi stream is silent during a clear-plane
+//!   renewal, so the task emits the felt-safety PondEvents itself: `CertRenewed` on
+//!   success, a warm `RejoinRequired` when past grace (retrying never helps — the
+//!   operator rejoins), `CertRenewalFailed` on a transient failure (retry next tick).
+//!
+//! First check 60s after boot (let topology populate so the cornerstone is
+//! reachable), then hourly.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -52,6 +57,17 @@ impl BackgroundTask for CertRenewalTask {
                     }
                 }
 
+                // Keep the CA's own self leaf fresh first (a no-op on members).
+                // koi emits its own lifecycle events (forwarded by the koi_events
+                // bridge), so we only log a failure here — never re-emit.
+                if let Err(e) = renewal::renew_cornerstone_self_leaf_if_due(&ctx.state).await {
+                    tracing::warn!(
+                        error = %format!("{e:#}"),
+                        "Cornerstone CA self-leaf renewal failed — will retry on the next tick"
+                    );
+                }
+
+                // Member clear-plane renewal (a no-op / Skipped on the cornerstone).
                 match renewal::renew_member_identity(&ctx.state).await {
                     Ok(RenewOutcome::Renewed { expires }) => {
                         consecutive_failures = 0;

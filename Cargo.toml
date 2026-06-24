@@ -96,7 +96,10 @@ koi-embedded = { path = "../koi/crates/koi-embedded", default-features = false }
 koi-certmesh = { path = "../koi/crates/koi-certmesh", default-features = false }
 koi-common = { path = "../koi/crates/koi-common" }
 koi-crypto = { path = "../koi/crates/koi-crypto", default-features = false, features = ["qr"] }
-koi-truststore = { path = "../koi/crates/koi-truststore" }
+# OS trust-store install for the pond CA. koi 0.5.0 deleted its koi-truststore
+# crate (ADR-019) and dogfoods the published `os-truststore`; zen does the same —
+# a stable crates.io dep, not part of the koi path-dep churn surface.
+os-truststore = "0.0.2"
 
 # ============================================================================
 # Workspace-wide lint policy — enforces code-standards.md mechanically

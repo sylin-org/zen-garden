@@ -8,7 +8,7 @@ rust-version.workspace = true
 garden-common = { path = "../common" }
 garden-discovery = { path = "../discovery" }
 koi-common.workspace = true
-koi-truststore.workspace = true
+os-truststore.workspace = true
 
 # Core
 anyhow.workspace = true

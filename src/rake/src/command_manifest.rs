@@ -1026,12 +1026,6 @@ pub static MANIFEST: LazyLock<CommandManifest> = LazyLock::new(|| {
                 subcommands: vec![],
             },
             SubDef {
-                name: "enroll",
-                description: "Enroll a stone into the pond",
-                args: vec![ArgSpec::positional("stone", "Stone to enroll").required()],
-                subcommands: vec![],
-            },
-            SubDef {
                 name: "trust",
                 description: "Trust a stone in the pond",
                 args: vec![ArgSpec::positional("stone", "Stone to trust").required()],

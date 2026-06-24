@@ -389,7 +389,6 @@ pub async fn route(
                 Some(("join", sub)) => PondActionType::Join {
                     code: req(sub, "code")?,
                 },
-                Some(("enroll", _)) => PondActionType::Enroll,
                 Some(("trust", _)) => PondActionType::Trust,
                 Some(("unlock", sub)) => PondActionType::Unlock {
                     passphrase: opt(sub, "passphrase"),
@@ -409,7 +408,7 @@ pub async fn route(
                     name: opt(sub, "name"),
                 },
                 _ => anyhow::bail!(
-                    "Usage: garden-rake pond <init|status|invite|join|enroll|trust|unlock|drain|remove|untrust|promote|rename>"
+                    "Usage: garden-rake pond <init|status|invite|join|trust|unlock|drain|remove|untrust|promote|rename>"
                 ),
             };
             Inv::remote(

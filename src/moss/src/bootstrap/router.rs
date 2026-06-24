@@ -332,10 +332,6 @@ pub fn configure_public(state: Moss) -> Router {
         )
         .route("/api/v1/pond", delete(api::v1::pond::pond_remove_v1))
         .route("/api/v1/pond/join", post(api::v1::pond::pond_join_v1))
-        .route(
-            "/api/v1/pond/enroll-client",
-            post(api::v1::pond::pond_enroll_client_v1),
-        )
         .route("/api/v1/pond/invite", post(api::v1::pond::pond_invite_v1))
         .route("/api/v1/pond/unlock", post(api::v1::pond::pond_unlock_v1))
         .route("/api/v1/pond/name", put(api::v1::pond::pond_rename_v1))
@@ -1109,10 +1105,6 @@ pub fn configure(state: Moss) -> Router {
         .route("/api/v1/pond", delete(api::v1::pond::pond_remove_v1))
         .route("/api/v1/pond/invite", post(api::v1::pond::pond_invite_v1))
         .route("/api/v1/pond/join", post(api::v1::pond::pond_join_v1))
-        .route(
-            "/api/v1/pond/enroll-client",
-            post(api::v1::pond::pond_enroll_client_v1),
-        )
         .route("/api/v1/pond/unlock", post(api::v1::pond::pond_unlock_v1))
         .route("/api/v1/pond/name", put(api::v1::pond::pond_rename_v1))
         .route("/api/v1/pond/promote", post(api::v1::pond::pond_promote_v1))

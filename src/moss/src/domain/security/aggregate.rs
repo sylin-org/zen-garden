@@ -62,7 +62,7 @@ pub struct Security<P: PondClient = crate::infra::stone_client::StoneClient> {
 
     /// Ceremony host — drives pond init/join/unlock ceremonies via koi-common.
     ceremony_host:
-        Arc<koi_common::ceremony::CeremonyHost<koi_certmesh::pond_ceremony::PondCeremonyRules>>,
+        Arc<koi_common::ceremony::CeremonyHost<koi_certmesh::init_ceremony::InitCeremonyRules>>,
 
     /// In-memory active ceremony registry.
     ceremony_registry: Arc<CeremonyRegistry>,
@@ -91,7 +91,7 @@ impl<P: PondClient> Security<P> {
         active: Arc<AtomicBool>,
         client: Arc<P>,
         ceremony_host: Arc<
-            koi_common::ceremony::CeremonyHost<koi_certmesh::pond_ceremony::PondCeremonyRules>,
+            koi_common::ceremony::CeremonyHost<koi_certmesh::init_ceremony::InitCeremonyRules>,
         >,
         ceremony_registry: Arc<CeremonyRegistry>,
         ceremony_journal: Arc<dyn super::ceremony_persistence::CeremonyPersistence + Send + Sync>,
@@ -152,7 +152,7 @@ impl<P: PondClient> Security<P> {
     /// Access the ceremony host (koi-common pond ceremony protocol).
     pub fn ceremony_host(
         &self,
-    ) -> &Arc<koi_common::ceremony::CeremonyHost<koi_certmesh::pond_ceremony::PondCeremonyRules>>
+    ) -> &Arc<koi_common::ceremony::CeremonyHost<koi_certmesh::init_ceremony::InitCeremonyRules>>
     {
         &self.ceremony_host
     }

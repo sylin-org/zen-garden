@@ -259,7 +259,7 @@ pub async fn build_test_state() -> Moss {
                 Arc::new(AtomicBool::new(false)),
                 Arc::new(infra::stone_client::StoneClient::new("stone-test")),
                 Arc::new(koi_common::ceremony::CeremonyHost::new(
-                    koi_certmesh::pond_ceremony::PondCeremonyRules::new(
+                    koi_certmesh::init_ceremony::InitCeremonyRules::new(
                         koi_certmesh::CertmeshPaths::with_data_dir(temp.join("koi")),
                     ),
                 )),

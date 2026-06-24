@@ -26,6 +26,7 @@ pub mod election_service;
 pub mod hardware_detection;
 pub mod health_monitor;
 pub mod job_executors;
+pub mod koi_events;
 pub mod lantern;
 pub mod network_monitor;
 pub mod nurturing_scheduler;

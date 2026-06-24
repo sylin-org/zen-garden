@@ -106,7 +106,7 @@ impl From<PondEvent> for DomainEvent {
 // Pond Events
 // ============================================================================
 
-/// Pond security events (enrollment state changes)
+/// Pond security events (trust lifecycle: enrollment, posture, cert renewal)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PondEvent {
@@ -116,12 +116,40 @@ pub enum PondEvent {
         cornerstone: Option<String>,
         timestamp: DateTime<Utc>,
     },
+    /// This stone's trust posture changed (koi `PostureChanged`). `signed` means a
+    /// usable cryptographic identity is present (Authenticated); `false` means the
+    /// stone fell back to Open — surfaced as loudly as the upgrade, so a silently
+    /// lost identity becomes a visible state.
+    PostureChanged {
+        signed: bool,
+        timestamp: DateTime<Utc>,
+    },
+    /// This stone's leaf certificate was renewed successfully.
+    CertRenewed {
+        expires_at: DateTime<Utc>,
+        timestamp: DateTime<Utc>,
+    },
+    /// The leaf is past its renewal threshold; renewal is due or in progress.
+    CertExpiring {
+        days_left: i64,
+        timestamp: DateTime<Utc>,
+    },
+    /// A renewal attempt failed; the background loop retries on the next tick.
+    CertRenewalFailed {
+        reason: String,
+        consecutive_failures: u32,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 impl PondEvent {
     pub fn event_type(&self) -> &'static str {
         match self {
             Self::EnrollmentChanged { .. } => event_types::POND_ENROLLMENT_CHANGED,
+            Self::PostureChanged { .. } => event_types::POND_POSTURE_CHANGED,
+            Self::CertRenewed { .. } => event_types::POND_CERT_RENEWED,
+            Self::CertExpiring { .. } => event_types::POND_CERT_EXPIRING,
+            Self::CertRenewalFailed { .. } => event_types::POND_CERT_RENEWAL_FAILED,
         }
     }
 
@@ -141,6 +169,21 @@ impl PondEvent {
             Self::EnrollmentChanged {
                 enrolled: false, ..
             } => "Stone unenrolled from pond".to_string(),
+            Self::PostureChanged { signed: true, .. } => {
+                "Pond identity active — this stone can prove who it is".to_string()
+            }
+            Self::PostureChanged { signed: false, .. } => {
+                "Pond identity lost — this stone fell back to open (rejoin to restore)".to_string()
+            }
+            Self::CertRenewed { expires_at, .. } => {
+                format!("Pond identity renewed (valid until {})", expires_at.to_rfc3339())
+            }
+            Self::CertExpiring { days_left, .. } => {
+                format!("Pond identity expires in {days_left} days — renewing")
+            }
+            Self::CertRenewalFailed { reason, .. } => {
+                format!("Pond identity renewal failed ({reason}) — will retry")
+            }
         }
     }
 
@@ -149,6 +192,39 @@ impl PondEvent {
         Self::EnrollmentChanged {
             enrolled,
             cornerstone,
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Builder: trust posture changed (`signed` = identity present)
+    pub fn posture_changed(signed: bool) -> Self {
+        Self::PostureChanged {
+            signed,
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Builder: leaf certificate renewed
+    pub fn cert_renewed(expires_at: DateTime<Utc>) -> Self {
+        Self::CertRenewed {
+            expires_at,
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Builder: leaf certificate is due for renewal
+    pub fn cert_expiring(days_left: i64) -> Self {
+        Self::CertExpiring {
+            days_left,
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Builder: a renewal attempt failed
+    pub fn cert_renewal_failed(reason: impl Into<String>, consecutive_failures: u32) -> Self {
+        Self::CertRenewalFailed {
+            reason: reason.into(),
+            consecutive_failures,
             timestamp: Utc::now(),
         }
     }

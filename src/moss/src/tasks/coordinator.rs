@@ -98,7 +98,15 @@ pub(crate) async fn start_background_tasks(
         let _transport_tap_handle =
             infra::spawn_transport_tap(pulse.clone(), shutdown_token.clone());
 
-        tracing::info!("Domain event listeners started (chirp, pulse)");
+        // KoiEventBridge: routes koi trust-lifecycle events (posture transitions,
+        // cert renewal) into the EventBus so pond status / SSE / companions see them.
+        super::koi_events::spawn(
+            koi_handle.clone(),
+            event_bus.clone(),
+            shutdown_token.child_token(),
+        );
+
+        tracing::info!("Domain event listeners started (chirp, pulse, koi)");
     }
 
     // Phase 11.0.5: Ceremony recovery (detect incomplete ceremonies from previous run)

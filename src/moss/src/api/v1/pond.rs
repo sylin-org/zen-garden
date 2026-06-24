@@ -159,6 +159,8 @@ pub struct PondStatusResponse {
     pub profile: String,
     pub ca_fingerprint: Option<String>,
     pub enrollment_state: String,
+    /// This stone's own trust identity health (posture + leaf expiry).
+    pub identity: PondIdentity,
 }
 
 #[derive(Serialize)]
@@ -168,6 +170,21 @@ pub struct PondStoneInfo {
     pub status: String,
     pub certificate_expires: String,
     pub joined_at: Option<String>,
+}
+
+/// This stone's own trust identity — whether it holds a usable identity and how
+/// long that identity's leaf certificate remains valid. The warm "do I belong,
+/// and am I still trusted?" signal behind `garden-rake pond status`.
+#[derive(Serialize)]
+pub struct PondIdentity {
+    /// A usable cryptographic identity is present (Authenticated posture).
+    pub signed: bool,
+    /// RFC3339 expiry of the local member leaf. `None` for a cornerstone (its
+    /// identity is its own CA, not a member leaf) or a stone with no cert.
+    pub expires_at: Option<String>,
+    /// Days until the local member leaf expires (negative once expired). `None`
+    /// when `expires_at` is `None`.
+    pub expires_in_days: Option<i64>,
 }
 
 // ============================================================================
@@ -369,6 +386,16 @@ pub async fn pond_status_v1(State(state): State<Moss>) -> PondResult<PondStatusR
         })
         .collect();
 
+    // This stone's own identity health: posture (do I hold a usable identity?)
+    // and the local member leaf's remaining validity (members only; a cornerstone
+    // has no member leaf — its identity is its own CA).
+    let cert_expiry = core.member_cert_expiry();
+    let identity = PondIdentity {
+        signed: core.posture().signed,
+        expires_at: cert_expiry.map(|e| e.to_rfc3339()),
+        expires_in_days: cert_expiry.map(|e| (e - chrono::Utc::now()).num_days()),
+    };
+
     crate::api::ok(PondStatusResponse {
         active,
         locked: status.ca_initialized && status.ca_locked,
@@ -378,6 +405,7 @@ pub async fn pond_status_v1(State(state): State<Moss>) -> PondResult<PondStatusR
         profile: trust_profile_label(status.enrollment_open, status.requires_approval).to_string(),
         ca_fingerprint: status.ca_fingerprint,
         enrollment_state: format!("{:?}", status.enrollment_state),
+        identity,
     })
 }
 

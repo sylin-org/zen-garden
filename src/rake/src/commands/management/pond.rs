@@ -237,23 +237,54 @@ async fn execute_pond_status(ctx: &Context, api: &StoneApi) -> anyhow::Result<()
                 .and_then(|e| e.as_str())
                 .unwrap_or("unknown");
 
+            // This stone's own standing. `signed` = it holds a usable identity
+            // (enrolled member or cornerstone); `expires_in_days` is the member
+            // leaf's remaining life (absent on a cornerstone — its identity is
+            // its own CA).
+            let identity = data.get("identity");
+            let signed = identity
+                .and_then(|i| i.get("signed"))
+                .and_then(|s| s.as_bool())
+                .unwrap_or(false);
+            let expires_in_days = identity
+                .and_then(|i| i.get("expires_in_days"))
+                .and_then(|d| d.as_i64());
+
+            let indent = " ".repeat(ui::constants::DEFAULT_INDENT);
             if active {
                 println!(
                     "{}{} Pond active",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                    indent,
                     ui::status_indicator("ok", ctx.term.supports_color)
                 );
             } else if locked {
                 println!(
                     "{}{} Pond locked (run 'garden-rake pond unlock')",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                    indent,
                     ui::status_indicator("warning", ctx.term.supports_color)
                 );
-            } else {
+            } else if signed {
+                // Enrolled member: no local CA, but a trusted identity.
                 println!(
-                    "{}o Pond not initialized",
-                    " ".repeat(ui::constants::DEFAULT_INDENT),
+                    "{}{} Pond member (this stone is trusted)",
+                    indent,
+                    ui::status_indicator("ok", ctx.term.supports_color)
                 );
+            } else {
+                println!("{}o Pond not initialized", indent);
+            }
+
+            // The warm "am I still trusted?" line.
+            if signed {
+                match expires_in_days {
+                    Some(d) if d < 0 => println!(
+                        "{}{} Identity expired — rejoin to restore trust (garden-rake pond join <code>)",
+                        indent,
+                        ui::status_indicator("error", ctx.term.supports_color)
+                    ),
+                    Some(d) => println!("   Identity valid for {} more days", d),
+                    None => println!("   Holds the keystone (pond certificate authority)"),
+                }
             }
 
             if !name.is_empty() {

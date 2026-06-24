@@ -2620,7 +2620,7 @@ dependencies = [
 
 [[package]]
 name = "koi-certmesh"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2656,7 +2656,7 @@ dependencies = [
 
 [[package]]
 name = "koi-client"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "hickory-proto",
  "koi-common",
@@ -2669,7 +2669,7 @@ dependencies = [
 
 [[package]]
 name = "koi-common"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2687,7 +2687,7 @@ dependencies = [
 
 [[package]]
 name = "koi-compose"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "hickory-proto",
  "hostname",
@@ -2712,7 +2712,7 @@ dependencies = [
 
 [[package]]
 name = "koi-config"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "koi-common",
  "serde",
@@ -2724,7 +2724,7 @@ dependencies = [
 
 [[package]]
 name = "koi-crypto"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2751,7 +2751,7 @@ dependencies = [
 
 [[package]]
 name = "koi-dashboard"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "async-stream",
  "axum",
@@ -2776,7 +2776,7 @@ dependencies = [
 
 [[package]]
 name = "koi-dns"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2796,7 +2796,7 @@ dependencies = [
 
 [[package]]
 name = "koi-embedded"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "axum",
  "chrono",
@@ -2829,7 +2829,7 @@ dependencies = [
 
 [[package]]
 name = "koi-health"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2847,7 +2847,7 @@ dependencies = [
 
 [[package]]
 name = "koi-mcp"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2866,7 +2866,7 @@ dependencies = [
 
 [[package]]
 name = "koi-mdns"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2888,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "koi-proxy"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2912,7 +2912,7 @@ dependencies = [
 
 [[package]]
 name = "koi-runtime"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2930,7 +2930,7 @@ dependencies = [
 
 [[package]]
 name = "koi-serve"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2952,6 +2952,7 @@ dependencies = [
  "koi-proxy",
  "koi-runtime",
  "koi-udp",
+ "notify 6.1.1",
  "rustls",
  "serde",
  "serde_json",
@@ -2967,7 +2968,7 @@ dependencies = [
 
 [[package]]
 name = "koi-udp"
-version = "0.7.0"
+version = "0.9.0"
 dependencies = [
  "async-stream",
  "async-trait",

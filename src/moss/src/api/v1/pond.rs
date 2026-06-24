@@ -17,10 +17,12 @@ use crate::{
 };
 use axum::{
     Json,
+    body::Bytes,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Html,
 };
+use base64::Engine as _;
 use garden_common::api_utils::ApiErrorResponse;
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt;
@@ -477,6 +479,160 @@ pub async fn pond_sign_v1(
     })?;
     let signed = envelope.sig.is_some();
     crate::api::ok(PondSignResponse { envelope, signed })
+}
+
+// ============================================================================
+// Renewal (zen-native, envelope-signed over the clear plane)
+// ============================================================================
+
+/// The clear-plane renewal endpoint path. Both the member (when signing the
+/// renewal envelope) and the CA (when rebuilding the canonical bytes to
+/// bind-check) must use this exact string, so it lives in one place.
+pub const POND_RENEW_PATH: &str = "/api/v1/pond/renew";
+
+#[derive(Serialize, Deserialize)]
+pub struct PondRenewRequest {
+    /// The renewing member's hostname (CN). Informational only — the
+    /// authoritative identity is the envelope signer, never this field.
+    pub hostname: String,
+    /// PKCS#10 CSR (PEM) for the member's freshly rotated keypair.
+    pub csr: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PondRenewResponse {
+    /// The renewed CA-signed leaf certificate (PEM).
+    pub service_cert: String,
+    /// The CA root certificate (PEM).
+    pub ca_cert: String,
+    /// CA fingerprint, for the member to cross-check against its pin.
+    pub ca_fingerprint: String,
+    /// RFC 3339 expiry of the renewed leaf.
+    pub expires: String,
+}
+
+/// POST /api/v1/pond/renew — CA-side rotate-key renewal over the clear plane.
+///
+/// The member signs `{hostname, csr}` into a koi envelope (audience = this CA's
+/// stone name) and POSTs it here. The CA:
+/// 1. verifies the envelope → the authoritative signer CN (the one identity door);
+/// 2. bind-checks that the envelope was signed for THIS request and THIS CSR — so
+///    a captured envelope cannot be replayed with a swapped CSR to mint a cert for
+///    the signer's identity bound to an attacker-held key (impersonation);
+/// 3. renews via `core.renew_member`, which enforces roster membership, active
+///    status, and SAN pinning against the verified CN (never the body's hostname).
+///
+/// An expired or unknown signer gets a structured "rejoin" response, not an
+/// opaque 403 — a stone that went dark past its grace window is welcomed back.
+pub async fn pond_renew_v1(
+    State(state): State<Moss>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> PondResult<PondRenewResponse> {
+    let core = get_certmesh_core(&state)?;
+
+    // 1. The one trust door: verify the carried envelope → authoritative CN.
+    let envelope = parse_envelope_header(&headers)?;
+    let assurance = core.verify(&envelope).await;
+    let cn = match assurance.identity() {
+        Some(cn) => cn.to_string(),
+        None => return Err(reject_to_response(&assurance)),
+    };
+
+    // 2. Bind the envelope to THIS request and THIS CSR (audience = our own name).
+    let canonical = garden_common::pond_authz::canonical_request_bytes_for(
+        "POST",
+        POND_RENEW_PATH,
+        &state.current.stone.name,
+        &body,
+    );
+    let Ok(signed_payload) =
+        base64::engine::general_purpose::STANDARD.decode(envelope.payload.as_bytes())
+    else {
+        return Err(error_response(
+            StatusCode::UNAUTHORIZED,
+            "ENVELOPE_MALFORMED",
+            "Signed payload is not valid base64.",
+            None,
+        ));
+    };
+    if signed_payload != canonical {
+        return Err(error_response(
+            StatusCode::UNAUTHORIZED,
+            "ENVELOPE_MISMATCH",
+            "Signature does not match this renewal request.",
+            None,
+        ));
+    }
+
+    // 3. Parse the CSR-bearing body (already proven to be exactly what was signed).
+    let req: PondRenewRequest = serde_json::from_slice(&body).map_err(|e| {
+        bad_request("INVALID_RENEW_BODY", format!("Malformed renew request: {e}"))
+    })?;
+
+    // 4. Renew. koi authorizes against `cn` (the verified signer), SAN-pinned.
+    let renew = core.renew_member(&cn, &req.csr).await.map_err(certmesh_err)?;
+
+    tracing::info!(stone = %cn, "Renewed pond member cert (envelope-authenticated)");
+
+    crate::api::ok(PondRenewResponse {
+        service_cert: renew.service_cert,
+        ca_cert: renew.ca_cert,
+        ca_fingerprint: renew.ca_fingerprint,
+        expires: renew.expires,
+    })
+}
+
+/// Parse the `X-Koi-Envelope` header into a koi [`Envelope`], or 401 when absent
+/// or malformed.
+fn parse_envelope_header(
+    headers: &HeaderMap,
+) -> Result<koi_common::envelope::Envelope, (StatusCode, Json<ApiErrorResponse>)> {
+    let raw = headers
+        .get(garden_common::constants::headers::HEADER_KOI_ENVELOPE)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::UNAUTHORIZED,
+                "ENVELOPE_MISSING",
+                "This operation requires a signed request (no X-Koi-Envelope header).",
+                None,
+            )
+        })?;
+    serde_json::from_str(raw).map_err(|e| {
+        error_response(
+            StatusCode::UNAUTHORIZED,
+            "ENVELOPE_MALFORMED",
+            format!("Could not parse the signed envelope: {e}"),
+            None,
+        )
+    })
+}
+
+/// Map a non-identity [`Assurance`] to an HTTP error. An expired or unknown
+/// signer is a warm `POND_REJOIN_REQUIRED`, not an opaque 403 — a stone that went
+/// dark past its grace window is welcomed back rather than stonewalled.
+fn reject_to_response(
+    assurance: &koi_common::envelope::Assurance,
+) -> (StatusCode, Json<ApiErrorResponse>) {
+    use koi_common::envelope::{Assurance, RejectReason};
+    match assurance {
+        Assurance::Rejected {
+            reason: RejectReason::Expired | RejectReason::UnknownSigner,
+        } => error_response(
+            StatusCode::UNAUTHORIZED,
+            "POND_REJOIN_REQUIRED",
+            "This stone's pond identity is no longer valid. Rejoin to restore trust: \
+             garden-rake pond join <code>.",
+            None,
+        ),
+        _ => error_response(
+            StatusCode::UNAUTHORIZED,
+            "ENVELOPE_UNVERIFIED",
+            "Request signature could not be verified.",
+            None,
+        ),
+    }
 }
 
 /// POST /api/v1/pond/join — Join pond with TOTP code

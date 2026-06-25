@@ -70,11 +70,13 @@ fn requires_envelope(method: &Method, path: &str) -> bool {
     if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
         return false;
     }
-    // Only the rake/inter-stone control plane. NOTE: `/api/v1/admin/*` is
-    // deliberately OUT of scope for this pass — it is guarded by mTLS on HTTPS, and
-    // bringing it under envelope authz waits on auditing rake's admin commands for
-    // signing (a pre-enforce follow-up). Left as a recorded decision, not enforced.
-    let control = path.starts_with("/api/v1/stone/") || path.starts_with("/api/v1/garden/");
+    // The rake/inter-stone control plane: stone ops, garden ops, and the privileged
+    // admin surface. rake signs all three via the typed StoneApi (admin
+    // shutdown/reboot/wake go through `api.stone()`), so enforcing /api/v1/admin/ is
+    // safe — its mutating routes are exactly those signed control operations.
+    let control = path.starts_with("/api/v1/stone/")
+        || path.starts_with("/api/v1/garden/")
+        || path.starts_with("/api/v1/admin/");
     if !control {
         return false;
     }
@@ -273,6 +275,9 @@ mod tests {
         assert!(requires_envelope(&Method::POST, "/api/v1/stone/companions/abc/command"));
         assert!(requires_envelope(&Method::POST, "/api/v1/stone/updates/execute"));
         assert!(requires_envelope(&Method::POST, "/api/v1/garden/updates/execute"));
+        // Privileged admin surface is enforced (rake signs these via api.stone()).
+        assert!(requires_envelope(&Method::POST, "/api/v1/admin/stone/reboot"));
+        assert!(requires_envelope(&Method::POST, "/api/v1/admin/stone/shutdown"));
     }
 
     #[test]

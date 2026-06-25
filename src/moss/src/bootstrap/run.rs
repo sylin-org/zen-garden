@@ -664,8 +664,15 @@ async fn build_state(
         }
     }
 
-    // Phase 4.0.1b: Propagate pond state into address
-    if pond_active.load(std::sync::atomic::Ordering::Relaxed) {
+    // Phase 4.0.1b: Propagate pond state into address — advertise the TLS port so
+    // peers' StoneClient upgrades to mTLS. Skipped under enforce (Stage 4 clear-plane
+    // end-state): mTLS is retired, so peers must NOT upgrade to HTTPS — they reach
+    // the full API over the clear plane (:7185) carrying a signed envelope.
+    let enforce = matches!(
+        crate::domain::security::enforcement::PondEnforceMode::from_env(),
+        crate::domain::security::enforcement::PondEnforceMode::Enforce
+    );
+    if pond_active.load(std::sync::atomic::Ordering::Relaxed) && !enforce {
         let mut addr = current_address.write().await;
         *addr = addr.clone().with_tls(garden_common::constants::MOSS_HTTPS);
         tracing::debug!(
@@ -1700,7 +1707,21 @@ pub(crate) async fn activate_pond_security(
     }
 
     // --- HTTPS listener ---
-    if state.security.try_set_https_started() {
+    // Stage 4 clear-plane end-state: under enforce, the mTLS HTTPS listener is
+    // retired — the full API is served on the clear plane (:7185) guarded by
+    // envelope enforcement, and peers reach it over the clear plane (this stone
+    // also stops advertising a TLS port, so their StoneClient never upgrades to
+    // mTLS). `https_started` stays false, so the serve path keeps the full router
+    // on :7185 (it only swaps to the public lobby when HTTPS is up).
+    if matches!(
+        state.security.enforce_mode(),
+        crate::domain::security::enforcement::PondEnforceMode::Enforce
+    ) {
+        tracing::info!(
+            port = garden_common::constants::MOSS_HTTP,
+            "Enforce mode — mTLS HTTPS listener retired; full API on the clear plane with envelope enforcement"
+        );
+    } else if state.security.try_set_https_started() {
         let handle = tls::try_start_https(
             garden_common::constants::MOSS_HTTPS,
             &state.current.stone.name,

@@ -273,6 +273,26 @@ impl StoneApi {
         req.send().await.map_err(StoneApiError::Connection)
     }
 
+    /// Issue a **signed** mutating request and return the raw [`reqwest::Response`]
+    /// **without** a status check, so the caller can do its own status handling
+    /// (e.g. a distinct message for 404). This is the signing-aware replacement for
+    /// command handlers that previously used a raw, unsigned client
+    /// (`ctx.client`/`api.http()`) and matched on the response status themselves.
+    ///
+    /// `path` is the full request path (e.g. `/api/v1/stone/services/x/rest`);
+    /// `body` is the exact JSON bytes to send (or `None` for a bodyless request) —
+    /// the same bytes the signature's body hash covers. Use the typed endpoint
+    /// methods (`services().rest()`, …) where the unwrapped `ApiResponse<T>` /
+    /// status-checked form is what you want; use this when you need the raw response.
+    pub async fn send_signed_raw(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, StoneApiError> {
+        self.send_signed(method, path, body).await
+    }
+
     /// GET returning `T` unwrapped from `ApiResponse<T>`.
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, StoneApiError> {
         let url = self.url(path);

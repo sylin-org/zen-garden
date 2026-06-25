@@ -77,8 +77,16 @@ impl Command for RemoveCommand {
                 println!();
             }
 
-            let url = ctx.api_v1_url(&format!("stone/services/{}", service_path));
-            let response = ctx.client.delete(&url).send().await?;
+            // Signed via the local Moss oracle (Stage 4) when the target name is
+            // known; raw response so the bespoke status handling below is preserved.
+            let response = ctx
+                .api()
+                .send_signed_raw(
+                    reqwest::Method::DELETE,
+                    &format!("/api/v1/stone/services/{}", service_path),
+                    None,
+                )
+                .await?;
             let status = response.status();
 
             match status {

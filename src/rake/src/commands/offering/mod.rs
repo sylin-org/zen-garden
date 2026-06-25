@@ -917,18 +917,30 @@ async fn handle_placement_recommendation(
                 use crate::tending::StoneError;
                 use garden_common::client::StoneApi;
 
-                let api = StoneApi::new(client, endpoint);
+                // Sign via the local Moss oracle (Stage 4), audience = this
+                // candidate's name; the garden recommend POST is enforced on /garden/.
+                let api = StoneApi::with_signing(
+                    client,
+                    endpoint,
+                    garden_common::client::PondSigning {
+                        sign_url: format!(
+                            "http://127.0.0.1:{}/api/v1/pond/sign",
+                            garden_common::constants::MOSS_SIGN_LOOPBACK
+                        ),
+                        audience: stone_name.clone(),
+                    },
+                );
                 let payload = serde_json::json!({
                     "offering": offering,
                     "preferences": [],
                     "top_n": 3
                 });
+                let body = serde_json::to_vec(&payload).map_err(|e| {
+                    StoneError::ProcessingError(format!("Failed to encode payload: {}", e))
+                })?;
 
-                let response = api.http()
-                    .post(&format!("{}/api/v1/garden/recommend", api.endpoint()))
-                    .json(&payload)
-                    .timeout(Duration::from_secs(10))
-                    .send()
+                let response = api
+                    .send_signed_raw(reqwest::Method::POST, "/api/v1/garden/recommend", Some(body))
                     .await
                     .map_err(|e| {
                         tracing::debug!(

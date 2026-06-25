@@ -24,8 +24,16 @@ impl Command for RestCommand {
     fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let service_path = urlencoding::encode(&self.service);
-            let url = ctx.api_v1_url(&format!("stone/services/{}/rest", service_path));
-            let response = ctx.client.post(&url).send().await?;
+            // Signed via the local Moss oracle (Stage 4) when the target name is
+            // known; raw response so the bespoke status handling below is preserved.
+            let response = ctx
+                .api()
+                .send_signed_raw(
+                    reqwest::Method::POST,
+                    &format!("/api/v1/stone/services/{}/rest", service_path),
+                    None,
+                )
+                .await?;
             let status = response.status();
 
             match status {

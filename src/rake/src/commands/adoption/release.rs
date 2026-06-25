@@ -24,8 +24,15 @@ impl Command for ReleaseCommand {
     fn execute<'a>(&'a self, ctx: &'a Context) -> std::pin::Pin<Box<dyn std::future::Future<Output = CommandResult> + Send + 'a>> {
         Box::pin(async move {
             let service_path = urlencoding::encode(&self.service);
-            let url = ctx.api_v1_url(&format!("stone/offerings/{}/adopt", service_path));
-            let response = ctx.client.delete(&url).send().await?;
+            // Signed via the local Moss oracle (Stage 4) when the target name is known.
+            let response = ctx
+                .api()
+                .send_signed_raw(
+                    reqwest::Method::DELETE,
+                    &format!("/api/v1/stone/offerings/{}/adopt", service_path),
+                    None,
+                )
+                .await?;
             let status = response.status();
 
             match status {

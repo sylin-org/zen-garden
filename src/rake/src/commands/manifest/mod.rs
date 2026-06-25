@@ -418,8 +418,8 @@ async fn execute_test(ctx: &Context, path: &str) -> Result<()> {
     println!();
     println!("{}Deploying test manifest '{}'...", indent, name);
 
-    // POST to test endpoint
-    let url = format!("{}/api/v1/stone/manifests/test", api.endpoint());
+    // POST to test endpoint — signed via the local Moss oracle (Stage 4); raw
+    // response preserves the status/body handling below.
     let body = serde_json::json!({
         "name": name,
         "snippet_yaml": snippet,
@@ -427,7 +427,13 @@ async fn execute_test(ctx: &Context, path: &str) -> Result<()> {
         "compatibility_yaml": compatibility_yaml,
     });
 
-    let response = api.http().post(&url).json(&body).send().await?;
+    let response = api
+        .send_signed_raw(
+            reqwest::Method::POST,
+            "/api/v1/stone/manifests/test",
+            Some(serde_json::to_vec(&body)?),
+        )
+        .await?;
     let status = response.status();
     let resp_body: serde_json::Value = response.json().await?;
 

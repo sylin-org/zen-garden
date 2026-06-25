@@ -163,17 +163,19 @@ impl Command for RestoreLocalCommand {
                 snapshot.slot
             );
 
-            let restore_url = format!(
-                "{}/api/v1/stone/snapshots/{}/restore",
-                api.endpoint(),
-                offering_path
-            );
-
             let body = serde_json::json!({
                 "slot": snapshot.slot
             });
 
-            let response = api.http().post(&restore_url).json(&body).send().await?;
+            // Signed via the local Moss oracle (Stage 4); raw response preserves the
+            // bespoke status handling below.
+            let response = api
+                .send_signed_raw(
+                    reqwest::Method::POST,
+                    &format!("/api/v1/stone/snapshots/{}/restore", offering_path),
+                    Some(serde_json::to_vec(&body)?),
+                )
+                .await?;
 
             if !response.status().is_success() {
                 let status = response.status();
@@ -342,18 +344,20 @@ impl Command for RestoreRemoteCommand {
             );
 
             let offering_path = urlencoding::encode(&self.offering);
-            let restore_url = format!(
-                "{}/api/v1/stone/snapshots/{}/restore-remote",
-                api.endpoint(),
-                offering_path
-            );
-
             let body = serde_json::json!({
                 "storage": self.storage,
                 "harvest_id": snapshot.harvest_id
             });
 
-            let response = api.http().post(&restore_url).json(&body).send().await?;
+            // Signed via the local Moss oracle (Stage 4); raw response preserves the
+            // bespoke status handling below.
+            let response = api
+                .send_signed_raw(
+                    reqwest::Method::POST,
+                    &format!("/api/v1/stone/snapshots/{}/restore-remote", offering_path),
+                    Some(serde_json::to_vec(&body)?),
+                )
+                .await?;
 
             if !response.status().is_success() {
                 let status = response.status();

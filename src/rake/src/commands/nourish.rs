@@ -407,19 +407,39 @@ async fn execute_with_scope(ctx: &Context, scope: UpdateScope) -> anyhow::Result
         }),
         |candidate| {
             let client = ctx.client.clone();
-            let endpoint = candidate.endpoint.clone();
+            let endpoint = candidate.endpoint.trim_end_matches('/').to_string();
+            let stone_name = candidate.stone_name.clone();
             let request = request.clone();
             async move {
                 use crate::tending::StoneError;
 
-                let url = format!(
-                    "{}/api/v1/garden/updates/execute",
-                    endpoint.trim_end_matches('/')
+                // Sign via the local Moss oracle (Stage 4), audience = the tended
+                // stone's name; garden updates execute is enforced on /garden/.
+                let api = garden_common::client::StoneApi::with_signing(
+                    client,
+                    endpoint,
+                    garden_common::client::PondSigning {
+                        sign_url: format!(
+                            "http://127.0.0.1:{}/api/v1/pond/sign",
+                            garden_common::constants::MOSS_SIGN_LOOPBACK
+                        ),
+                        audience: stone_name,
+                    },
                 );
-
-                let response = client.post(&url).json(&request).send().await.map_err(|e| {
-                    StoneError::ConnectionFailed(format!("HTTP request failed: {}", e))
+                let body = serde_json::to_vec(&request).map_err(|e| {
+                    StoneError::ProcessingError(format!("Failed to encode request: {}", e))
                 })?;
+
+                let response = api
+                    .send_signed_raw(
+                        reqwest::Method::POST,
+                        "/api/v1/garden/updates/execute",
+                        Some(body),
+                    )
+                    .await
+                    .map_err(|e| {
+                        StoneError::ConnectionFailed(format!("HTTP request failed: {}", e))
+                    })?;
 
                 let status = response.status();
 

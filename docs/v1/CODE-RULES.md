@@ -26,6 +26,9 @@ Domain imports nothing that does I/O. Adapters implement domain ports. Surfaces
 **R0.4** Startup is a typed pipeline, not numbered phases. Each step declares what
 it needs and produces; the pipeline is readable top-to-bottom by a newcomer in one
 sitting. (PoC scar: phases 5/14/17 missing, boot-time exits mid-sequence.)
+**Build-up is sacred (L17):** every step's outputs are the next step's inputs —
+capabilities accumulate, nothing tears down, nothing skips. A step that cannot
+run aborts startup loudly with its name; the garden is never half-built.
 
 **R0.5** Two kinds of contracts, two lifetimes. *Wire and on-media contracts* —
 chirp format, mDNS records, envelope shape, `.zen-garden/manifest.json` — are
@@ -107,6 +110,20 @@ operators mid-incident — write them the way R3.3 writes errors.
 Domain behavior has no compile-time feature flags — a behavior toggle is runtime
 configuration (R3.7). Compile-time branching on domain semantics was how the
 Windows mDNS split grew two stacks.
+
+**R2.8** Events inside, polling at the edge (L18). Domain internals communicate
+by events — broadcast/watch channels — never by polling each other. Timers exist
+only where the *protocol* is periodic (chirp heartbeat) or the outside world
+offers no push; even then prefer the external event stream (Docker events,
+filesystem watchers, sockets). A `loop { sleep; ask; }` over domain state is a
+design defect.
+
+**R2.9** Single ingestion, registered handlers. All inbound messages (UDP/unicast
+included) enter through ONE ingestion point — parse, dedup, dispatch — fed by
+whatever listeners booted. Handlers register by message type ("I handle this"),
+pull from their bounded queue, or ignore what isn't theirs. No module owns a
+private socket tapping the wire; no handler is invoked by surprise. Ingress never
+blocks on a slow handler: bounded queues, counted drops, visible in posture (B3).
 
 ## P3 — Semantics and ergonomics: low cognitive load
 

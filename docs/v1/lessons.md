@@ -99,6 +99,21 @@ needs plink + stone/stone creds.
 **Rule:** CI matrix mirrors build matrix including test execution; e2e harness authenticates
 the way production does.
 
+## L17 — Initialization preserves capability build-up
+The PoC's phase machine had holes, mid-sequence process exits, and task sets that
+varied between boots — capabilities built early could silently vanish before serve.
+**Rule:** startup is an ordered pipeline where every step *produces* capabilities
+that later steps consume; nothing tears down or skips silently. A step that cannot
+run aborts startup loudly with its name — it never leaves a half-built garden.
+
+## L18 — Events inside, polling only at the edge
+The PoC polled itself: 30s health sweeps, 30s topology maintenance, 5s network
+probes — domain truth discovered by asking on a schedule.
+**Rule:** domain internals communicate by events (broadcast/watch channels),
+never by polling each other. Polling is permitted only at external seams that
+offer no push alternative — and even there, prefer the event stream the outside
+world already provides (Docker's event stream, filesystem watchers, sockets).
+
 ## L16 — Delight is load-bearing
 Firefly compile-time latency asserts, cricket tunes, pulse's no-raw-mode rule, named ponds,
 portrait colors — the aesthetic layer is engineered like the rest.

@@ -5,9 +5,8 @@
 //! failures are counted and dropped, never propagated as panics.
 
 use crate::config::DiscoveryConfig;
-use garden_contract::consts;
 use garden_contract::wire::Announcement;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -67,7 +66,6 @@ impl DedupCache {
 /// The bound listener. `run` drives the receive loop until `token` cancels.
 pub struct Ingress {
     socket: Arc<UdpSocket>,
-    group: Option<Ipv4Addr>,
     dedup_ttl_secs: u64,
 }
 
@@ -76,25 +74,33 @@ impl Ingress {
     /// eligible IPv4 interface when `cfg` speaks multicast; loopback-only
     /// tests pass `group: None` and speak unicast.
     pub async fn bind(cfg: &DiscoveryConfig, group: Option<Ipv4Addr>) -> std::io::Result<Self> {
-        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, cfg.port)).await?;
-        socket.set_broadcast(true)?;
-        let group = match group {
-            Some(g) => {
-                for ip in eligible_interfaces() {
-                    if let IpAddr::V4(v4) = ip {
-                        // Join per interface; a refusal on one NIC must not
-                        // silence the others (PoC lesson: multi-homed hosts).
-                        let _ = socket.join_multicast_v4(&g, v4);
-                    }
+        let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, cfg.port));
+        let sock = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )?;
+        // Same-host stones share the discovery port — multi-instance rooms
+        // (DEBT D1) and future co-located companions. Multicast reaches
+        // every member regardless of which socket sent it.
+        sock.set_reuse_address(true)?;
+        sock.bind(&addr.into())?;
+        sock.set_broadcast(true)?;
+        sock.set_nonblocking(true)?;
+        let std_sock: std::net::UdpSocket = sock.into();
+        let socket = UdpSocket::from_std(std_sock)?;
+        if let Some(g) = group {
+            for ip in eligible_interfaces() {
+                if let IpAddr::V4(v4) = ip {
+                    // Join per interface; a refusal on one NIC must not
+                    // silence the others (PoC lesson: multi-homed hosts).
+                    let _ = socket.join_multicast_v4(g, v4);
                 }
-                socket.set_multicast_loop_v4(true)?;
-                Some(g)
             }
-            None => None,
-        };
+            socket.set_multicast_loop_v4(true)?;
+        }
         Ok(Self {
             socket: Arc::new(socket),
-            group,
             dedup_ttl_secs: cfg.dedup_ttl_secs,
         })
     }
@@ -136,6 +142,7 @@ impl Ingress {
                         continue;
                     }
                     stats.parsed += 1;
+                    tracing::debug!(kind = %ann.kind, %source, "ingest accepted");
                     let ingested = Ingested {
                         announcement: ann,
                         source,
@@ -175,11 +182,6 @@ fn eligible_interfaces() -> Vec<IpAddr> {
         out.push(ip);
     }
     out
-}
-
-/// Convenience: a `DedupCache` at the fleet default window.
-pub fn fleet_dedup() -> DedupCache {
-    DedupCache::new(consts::DEDUP_TTL_SECS)
 }
 
 #[cfg(test)]

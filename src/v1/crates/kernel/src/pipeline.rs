@@ -8,6 +8,11 @@
 use std::future::Future;
 
 /// Run one named startup step. The name is the unit of failure reporting.
+///
+/// The abort is a deliberate, single-site panic (R0.4/L17): startup must be
+/// loud and total — the garden is never half-built. This is kernel wiring,
+/// not domain logic; no external data reaches this path.
+#[allow(clippy::panic)]
 pub async fn step<T, E, F>(name: &str, f: F) -> T
 where
     F: Future<Output = Result<T, E>>,

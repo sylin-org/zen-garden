@@ -7,19 +7,20 @@
 use crate::dispatch::Dispatcher;
 use crate::ingress::Ingested;
 use garden_contract::chirp::ChirpBody;
-use garden_contract::chirp::ChirpBody;
 use garden_contract::consts::announcement;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 
 /// What presence saw. The domain event stream for the garden's membership.
+/// `Seen` boxes its payload: this travels a broadcast channel to every
+/// subscriber, and the chirp body is the one heavyweight thing we copy.
 #[derive(Debug, Clone)]
 pub enum PresenceEvent {
     /// A peer chirped (new or updated).
-    Seen(PeerView),
+    Seen(Box<PeerView>),
     /// A peer said goodbye — offline immediately, no threshold wait.
     Goodbye { stone_id: String, stone_name: String },
     /// Silence exceeded the offline threshold.
@@ -43,10 +44,16 @@ struct Peers {
 /// Presence state + event wiring. Clone freely.
 #[derive(Clone)]
 pub struct Presence {
-    peers: Arc<Mutex<Peers>>,
+    peers: Arc<parking_lot::Mutex<Peers>>,
     events_tx: broadcast::Sender<PresenceEvent>,
     version_tx: watch::Sender<u64>,
     chirps_total: Arc<AtomicU64>,
+}
+
+impl Default for Presence {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Presence {
@@ -54,7 +61,7 @@ impl Presence {
         let (events_tx, _) = broadcast::channel(256);
         let (version_tx, _) = watch::channel(0);
         Self {
-            peers: Arc::new(Mutex::new(Peers::default())),
+            peers: Arc::new(parking_lot::Mutex::new(Peers::default())),
             events_tx,
             version_tx,
             chirps_total: Arc::new(AtomicU64::new(0)),
@@ -73,7 +80,7 @@ impl Presence {
 
     /// Snapshot of the current garden.
     pub fn snapshot(&self) -> Vec<PeerView> {
-        self.peers.lock().expect("peers lock").map.values().cloned().collect()
+        self.peers.lock().map.values().cloned().collect()
     }
 
     pub fn chirps_total(&self) -> u64 {
@@ -83,8 +90,9 @@ impl Presence {
     /// Claim this presence's message types on the dispatcher and drive the
     /// handler queue until cancelled. One presence, one puller.
     pub fn claim(self: &Arc<Self>, dispatcher: &Dispatcher, token: CancellationToken) {
-        let chirps = dispatcher.claim(announcement::STONE_CHIRP);
-        let goodbyes = dispatcher.claim(announcement::STONE_GOODBYE);
+        let mut chirps = dispatcher.claim(announcement::STONE_CHIRP);
+        let mut goodbyes = dispatcher.claim(announcement::STONE_GOODBYE);
+        let mut responses = dispatcher.claim(announcement::DISCOVERY_RESPONSE);
         let this = Arc::clone(self);
         tokio::spawn(async move {
             loop {
@@ -96,6 +104,10 @@ impl Presence {
                     },
                     msg = goodbyes.recv() => match msg {
                         Some(m) => this.on_goodbye(m).await,
+                        None => return,
+                    },
+                    msg = responses.recv() => match msg {
+                        Some(m) => this.on_response(m).await,
                         None => return,
                     },
                 }
@@ -110,32 +122,90 @@ impl Presence {
         };
         self.chirps_total.fetch_add(1, Ordering::Relaxed);
         let event = {
-            let mut peers = self.peers.lock().expect("peers lock");
-            let entry = peers.map.entry(body.stone_id.clone()).or_insert_with(|| PeerView {
-                body: body.clone(),
-                last_seen: msg.received_at,
-                chirps: 0,
-            });
-            entry.chirps += 1;
-            entry.last_seen = msg.received_at;
-            entry.body = body.clone();
+            let mut peers = self.peers.lock();
+            let event = {
+                let entry =
+                    peers.map.entry(body.stone_id.clone()).or_insert_with(|| PeerView {
+                        body: body.clone(),
+                        last_seen: msg.received_at,
+                        chirps: 0,
+                    });
+                entry.chirps += 1;
+                entry.last_seen = msg.received_at;
+                entry.body = body.clone();
+                PresenceEvent::Seen(Box::new(PeerView {
+                    body,
+                    last_seen: entry.last_seen,
+                    chirps: entry.chirps,
+                }))
+            };
             peers.version += 1;
-            PresenceEvent::Seen(PeerView {
-                body,
-                last_seen: entry.last_seen,
-                chirps: entry.chirps,
-            })
+            event
+        };
+        self.publish(event);
+    }
+    /// A discovery response is a hint, not a chirp: we know a stone exists
+    /// at an address but nothing of its offerings or health. Record it as
+    /// `starting` so observe shows it immediately; the stone's own next
+    /// chirp overwrites this entry with the full truth.
+    async fn on_response(self: &Arc<Self>, msg: Ingested) {
+        use garden_glossary::{health, presence};
+        let Ok(resp) = serde_json::from_value::<garden_contract::discovery::DiscoveryResponse>(
+            msg.announcement.data,
+        ) else {
+            tracing::debug!(source = %msg.source, "discovery response undecodable");
+            return;
+        };
+        let now = chrono::Utc::now();
+        let event = {
+            let mut peers = self.peers.lock();
+            let stone_id = resp.stone_id.clone().unwrap_or_else(|| resp.stone_name.clone());
+            // A real chirp (proto stamped) already told us more than any
+            // hint can; never downgrade it.
+            if peers.map.get(&stone_id).is_some_and(|p| p.body.proto.is_some()) {
+                return;
+            }
+            let hint_body = ChirpBody {
+                stone_id,
+                stone_name: resp.stone_name,
+                address: resp.address,
+                moss_version: resp.moss_version,
+                services: Vec::new(),
+                health: health::STARTING.into(),
+                status: presence::ONLINE.into(),
+                discovered_at: now,
+                last_seen: now,
+                mac: None,
+                proto: None,
+                boot_id: None,
+                seq: None,
+            };
+            let event = {
+                let entry = peers.map.entry(hint_body.stone_id.clone()).or_insert_with(|| PeerView {
+                    body: hint_body.clone(),
+                    last_seen: now,
+                    chirps: 0,
+                });
+                entry.last_seen = now;
+                entry.body = hint_body;
+                PresenceEvent::Seen(Box::new(PeerView {
+                    body: entry.body.clone(),
+                    last_seen: entry.last_seen,
+                    chirps: entry.chirps,
+                }))
+            };
+            peers.version += 1;
+            event
         };
         self.publish(event);
     }
 
-    async fn on_goodbye(self: &Arc<Self>, msg: Ingested) {
-        // The PoC goodbye body is the chirp body; fall back to name-only.
+    async fn on_goodbye(self: &Arc<Self>, msg: Ingested) {        // The PoC goodbye body is the chirp body; fall back to name-only.
         let Ok(body) = serde_json::from_value::<ChirpBody>(msg.announcement.data) else {
             return;
         };
         let event = {
-            let mut peers = self.peers.lock().expect("peers lock");
+            let mut peers = self.peers.lock();
             peers.map.remove(&body.stone_id);
             peers.version += 1;
             PresenceEvent::Goodbye { stone_id: body.stone_id, stone_name: body.stone_name }
@@ -156,7 +226,7 @@ impl Presence {
                     let cutoff = chrono::Duration::seconds(threshold_secs as i64);
                     let now = chrono::Utc::now();
                     let expired: Vec<(String, String)> = {
-                        let mut peers = self.peers.lock().expect("peers lock");
+                        let mut peers = self.peers.lock();
                         let before = peers.map.len();
                         let expired: Vec<(String, String)> = peers
                             .map
@@ -183,7 +253,7 @@ impl Presence {
 
     fn publish(&self, event: PresenceEvent) {
         let _ = self.events_tx.send(event);
-        let version = self.peers.lock().expect("peers lock").version;
+        let version = self.peers.lock().version;
         self.version_tx.send_replace(version);
     }
 }

@@ -2,6 +2,9 @@
 //! chirps and the envelope. If any of these fail, the fleet migration story
 //! is broken; stop and fix the wire, not the test.
 
+// R4.1: unwrap_used is denied in domain code but sanctioned in tests.
+#![allow(clippy::unwrap_used)]
+
 use garden_contract::chirp::{ChirpBody, PeerAddress, ServiceEntry};
 use garden_contract::consts::{self, announcement};
 use garden_contract::wire::Announcement;
@@ -60,7 +63,7 @@ fn v0_required_keys_are_present_on_the_wire() {
 
 #[test]
 fn v0_optional_keys_are_absent_when_none() {
-    let v = serde_json::to_value(&sample_body()).unwrap();
+    let v = serde_json::to_value(sample_body()).unwrap();
     assert!(v.get("tls_port").is_none(), "None options must not emit");
     assert!(v.get("mac").is_none());
 }
@@ -102,7 +105,7 @@ fn unknown_future_fields_are_ignored() {
 fn envelope_roundtrip_preserves_discriminator() {
     let ann = Announcement::new(
         announcement::STONE_CHIRP,
-        serde_json::to_value(&sample_body()).unwrap(),
+        serde_json::to_value(sample_body()).unwrap(),
     );
     let wire = serde_json::to_string(&ann).unwrap();
     let back: Announcement = serde_json::from_str(&wire).unwrap();
@@ -111,10 +114,77 @@ fn envelope_roundtrip_preserves_discriminator() {
     assert_eq!(back.data["stone_name"], "stone-proto");
 }
 
+/// R0.5 pin: discriminators are LOWERCASE on the v0 wire — transcribed
+/// from poc/common/src/infra/communications/announcement_types.rs. A
+/// capitalized variant would be silently ignored by every PoC stone.
 #[test]
 fn announcement_discriminators_match_the_poc_wire() {
-    assert_eq!(announcement::STONE_CHIRP, "STONE_CHIRP");
-    assert_eq!(announcement::STONE_GOODBYE, "STONE_GOODBYE");
-    assert_eq!(announcement::DISCOVERY_REQUEST, "DISCOVERY_REQUEST");
+    assert_eq!(announcement::STONE_CHIRP, "stone_chirp");
+    assert_eq!(announcement::STONE_GOODBYE, "stone_goodbye");
+    assert_eq!(announcement::DISCOVERY_REQUEST, "discovery_request");
+    assert_eq!(announcement::DISCOVERY_RESPONSE, "discovery_response");
+    assert_eq!(announcement::ELECTION_REQUEST, "election_request");
+    assert_eq!(announcement::ELECTION_CANDIDATE, "election_candidate");
+    assert_eq!(announcement::ELECTION_RESULT, "election_result");
+    assert_eq!(announcement::STORAGE_BEACON, "storage_beacon");
+    assert_eq!(announcement::TOOLS_BEACON, "tools_beacon");
     assert_eq!(announcement::ALL_V0.len(), 9);
+}
+
+/// R0.5 pin: the ask/tell shapes, transcribed from
+/// poc/common/src/types/discovery.rs.
+#[test]
+fn discovery_request_shape_matches_v0() {
+    let req = garden_contract::discovery::DiscoveryRequest {
+        discover: "moss".into(),
+        request_id: "0198e0c7-0000-7000-8000-0000000000f1".into(),
+        requester: "rake-cli".into(),
+    };
+    let v = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        v,
+        json!({
+            "discover": "moss",
+            "request_id": "0198e0c7-0000-7000-8000-0000000000f1",
+            "requester": "rake-cli",
+        })
+    );
+}
+
+#[test]
+fn discovery_response_omits_absent_options() {
+    use std::net::IpAddr;
+    let res = garden_contract::discovery::DiscoveryResponse {
+        stone_id: Some("sid".into()),
+        stone_name: "stone-x".into(),
+        address: garden_contract::chirp::PeerAddress {
+            ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 9)),
+            port: 7285,
+            tls_port: None,
+        },
+        moss_version: "1.0.0".into(),
+        lantern_endpoint: None,
+    };
+    let v = serde_json::to_value(&res).unwrap();
+    assert!(v.get("lantern_endpoint").is_none());
+    assert_eq!(v["stone_name"], "stone-x");
+    // stone_id present when Some, absent when None
+    assert_eq!(v["stone_id"], "sid");
+    let bare = garden_contract::discovery::DiscoveryResponse {
+        stone_id: None,
+        ..res
+    };
+    let v = serde_json::to_value(&bare).unwrap();
+    assert!(v.get("stone_id").is_none());
+}
+
+/// R1.7/R0.5 pin: the typed multicast groups equal their historical dotted
+/// forms — one truth, the other pinned.
+#[test]
+fn multicast_group_consts_match_historical_dotted_forms() {
+    assert_eq!(consts::MULTICAST_GROUP.to_string(), consts::MULTICAST_GROUP_STR);
+    assert_eq!(
+        consts::MULTICAST_GROUP_ISOLATED.to_string(),
+        consts::MULTICAST_GROUP_ISOLATED_STR
+    );
 }

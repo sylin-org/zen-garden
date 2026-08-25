@@ -12,11 +12,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-/// What it takes to claim a message type: an async closure over the
-/// ingested datagram. Handlers own their concurrency; we only deliver.
-pub type HandlerFn =
-    Arc<dyn Fn(Ingested) -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
-
 /// Per-handler queue capacity. Falling further behind drops — counted, warned.
 pub const HANDLER_QUEUE: usize = 256;
 
@@ -35,7 +30,17 @@ struct Counters {
     unclaimed: AtomicU64,
 }
 
-type Registry = Arc<std::sync::Mutex<HashMap<String, Vec<mpsc::Sender<Ingested>>>>>;
+type Registry = Arc<parking_lot::Mutex<HashMap<String, Vec<mpsc::Sender<Ingested>>>>>;
+
+impl Counters {
+    fn snapshot(&self) -> DispatchStats {
+        DispatchStats {
+            delivered: self.delivered.load(Ordering::Relaxed),
+            dropped: self.dropped.load(Ordering::Relaxed),
+            unclaimed: self.unclaimed.load(Ordering::Relaxed),
+        }
+    }
+}
 
 /// The dispatch half. Clone freely; all clones feed one registry.
 #[derive(Clone)]
@@ -56,7 +61,7 @@ impl Dispatcher {
     /// Create the pair; `capacity` bounds the ingress queue.
     pub fn new(capacity: usize) -> (Self, DispatcherHandle) {
         let (tx, rx) = mpsc::channel(capacity);
-        let registry = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let registry = Arc::new(parking_lot::Mutex::new(HashMap::new()));
         let counters = Arc::new(Counters::default());
         let handle = DispatcherHandle {
             rx,
@@ -71,10 +76,15 @@ impl Dispatcher {
         let _ = self.tx.send(msg).await;
     }
 
+    /// A sender into the ingress queue — for the ingestion task.
+    pub fn ingest_tx(&self) -> mpsc::Sender<Ingested> {
+        self.tx.clone()
+    }
+
     /// Claim `kind`. Returns the handler's pull queue.
     pub fn claim(&self, kind: &str) -> mpsc::Receiver<Ingested> {
         let (tx, rx) = mpsc::channel(HANDLER_QUEUE);
-        self.registry.lock().expect("registry lock").entry(kind.into()).or_default().push(tx);
+        self.registry.lock().entry(kind.into()).or_default().push(tx);
         rx
     }
 
@@ -93,10 +103,11 @@ impl DispatcherHandle {
                 _ = token.cancelled() => return self.counters.snapshot(),
                 msg = self.rx.recv() => {
                     let Some(msg) = msg else { return self.counters.snapshot() };
-                    let claimants = self.registry.lock().expect("registry lock")
+                    let claimants = self.registry.lock()
                         .get(&msg.announcement.kind).cloned().unwrap_or_default();
                     if claimants.is_empty() {
                         self.counters.unclaimed.fetch_add(1, Ordering::Relaxed);
+                        tracing::debug!(kind = %msg.announcement.kind, "unclaimed type ignored");
                         continue;
                     }
                     for tx in claimants {

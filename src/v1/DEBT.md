@@ -8,3 +8,5 @@
 | D4 | `STONE_DETAIL` capability beacon designed, not implemented | Placement features | v1-only type; v0 stones ignore unknown types |
 | D5 | MCP surface deferred | Charter RC0 | HTTP observe/find first; contract crate is the generation source |
 | D6 | `stone_id` generated per boot, not persisted | First on-media/identity milestone | PoC persisted GUIDv7 at Phase 0; v1 proto regenerates — peers see a new stone per restart until persisted |
+| D7 | Ingest/dispatch counters (B3 posture) exist but no HTTP surface reads them yet | Posture endpoint milestone | `Dispatcher::stats()` + `IngressStats` are wired; nothing serves them |
+| D8 | Same-host stones rely on `SO_REUSEADDR` sharing one discovery port | Cross-platform verification | Witnessed on Windows only; Unix needs SO_REUSEPORT or per-host single-stone discipline; verify in Linux CI/container |

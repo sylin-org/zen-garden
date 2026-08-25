@@ -35,3 +35,9 @@ dev/
 
 # Pavilion: untracked build artifacts; sources live on archive/pavilion branch
 src/pavilion/
+
+# Session-local scratch (process output, smoke artifacts) — never committed
+.tmp/
+
+# Rust build artifacts (v1 workspace)
+src/v1/target/

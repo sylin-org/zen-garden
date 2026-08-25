@@ -27,7 +27,7 @@ impl DiscoveryConfig {
     pub fn fleet_default() -> Self {
         Self {
             port: consts::DISCOVERY_PORT,
-            group: consts::MULTICAST_GROUP.parse().expect("built-in constant"),
+            group: consts::MULTICAST_GROUP,
             heartbeat_secs: consts::HEARTBEAT_SECS,
             offline_threshold_secs: consts::OFFLINE_THRESHOLD_SECS,
             dedup_ttl_secs: consts::DEDUP_TTL_SECS,
@@ -38,7 +38,7 @@ impl DiscoveryConfig {
     pub fn isolated() -> Self {
         Self {
             port: consts::DISCOVERY_PORT_ISOLATED,
-            group: consts::MULTICAST_GROUP_ISOLATED.parse().expect("built-in constant"),
+            group: consts::MULTICAST_GROUP_ISOLATED,
             ..Self::fleet_default()
         }
     }
@@ -46,15 +46,15 @@ impl DiscoveryConfig {
     /// Env twins: `GARDEN_V1_DISCOVERY_PORT`, `GARDEN_V1_MCAST_GROUP`.
     /// Environment is for deployment concerns only; absent vars keep defaults.
     pub fn from_env(mut self) -> Self {
-        if let Ok(p) = std::env::var("GARDEN_V1_DISCOVERY_PORT") {
-            if let Ok(p) = p.parse() {
-                self.port = p;
-            }
+        if let Ok(v) = std::env::var("GARDEN_V1_DISCOVERY_PORT")
+            && let Ok(p) = v.parse()
+        {
+            self.port = p;
         }
-        if let Ok(g) = std::env::var("GARDEN_V1_MCAST_GROUP") {
-            if let Ok(g) = g.parse() {
-                self.group = g;
-            }
+        if let Ok(v) = std::env::var("GARDEN_V1_MCAST_GROUP")
+            && let Ok(g) = v.parse()
+        {
+            self.group = g;
         }
         self
     }

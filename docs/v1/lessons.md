@@ -119,3 +119,14 @@ Firefly compile-time latency asserts, cricket tunes, pulse's no-raw-mode rule, n
 portrait colors — the aesthetic layer is engineered like the rest.
 **Rule:** the greenfield budgets for companions/pulse/portraits as first-class subsystems
 with contracts (COMPANION-0004/0008/0016/0018 carry forward), not garnish.
+
+## L19 - Transcribe, don't recall
+v1's first wire constants were written from memory of the inventory and came
+out UPPERCASE; the PoC's discriminators are lowercase (`stone_chirp`). The
+fixture test pinned the error faithfully - a test that quotes memory pins
+nothing. Caught by reading the frozen oracle before field day one; had v1
+joined the live garden, every PoC stone would have silently ignored it.
+**Rule:** every fixed-point constant is transcribed from source evidence at
+authoring time (file:line in the comment), never recalled. A fixture's
+expected bytes come from the oracle, not the author. When any doubt exists,
+capture a live datagram before first contact.

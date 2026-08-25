@@ -18,8 +18,7 @@ pub trait ChirpSource: Send + Sync {
     fn version(&self) -> tokio::sync::watch::Receiver<u64>;
 }
 
-/// Speak `body` to the fleet: multicast to the group, plus unicast copies
-/// to any explicit `peers` (tests use loopback).
+/// Speak `body` as a `STONE_CHIRP` to the multicast group.
 pub async fn send_chirp(
     socket: &UdpSocket,
     group: std::net::Ipv4Addr,
@@ -63,6 +62,26 @@ pub async fn send_goodbye(
     Ok(())
 }
 
+/// Ask the room who is here (the tell half of boot). The PoC's moss did
+/// this at startup so a newcomer converges in one round-trip instead of
+/// waiting out a heartbeat.
+pub async fn send_discovery_request(
+    socket: &UdpSocket,
+    group: std::net::Ipv4Addr,
+    port: u16,
+    requester: &str,
+) -> std::io::Result<()> {
+    let req = garden_contract::discovery::DiscoveryRequest::for_moss(requester);
+    let ann = garden_contract::wire::Announcement::new(
+        consts::announcement::DISCOVERY_REQUEST,
+        serde_json::to_value(&req).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+    );
+    let bytes = serde_json::to_vec(&ann)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    socket.send_to(&bytes, std::net::SocketAddr::from((group, port))).await?;
+    Ok(())
+}
+
 /// Drive the announcer until cancelled: heartbeat on the clock, chirp on
 /// change (debounced to the heartbeat floor so a flap can't flood).
 pub async fn run(
@@ -70,12 +89,12 @@ pub async fn run(
     group: std::net::Ipv4Addr,
     port: u16,
     source: Arc<dyn ChirpSource>,
+    requester: String,
     token: CancellationToken,
 ) -> u64 {
     let mut seq: u64 = 0;
-    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(
-        source.body().seq.map(|_| consts::HEARTBEAT_SECS).unwrap_or(consts::HEARTBEAT_SECS),
-    ));
+    let mut heartbeat =
+        tokio::time::interval(std::time::Duration::from_secs(consts::HEARTBEAT_SECS));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut version = source.version();
     let debounce = std::time::Duration::from_secs(consts::HEARTBEAT_SECS);
@@ -86,6 +105,12 @@ pub async fn run(
     let body = source.body();
     if let Err(e) = send_chirp(&socket, group, port, body, seq).await {
         tracing::warn!(error = %e, "boot chirp failed");
+    }
+    // Consume interval's immediate first tick so boot isn't a double-chirp.
+    heartbeat.tick().await;
+    // Then ask who else is here — the room answers in one round-trip.
+    if let Err(e) = send_discovery_request(&socket, group, port, &requester).await {
+        tracing::warn!(error = %e, "boot discovery request failed");
     }
 
     loop {

@@ -1,4 +1,4 @@
-﻿[workspace]
+[workspace]
 members = [
   "src/lantern",
   "src/common",
@@ -88,7 +88,7 @@ tempfile = "3"
 # is co-developed with Zen Garden. This deliberately trades clean-clone-from-
 # crates for fast koi+zen iteration (a fresh clone needs a sibling ../koi).
 # To switch back to published crates.io versions once koi stabilizes, follow
-# docs/guides/koi-dependency.md.
+# docs/poc/guides/koi-dependency.md.
 # Lean consumption: default-features = false drops koi's optional `docker`
 # (bollard) and `keyring` (OS-keychain) backends; `qr` is armed on koi-crypto so
 # the pond ceremony still renders PNG QR codes.

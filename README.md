@@ -40,8 +40,8 @@ Stones (devices running Moss) provide service discovery, orchestration, and fail
 | Security         | Optional mTLS via Pond (explicit trust boundary)                   |
 | Scaling          | mDNS for up to 30 Stones; Lantern dashboard for garden-wide visibility |
 
-- **Set up real hardware** — [First Stone Guide](docs/guides/first-stone.md)
-- **Understand the protocol** — [Discovery Spec](docs/specs/discovery.md)
+- **Set up real hardware** — [First Stone Guide](docs/poc/guides/first-stone.md)
+- **Understand the protocol** — [Discovery Spec](docs/poc/specs/discovery.md)
 
 ---
 
@@ -51,18 +51,18 @@ Zen Garden runs on Linux and Windows, detects GPU hardware automatically, and sh
 
 | Category                | What's included                                                          | Docs                                                                                    |
 | ----------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| Platform                | Linux (managed containers), Windows (adopted native services)            | [Offering Modes](docs/decisions/OFFER-0005-offering-modes.md)                           |
-| GPU acceleration        | NVIDIA CUDA, AMD ROCm, Intel OpenVINO, Windows DirectML — auto-detected | [Stone Hardware](docs/guides/stone-hardware.md)                                         |
-| Ollama orchestrator     | VRAM-aware routing, demand-weighted model placement, auto-tiering        | [AI Capability Router](docs/proposals/offering-orchestration/ORCH-0002-ai-capability-router.md) |
-| MongoDB orchestrator    | Automatic replica sets, dynamic membership, placement scoring            | [Database Choreographer](docs/proposals/offering-orchestration/ORCH-0003-database-choreographer.md) |
-| Storage                 | Seed banks with replication, S3-compatible gateway                       | [Seed Bank Spec](docs/specs/STORAGE-0001-seed-bank-onboarding.md)                      |
-| Updates                 | Multi-phase safe updates for software and firmware (fwupd/LVFS)          | [Nourishment Spec](docs/specs/nourishment-v0-spec.md)                                  |
-| Security                | Pond mTLS with TOTP enrollment and certificate rotation                  | [Pond Setup](docs/security/pond-setup.md)                                               |
-| Monitoring              | `rake pulse` live terminal, SSE event streams, garden-wide topology      | [Pulse ADR](docs/decisions/PULSE-0001-terminal-monitor.md)                              |
-| Companions              | Audio (Cricket) and LED (Firefly) feedback via companion SDK             | [Companion Overview](docs/guides/companion-overview.md)                                 |
-| State transfer          | Replant offerings between stones (harvest → collect → plant)             | [Replant Ceremony](docs/decisions/ORCH-0001-replant-ceremony.md)                        |
-| Maintenance             | Automated sweeps for staging, images, and stale binaries                 | [Caretaking Spec](docs/specs/caretaking-maintenance-sweeps.md)                          |
-| Hardware profiling      | CPU flags, VRAM, disk type, GPU utilization — per-offering compatibility | [Fitness Profiler](docs/decisions/ORCH-0003-fitness-profiler.md)                        |
+| Platform                | Linux (managed containers), Windows (adopted native services)            | [Offering Modes](docs/poc/decisions/OFFER-0005-offering-modes.md)                           |
+| GPU acceleration        | NVIDIA CUDA, AMD ROCm, Intel OpenVINO, Windows DirectML — auto-detected | [Stone Hardware](docs/poc/guides/stone-hardware.md)                                         |
+| Ollama orchestrator     | VRAM-aware routing, demand-weighted model placement, auto-tiering        | [AI Capability Router](docs/poc/proposals/offering-orchestration/ORCH-0002-ai-capability-router.md) |
+| MongoDB orchestrator    | Automatic replica sets, dynamic membership, placement scoring            | [Database Choreographer](docs/poc/proposals/offering-orchestration/ORCH-0003-database-choreographer.md) |
+| Storage                 | Seed banks with replication, S3-compatible gateway                       | [Seed Bank Spec](docs/poc/specs/STORAGE-0001-seed-bank-onboarding.md)                      |
+| Updates                 | Multi-phase safe updates for software and firmware (fwupd/LVFS)          | [Nourishment Spec](docs/poc/specs/nourishment-v0-spec.md)                                  |
+| Security                | Pond mTLS with TOTP enrollment and certificate rotation                  | [Pond Setup](docs/poc/security/pond-setup.md)                                               |
+| Monitoring              | `rake pulse` live terminal, SSE event streams, garden-wide topology      | [Pulse ADR](docs/poc/decisions/PULSE-0001-terminal-monitor.md)                              |
+| Companions              | Audio (Cricket) and LED (Firefly) feedback via companion SDK             | [Companion Overview](docs/poc/guides/companion-overview.md)                                 |
+| State transfer          | Replant offerings between stones (harvest → collect → plant)             | [Replant Ceremony](docs/poc/decisions/ORCH-0001-replant-ceremony.md)                        |
+| Maintenance             | Automated sweeps for staging, images, and stale binaries                 | [Caretaking Spec](docs/poc/specs/caretaking-maintenance-sweeps.md)                          |
+| Hardware profiling      | CPU flags, VRAM, disk type, GPU utilization — per-offering compatibility | [Fitness Profiler](docs/poc/decisions/ORCH-0003-fitness-profiler.md)                        |
 
 ---
 
@@ -97,7 +97,7 @@ garden-rake find mongodb
 
 Zen Garden currently builds [koi](https://github.com/sylin-org/koi) from a sibling
 `../koi` checkout while the two are co-developed — clone koi alongside zen-garden
-first. See [docs/guides/koi-dependency.md](docs/guides/koi-dependency.md) for the
+first. See [docs/poc/guides/koi-dependency.md](docs/poc/guides/koi-dependency.md) for the
 rationale and the procedure to switch back to crates.io once koi stabilizes.
 
 ```bash
@@ -120,7 +120,7 @@ A typical garden runs on whatever hardware you have. 31 offering templates ship 
 | Old desktop           | Ollama     | Local LLM inference    |
 | Raspberry Pi          | Prometheus | Monitoring             |
 
-- [Full offerings catalog](docs/reference/offerings.md)
+- [Full offerings catalog](docs/poc/reference/offerings.md)
 
 ---
 
@@ -128,16 +128,16 @@ A typical garden runs on whatever hardware you have. 31 offering templates ship 
 
 | If you want to...               | Start here                                                            |
 | ------------------------------- | --------------------------------------------------------------------- |
-| Install Moss on hardware        | [Installing Moss](docs/guides/installing-moss.md)                     |
-| Set up your first Stone         | [First Stone Guide](docs/guides/first-stone.md)                       |
-| See what services are available | [Offerings Catalog](docs/reference/offerings.md)                      |
-| Learn the CLI                   | [Rake Commands](docs/specs/rake-commands.md)                          |
-| Use companions (audio, LEDs)    | [Companion Overview](docs/guides/companion-overview.md)               |
-| Understand security options     | [Security Overview](docs/security/overview.md)                        |
-| Troubleshoot issues             | [Troubleshooting](docs/guides/troubleshooting.md)                     |
-| See architecture decisions      | [Decision Records](docs/decisions/)                                   |
+| Install Moss on hardware        | [Installing Moss](docs/poc/guides/installing-moss.md)                     |
+| Set up your first Stone         | [First Stone Guide](docs/poc/guides/first-stone.md)                       |
+| See what services are available | [Offerings Catalog](docs/poc/reference/offerings.md)                      |
+| Learn the CLI                   | [Rake Commands](docs/poc/specs/rake-commands.md)                          |
+| Use companions (audio, LEDs)    | [Companion Overview](docs/poc/guides/companion-overview.md)               |
+| Understand security options     | [Security Overview](docs/poc/security/overview.md)                        |
+| Troubleshoot issues             | [Troubleshooting](docs/poc/guides/troubleshooting.md)                     |
+| See architecture decisions      | [Decision Records](docs/poc/decisions/)                                   |
 
-[Documentation Hub](docs/README.md)
+[Documentation Hub](docs/poc/README.md)
 
 ---
 
@@ -154,8 +154,8 @@ Version 0.2.0 — active development.
 | `garden-firefly` | LED companion (visual status on RP2040-Matrix) |
 | Offerings        | 31 curated service templates across 17 categories |
 
-- [Release Notes](docs/ops/release-notes.md)
-- [Roadmap](docs/ops/roadmap.md)
+- [Release Notes](docs/poc/ops/release-notes.md)
+- [Roadmap](docs/poc/ops/roadmap.md)
 
 ---
 
@@ -164,7 +164,7 @@ Version 0.2.0 — active development.
 - Run Stones on your old hardware and tell us what breaks
 - Write offering templates for services you use
 - Improve documentation where it confused you
-- [Maintainer Docs](docs/ops/maintainers.md)
+- [Maintainer Docs](docs/poc/ops/maintainers.md)
 
 ---
 

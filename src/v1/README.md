@@ -47,11 +47,19 @@ you link (L16: delight is load-bearing; L20: names are decisions too).
 # a stone joins the garden and announces itself
 cargo run -p garden-moss -- --stone-name proto-stone
 
-# walk the garden
-cargo run -p garden-rake -- observe          # every stone that answers
-cargo run -p garden-rake -- find fen         # stones matching a name
-cargo run -p garden-rake -- observe --json   # agent-readable
+# walk the garden (attaches to a moss, renders ITS view - L21)
+cargo run -p garden-rake -- observe              # the room as moss sees it
+cargo run -p garden-rake -- find fen             # filter by name
+cargo run -p garden-rake -- observe --json       # agent-readable
+cargo run -p garden-rake -- observe --stone 192.168.1.50:7285   # pin (hard)
 ```
+
+**Attachment cascade** (PoC-harvested): every successful attach writes
+`~/.zen-garden/.tending`, so repeat calls answer in milliseconds.
+`--stone`/`RAKE_STONE` are *hard* intent — rake refuses to quietly go
+elsewhere. Otherwise: tended file first (optimistic), then
+discovery-first-answer (*soft* — flushed when a failed connection matches
+it). Rake computes nothing about the garden; moss does.
 
 Defaults are the v1 room; nothing to isolate from. Overrides
 (`--discovery-port`, `--mcast-group`, env twins `MOSS_*` / `RAKE_*`) exist

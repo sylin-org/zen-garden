@@ -3,8 +3,8 @@
 //! Moss is the quiet green layer on every stone: it announces, listens,
 //! and answers. Humans and agents walk the garden with `rake`.
 //!
-//! Startup is the typed pipeline (R0.4/L17): config → ingress bind →
-//! dispatch → presence claim → expiry sweep → announcer → HTTP. Every
+//! Startup is the typed pipeline (R0.4/L17): config -> ingress bind ->
+//! dispatch -> topology claim -> expiry sweep → announcer → HTTP. Every
 //! step's output feeds the next; failure aborts loudly by step name.
 //! Shutdown speaks goodbye before the light goes out.
 
@@ -17,7 +17,7 @@ use garden_kernel::config::{DiscoveryConfig, HttpConfig};
 use garden_kernel::dispatch::Dispatcher;
 use garden_kernel::ingress::Ingress;
 use garden_kernel::pipeline;
-use garden_kernel::presence::Presence;
+use garden_kernel::topology::Topology;
 use garden_kernel::responder;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -106,12 +106,12 @@ async fn main() {
     .await;
 
     let (dispatcher, dispatcher_handle) = Dispatcher::new(INGRESS_QUEUE);
-    let presence = Arc::new(Presence::new());
+    let topology = Arc::new(Topology::new());
 
-    // Presence claims its types from the dispatcher (R2.9); expiry sweeps
+    // The topology cache claims its types from the dispatcher (R2.9, L22); expiry sweeps
     // on protocol time (the threshold IS the protocol — R2.8).
-    presence.claim(&dispatcher, token.clone());
-    tokio::spawn(Arc::clone(&presence).run_expiry(
+    topology.claim(&dispatcher, token.clone());
+    tokio::spawn(Arc::clone(&topology).run_expiry(
         token.clone(),
         discovery.offline_threshold_secs,
     ));
@@ -146,7 +146,7 @@ async fn main() {
 
     // HTTP surface, last: the garden answers once it can hear.
     let state = Arc::new(http::AppState {
-        presence: Arc::clone(&presence),
+        topology: Arc::clone(&topology),
         stone_name: cli.stone_name.clone(),
         boot_id,
         started_at: chrono::Utc::now(),

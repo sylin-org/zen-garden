@@ -142,3 +142,23 @@ Re-derive the justification before inheriting the shape; when the
 justification is absent, decide fresh and record why (topology separation
 was one such decision). On-media formats stay forever-compatible (R0.5);
 network and internal design answer only to evidence plus intent.
+
+## L21 - Rake is a thin client
+PoC rake spent its intelligence on exactly three things: finding and
+validating a moss to attach to, routing commands and parameters onto that
+moss's methods, and expecting standard return formats. That is all. Every
+core capability lived at moss.
+**Rule:** rake never computes garden truth - it renders what an attached
+moss reports. Rake-side discovery exists to establish attachment, not to
+build rake's own view of the world. When a feature tempts rake to know
+something moss does not tell it, the feature belongs in moss.
+
+## L22 - Three API categories, one hot cache
+Moss's API splits mentally - and therefore literally - into three
+categories: local service health (am I well), Stone data/operations (this
+machine), and Garden data/operations (the whole room). Garden state lives
+in ONE hot topology cache: cheap to write, cheap to read, every update
+lands there. Readers take snapshots; nobody polls anyone (L18).
+**Rule:** moss routes declare their category in the path
+(`/api/v1/{local|stone|garden}/...`). All garden-wide data flows through
+the single topology cache - no parallel stores, no per-handler views.

@@ -1,4 +1,4 @@
-//! Presence: who is in the garden, as events (L18).
+//! Topology: who is in the garden, as events (L18).
 //!
 //! A handler that claims `STONE_CHIRP` and `STONE_GOODBYE`, keeps the
 //! peer map, and publishes changes on a broadcast channel plus a version
@@ -14,13 +14,13 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 
-/// What presence saw. The domain event stream for the garden's membership.
+/// What Topology saw. The domain event stream for the garden's membership.
 /// `Seen` boxes its payload: this travels a broadcast channel to every
 /// subscriber, and the chirp body is the one heavyweight thing we copy.
 #[derive(Debug, Clone)]
-pub enum PresenceEvent {
+pub enum TopologyEvent {
     /// A peer chirped (new or updated).
-    Seen(Box<PeerView>),
+    Seen(Box<StoneView>),
     /// A peer said goodbye — offline immediately, no threshold wait.
     Goodbye { stone_id: String, stone_name: String },
     /// Silence exceeded the offline threshold.
@@ -29,7 +29,7 @@ pub enum PresenceEvent {
 
 /// A peer as the garden currently sees it.
 #[derive(Debug, Clone)]
-pub struct PeerView {
+pub struct StoneView {
     pub body: ChirpBody,
     pub last_seen: chrono::DateTime<chrono::Utc>,
     pub chirps: u64,
@@ -37,26 +37,26 @@ pub struct PeerView {
 
 #[derive(Default)]
 struct Peers {
-    map: HashMap<String, PeerView>,
+    map: HashMap<String, StoneView>,
     version: u64,
 }
 
-/// Presence state + event wiring. Clone freely.
+/// Topology state + event wiring. Clone freely.
 #[derive(Clone)]
-pub struct Presence {
+pub struct Topology {
     peers: Arc<parking_lot::Mutex<Peers>>,
-    events_tx: broadcast::Sender<PresenceEvent>,
+    events_tx: broadcast::Sender<TopologyEvent>,
     version_tx: watch::Sender<u64>,
     chirps_total: Arc<AtomicU64>,
 }
 
-impl Default for Presence {
+impl Default for Topology {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Presence {
+impl Topology {
     pub fn new() -> Self {
         let (events_tx, _) = broadcast::channel(256);
         let (version_tx, _) = watch::channel(0);
@@ -69,7 +69,7 @@ impl Presence {
     }
 
     /// Subscribe to membership events (L18: events, not polls).
-    pub fn events(&self) -> broadcast::Receiver<PresenceEvent> {
+    pub fn events(&self) -> broadcast::Receiver<TopologyEvent> {
         self.events_tx.subscribe()
     }
 
@@ -79,7 +79,7 @@ impl Presence {
     }
 
     /// Snapshot of the current garden.
-    pub fn snapshot(&self) -> Vec<PeerView> {
+    pub fn snapshot(&self) -> Vec<StoneView> {
         self.peers.lock().map.values().cloned().collect()
     }
 
@@ -87,8 +87,8 @@ impl Presence {
         self.chirps_total.load(Ordering::Relaxed)
     }
 
-    /// Claim this presence's message types on the dispatcher and drive the
-    /// handler queue until cancelled. One presence, one puller.
+    /// Claim this Topology's message types on the dispatcher and drive the
+    /// handler queue until cancelled. One Topology, one puller.
     pub fn claim(self: &Arc<Self>, dispatcher: &Dispatcher, token: CancellationToken) {
         let mut chirps = dispatcher.claim(announcement::STONE_CHIRP);
         let mut goodbyes = dispatcher.claim(announcement::STONE_GOODBYE);
@@ -125,7 +125,7 @@ impl Presence {
             let mut peers = self.peers.lock();
             let event = {
                 let entry =
-                    peers.map.entry(body.stone_id.clone()).or_insert_with(|| PeerView {
+                    peers.map.entry(body.stone_id.clone()).or_insert_with(|| StoneView {
                         body: body.clone(),
                         last_seen: msg.received_at,
                         chirps: 0,
@@ -133,7 +133,7 @@ impl Presence {
                 entry.chirps += 1;
                 entry.last_seen = msg.received_at;
                 entry.body = body.clone();
-                PresenceEvent::Seen(Box::new(PeerView {
+                TopologyEvent::Seen(Box::new(StoneView {
                     body,
                     last_seen: entry.last_seen,
                     chirps: entry.chirps,
@@ -181,14 +181,14 @@ impl Presence {
                 seq: None,
             };
             let event = {
-                let entry = peers.map.entry(hint_body.stone_id.clone()).or_insert_with(|| PeerView {
+                let entry = peers.map.entry(hint_body.stone_id.clone()).or_insert_with(|| StoneView {
                     body: hint_body.clone(),
                     last_seen: now,
                     chirps: 0,
                 });
                 entry.last_seen = now;
                 entry.body = hint_body;
-                PresenceEvent::Seen(Box::new(PeerView {
+                TopologyEvent::Seen(Box::new(StoneView {
                     body: entry.body.clone(),
                     last_seen: entry.last_seen,
                     chirps: entry.chirps,
@@ -208,7 +208,7 @@ impl Presence {
             let mut peers = self.peers.lock();
             peers.map.remove(&body.stone_id);
             peers.version += 1;
-            PresenceEvent::Goodbye { stone_id: body.stone_id, stone_name: body.stone_name }
+            TopologyEvent::Goodbye { stone_id: body.stone_id, stone_name: body.stone_name }
         };
         self.publish(event);
     }
@@ -244,14 +244,14 @@ impl Presence {
                         expired
                     };
                     for (stone_id, stone_name) in expired {
-                        self.publish(PresenceEvent::Expired { stone_id, stone_name });
+                        self.publish(TopologyEvent::Expired { stone_id, stone_name });
                     }
                 }
             }
         }
     }
 
-    fn publish(&self, event: PresenceEvent) {
+    fn publish(&self, event: TopologyEvent) {
         let _ = self.events_tx.send(event);
         let version = self.peers.lock().version;
         self.version_tx.send_replace(version);

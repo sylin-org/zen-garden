@@ -42,4 +42,9 @@ pub mod domains {
     pub const DISCOVERY: &str = "discovery";
     pub const PRESENCE: &str = "presence";
     pub const HTTP: &str = "http";
+
+    /// API surface categories (L22): every moss route lives in exactly one.
+    pub const LOCAL: &str = "local";
+    pub const STONE: &str = "stone";
+    pub const GARDEN: &str = "garden";
 }

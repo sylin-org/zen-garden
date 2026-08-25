@@ -8,6 +8,8 @@ use axum::routing::get;
 use axum::{Json, Router};
 use garden_contract::chirp::ChirpBody;
 use garden_contract::consts::PROTO_V1;
+use garden_kernel::dispatch::Dispatcher;
+use garden_kernel::ingress::IngestCounters;
 use garden_kernel::topology::StoneView;
 use serde::Serialize;
 use std::sync::Arc;
@@ -16,6 +18,8 @@ use uuid::Uuid;
 /// Shared state behind the routes.
 pub struct AppState {
     pub topology: Arc<garden_kernel::topology::Topology>,
+    pub dispatcher: Dispatcher,
+    pub ingest_counters: Arc<IngestCounters>,
     pub stone_name: String,
     pub boot_id: Uuid,
     pub started_at: chrono::DateTime<chrono::Utc>,
@@ -47,11 +51,16 @@ struct ManifestRoute {
     summary: &'static str,
 }
 
-const MANIFEST: [ManifestRoute; 3] = [
+const MANIFEST: [ManifestRoute; 4] = [
     ManifestRoute {
         method: "GET",
         path: "/health",
         summary: "Liveness probe of this stone and its wire protocol marker.",
+    },
+    ManifestRoute {
+        method: "GET",
+        path: "/api/v1/local/posture",
+        summary: "Local data (L22): this moss's live counters - ingest, dispatch, topology size.",
     },
     ManifestRoute {
         method: "GET",
@@ -79,6 +88,33 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     }))
 }
 
+async fn posture(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let uptime = chrono::Utc::now() - state.started_at;
+    let dispatch = state.dispatcher.stats();
+    Json(serde_json::json!({
+        "data": {
+            "asset": "moss",
+            "stone_name": state.stone_name,
+            "boot_id": state.boot_id,
+            "uptime_secs": uptime.num_seconds(),
+            "ingest": {
+                "parsed": state.ingest_counters.parsed(),
+                "bad_json": state.ingest_counters.bad_json(),
+                "deduped": state.ingest_counters.deduped(),
+            },
+            "dispatch": {
+                "delivered": dispatch.delivered,
+                "dropped": dispatch.dropped,
+                "unclaimed": dispatch.unclaimed,
+            },
+            "topology": {
+                "stones": state.topology.snapshot().len(),
+                "chirps_total": state.topology.chirps_total(),
+            },
+        }
+    }))
+}
+
 async fn garden_observe(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let stones: Vec<ObserveStone> =
         state.topology.snapshot().iter().map(ObserveStone::from).collect();
@@ -94,6 +130,7 @@ async fn manifest() -> Json<serde_json::Value> {
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/api/v1/local/posture", get(posture))
         .route("/api/v1/garden/observe", get(garden_observe))
         .route("/api/v1/manifest", get(manifest))
         .with_state(state)
@@ -113,6 +150,8 @@ mod tests {
 
         let state = Arc::new(AppState {
             topology: Arc::new(garden_kernel::topology::Topology::new()),
+            dispatcher: garden_kernel::dispatch::Dispatcher::new(16).0,
+            ingest_counters: Arc::new(garden_kernel::ingress::IngestCounters::default()),
             stone_name: "stone-test".into(),
             boot_id: Uuid::now_v7(),
             started_at: chrono::Utc::now(),

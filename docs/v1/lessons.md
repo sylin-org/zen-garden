@@ -162,3 +162,12 @@ lands there. Readers take snapshots; nobody polls anyone (L18).
 **Rule:** moss routes declare their category in the path
 (`/api/v1/{local|stone|garden}/...`). All garden-wide data flows through
 the single topology cache - no parallel stores, no per-handler views.
+
+## L23 - Names are universal; host renames are appliance-only
+Every stone carries a poetical garden name. The machine's own hostname
+changes only on dedicated appliance stones, where the stone IS the box
+(PoC first-boot renamed hosts there). A cohabiting workstation keeps its
+own name; moss is a guest.
+**Rule:** identity is two-layered: the garden name (always) and the host
+name (appliance modality only). Default modality is companion - never
+mutate a host you were merely invited onto.

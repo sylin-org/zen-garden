@@ -23,6 +23,33 @@ pub struct Ingested {
     pub received_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Ingest-time rejection reasons, counted for posture (B3). Live-shared:
+/// the daemon holds the handle and serves it while `run` increments.
+#[derive(Debug, Default)]
+pub struct IngestCounters {
+    parsed: std::sync::atomic::AtomicU64,
+    bad_json: std::sync::atomic::AtomicU64,
+    deduped: std::sync::atomic::AtomicU64,
+}
+
+impl IngestCounters {
+    fn bump(&self, which: fn(&Self) -> &std::sync::atomic::AtomicU64) {
+        which(self).fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn parsed(&self) -> u64 {
+        self.parsed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn bad_json(&self) -> u64 {
+        self.bad_json.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn deduped(&self) -> u64 {
+        self.deduped.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// Ingest-time rejection reasons, counted for posture (B3).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct IngestStats {
@@ -67,6 +94,7 @@ impl DedupCache {
 pub struct Ingress {
     socket: Arc<UdpSocket>,
     dedup_ttl_secs: u64,
+    counters: Arc<IngestCounters>,
 }
 
 impl Ingress {
@@ -102,12 +130,19 @@ impl Ingress {
         Ok(Self {
             socket: Arc::new(socket),
             dedup_ttl_secs: cfg.dedup_ttl_secs,
+            counters: Arc::new(IngestCounters::default()),
         })
     }
 
     /// The socket, for announcers that speak through the same port number.
     pub fn socket(&self) -> Arc<UdpSocket> {
         self.socket.clone()
+    }
+
+    /// Live ingest counters, for posture surfaces (B3/D7). Clone before
+    /// moving the ingress into its task.
+    pub fn counters(&self) -> Arc<IngestCounters> {
+        self.counters.clone()
     }
 
     /// Drive ingestion until cancelled. Emits every accepted datagram to
@@ -117,17 +152,20 @@ impl Ingress {
         token: CancellationToken,
         dispatch: mpsc::Sender<Ingested>,
     ) -> IngestStats {
-        let mut stats = IngestStats::default();
         let mut dedup = DedupCache::new(self.dedup_ttl_secs);
         let mut buf = vec![0u8; 65_535];
 
         loop {
             tokio::select! {
-                _ = token.cancelled() => return stats,
+                _ = token.cancelled() => return IngestStats {
+                    parsed: self.counters.parsed(),
+                    bad_json: self.counters.bad_json(),
+                    deduped: self.counters.deduped(),
+                },
                 recv = self.socket.recv_from(&mut buf) => {
                     let Ok((n, source)) = recv else { continue };
                     let Ok(ann) = serde_json::from_slice::<Announcement>(&buf[..n]) else {
-                        stats.bad_json += 1;
+                        self.counters.bump(|c| &c.bad_json);
                         tracing::debug!(%source, bytes = n, "ingest: undecodable datagram");
                         continue;
                     };
@@ -138,10 +176,10 @@ impl Ingress {
                         None => true,
                     };
                     if !novel {
-                        stats.deduped += 1;
+                        self.counters.bump(|c| &c.deduped);
                         continue;
                     }
-                    stats.parsed += 1;
+                    self.counters.bump(|c| &c.parsed);
                     tracing::debug!(kind = %ann.kind, %source, "ingest accepted");
                     let ingested = Ingested {
                         announcement: ann,
@@ -150,7 +188,11 @@ impl Ingress {
                     };
                     if dispatch.send(ingested).await.is_err() {
                         // Dispatcher gone: shutdown is underway.
-                        return stats;
+                        return IngestStats {
+                            parsed: self.counters.parsed(),
+                            bad_json: self.counters.bad_json(),
+                            deduped: self.counters.deduped(),
+                        };
                     }
                 }
             }

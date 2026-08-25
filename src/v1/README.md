@@ -54,6 +54,12 @@ cargo run -p garden-rake -- observe --json       # agent-readable
 cargo run -p garden-rake -- observe --stone 192.168.1.50:7285   # pin (hard)
 ```
 
+**Identity**: on first boot a moss mints a GUIDv7 and draws a poetical name
+from the well (`stone-dusky-grotto`, `stone-leaded-haven` — the PoC's
+dictionaries, preserved), collision-checked against the room. The identity
+persists at `~/.zen-garden/identity.json`; the id is immutable forever,
+an explicit `--stone-name` renames by operator intent.
+
 **Attachment cascade** (PoC-harvested): every successful attach writes
 `~/.zen-garden/.tending`, so repeat calls answer in milliseconds.
 `--stone`/`RAKE_STONE` are *hard* intent — rake refuses to quietly go

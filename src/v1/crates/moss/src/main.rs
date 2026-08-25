@@ -9,6 +9,7 @@
 //! Shutdown speaks goodbye before the light goes out.
 
 mod http;
+mod identity;
 mod source;
 
 use clap::Parser;
@@ -29,9 +30,6 @@ use uuid::Uuid;
 const INGRESS_QUEUE: usize = 1024;
 /// Grace period after cancellation for in-flight sends before goodbye.
 const SHUTDOWN_GRACE_MS: u64 = 200;
-/// Fallback identity when no name is given.
-const DEFAULT_STONE_NAME: &str = "stone-unnamed";
-
 #[derive(Parser)]
 #[command(
     name = "moss",
@@ -39,9 +37,10 @@ const DEFAULT_STONE_NAME: &str = "stone-unnamed";
     version
 )]
 struct Cli {
-    /// Human-facing stone name.
-    #[arg(long, env = "MOSS_STONE_NAME", default_value = DEFAULT_STONE_NAME)]
-    stone_name: String,
+    /// Stone name. Absent: a poetical name is minted on first boot and kept
+    /// forever. Present: operator rename intent (the stone_id never changes).
+    #[arg(long, env = "MOSS_STONE_NAME")]
+    stone_name: Option<String>,
 
     /// HTTP port for this stone's surface.
     #[arg(long, env = "MOSS_HTTP_PORT", default_value_t = HttpConfig::DEFAULT_PORT)]
@@ -90,9 +89,17 @@ async fn main() {
         pipeline::step("config", async { Ok::<_, String>(cli.discovery_config()) }).await;
     let http_port = cli.http_port;
 
+    // Identity: minted once, persistent and immutable (D6); poetic default
+    // name collision-checked against the room; explicit flag = rename intent.
+    let identity = pipeline::step("identity", {
+        let discovery = discovery.clone();
+        async move { identity::load_or_mint(cli.stone_name.as_deref(), &discovery).await }
+    })
+    .await;
+
     let chirp_body = source::static_body(
-        Uuid::now_v7().to_string(),
-        cli.stone_name.clone(),
+        identity.stone_id.clone(),
+        identity.stone_name.clone(),
         boot_id.to_string(),
         http_port,
         env!("CARGO_PKG_VERSION").to_string(),
@@ -124,7 +131,7 @@ async fn main() {
         discovery.group,
         discovery.port,
         chirp_source.clone() as Arc<dyn ChirpSource>,
-        cli.stone_name.clone(),
+        identity.stone_name.clone(),
         token.clone(),
     ));
 
@@ -138,7 +145,9 @@ async fn main() {
         token.clone(),
     );
 
-    // Ingestion and dispatch run until cancelled.
+    // Ingestion and dispatch run until cancelled. The counters handle is
+    // cloned before the move so posture can serve live numbers (D7).
+    let ingest_counters = ingress.counters();
     let dispatch_tx = dispatcher.ingest_tx();
     let ingest_token = token.clone();
     tokio::spawn(async move { ingress.run(ingest_token, dispatch_tx).await });
@@ -147,7 +156,9 @@ async fn main() {
     // HTTP surface, last: the garden answers once it can hear.
     let state = Arc::new(http::AppState {
         topology: Arc::clone(&topology),
-        stone_name: cli.stone_name.clone(),
+        dispatcher: dispatcher.clone(),
+        ingest_counters,
+        stone_name: identity.stone_name.clone(),
         boot_id,
         started_at: chrono::Utc::now(),
     });
@@ -160,7 +171,7 @@ async fn main() {
     .await;
 
     tracing::info!(
-        stone = %cli.stone_name,
+        stone = %identity.stone_name,
         group = %discovery.group,
         discovery_port = discovery.port,
         http_port,

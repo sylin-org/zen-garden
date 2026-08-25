@@ -11,13 +11,13 @@
 //!      matching connection failure (soft)
 //!   4. ask/tell discovery — whoever answers first (soft)
 
-mod discover;
 mod moss_http;
 mod tending;
 
 use clap::{Parser, Subcommand};
 use garden_contract::chirp::ChirpBody;
 use garden_contract::consts;
+use garden_kernel::probe;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
@@ -169,12 +169,13 @@ impl Cli {
         let (port, group) = self.room();
         let mut out = Vec::new();
         if let Ok(sightings) =
-            discover::ask_the_room(port, Some(group), Duration::from_millis(self.timeout_ms)).await
+            probe::ask_the_room(port, Some(group), Duration::from_millis(self.timeout_ms), "rake")
+                .await
         {
             for s in sightings {
                 out.push(Candidate {
-                    ip: s.ip,
-                    http_port: s.http_port,
+                    ip: s.address.ip,
+                    http_port: s.address.port,
                     name_hint: Some(s.stone_name),
                     origin: Origin::Discovered,
                 });

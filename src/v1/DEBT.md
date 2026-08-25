@@ -7,11 +7,13 @@
 | D4 | `STONE_DETAIL` capability beacon designed, not implemented | Placement features | v1-only type; harmless by construction |
 | D5 | MCP surface deferred | Charter RC0 | HTTP observe/find first; contract crate is the generation source |
 | D6 | `stone_id` generated per boot, not persisted | First on-media/identity milestone | PoC persisted GUIDv7 at Phase 0; v1 proto regenerates — peers see a new stone per restart until persisted |
-| D7 | Ingest/dispatch counters (B3 posture) exist but no HTTP surface reads them yet | Posture endpoint milestone | `Dispatcher::stats()` + `IngressStats` are wired; nothing serves them |
+| D7 | ~~Ingest/dispatch counters exist but no HTTP surface reads them yet~~ | — | **Closed 2026-08-25**: `/api/v1/local/posture` serves live ingest/dispatch/topology counters (B3) |
 | D8 | Same-host stones rely on `SO_REUSEADDR` sharing one discovery port | Cross-platform verification | Witnessed on Windows only; Unix needs SO_REUSEPORT or per-host single-stone discipline; verify in Linux CI/container |
+| D9 | Appliance host renames unimplemented (L23): identity records modality, nothing mutates hostnames yet | Dedicated-hardware installer (NewStone v1) | PoC parity lives in poc/moss/src/bootstrap/first_boot.rs: set hostname + hosts file at first boot, appliance stones only |
 
 ## Closed
 
 | id | was | closed |
 |----|-----|--------|
 | D1 | v1 defaulted to the PoC-shared discovery room, gated behind `--isolate` | 2026-08-25 — charter amendment: v1 owns its topology (`7284`/`239.255.42.199`, block 7284–7299). The PoC proved the mechanisms work; v1 chooses its room deliberately (L20). No shared-room contact by construction |
+| D6 | `stone_id` generated per boot, not persisted | 2026-08-25 — `~/.zen-garden/identity.json`: GUIDv7 minted once, immutable forever; poetical name from glossary::naming (PoC dictionaries), collision-checked against the room; explicit `--stone-name` = operator rename intent; `host_modality` records companion/appliance (L23) |

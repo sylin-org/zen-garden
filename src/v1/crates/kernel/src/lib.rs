@@ -11,5 +11,6 @@ pub mod config;
 pub mod dispatch;
 pub mod ingress;
 pub mod pipeline;
+pub mod probe;
 pub mod responder;
 pub mod topology;

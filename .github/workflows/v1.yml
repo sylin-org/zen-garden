@@ -1,0 +1,37 @@
+name: v1
+
+on:
+  push:
+    branches: [dev]
+    paths: ["src/v1/**", "installer/v1/**", ".github/workflows/v1.yml"]
+  pull_request:
+    paths: ["src/v1/**", ".github/workflows/v1.yml"]
+
+# The v1 workspace is koi-free: no sibling checkout, no path deps.
+# Law of this workspace (CODE-RULES R4.1): clippy -D warnings from birth.
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/v1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/v1
+
+      - name: Check
+        run: cargo check --workspace --all-targets
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace

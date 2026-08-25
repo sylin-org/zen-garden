@@ -1,0 +1,9 @@
+# Build container for Zen Garden v1 Linux binaries.
+# v1 is pure Rust (tokio/axum/clap): no native deps, no koi mount.
+# Rebuilt only when this file changes (-ForceRebuild) or the toolchain moves.
+FROM rust:1.95-slim
+
+WORKDIR /build
+
+# Source is mounted as a volume at runtime via -v flag.
+# Cargo registry and build cache live in named volumes (perennial builder).

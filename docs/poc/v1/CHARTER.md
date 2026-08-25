@@ -1,10 +1,10 @@
 # Zen Garden 1.0 — Greenfield Charter
 
-**Status:** Draft for author review · 2026-08-25
+**Status:** Accepted 2026-08-25 · governs src/v1
 **Authority:** This charter governs the clean-code migration. The inventory
 (`inventory/*.yaml`) is its evidence base; the lessons ledger (`lessons.md`) is
-its constraint set. Conflicts resolve in order: lessons > charter > inventory
-verdicts > PoC precedent.
+its constraint set; `CODE-RULES.md` is its engineering law. Conflicts resolve
+in order: lessons > charter > code rules > inventory verdicts > PoC precedent.
 
 ---
 

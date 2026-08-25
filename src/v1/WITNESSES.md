@@ -40,3 +40,31 @@ proved it.
   - Not yet witnessed: graceful-goodbye path (force-killed here; needs a
     console ctrl_c harness), expiry, cross-machine delivery in the v1 room.
     (PoC interop is not on the bar: v1 owns its topology by design.)
+
+- **W2 — the room crosses the LAN** (2026-08-25, v1 room `239.255.42.199:7284`,
+  three physical Debian stones + the Windows workstation; release binaries
+  from `installer/v1` perennial builder, deployed to `~/zen-v1/`, PoC fleet
+  untouched by construction).
+  - Field identities minted on first boot, one per stone, each drawn from
+    the well and collision-checked against the live room:
+    **stone-translucent-clearing** (192.168.1.82),
+    **stone-crystalline-dune** (192.168.1.111),
+    **stone-tranquil-pass** (192.168.1.195) — companion modality (L23).
+  - Cross-machine ask/tell witnessed in both directions: stone-thrown raw
+    datagrams and moss heartbeats cross hosts; a rake running ON a stone
+    attached across the LAN and rendered all three.
+  - Cross-machine attachment from the workstation: `rake observe` rendered
+    the full room; `rake find dune --json` returned the standard garden
+    view with v1 markers (`proto: zg/1`, `seq`, per-boot `boot_id`) intact.
+  - Scar harvested (**L24**): the first minutes were silent — IGMP snooping
+    needed a querier cycle before forwarding our group. Convergence, not
+    failure; witnesses must budget for it.
+  - Diagnosis trail worth keeping: posture counters (`bad_json` delta)
+    turned "is it the network?" into a measurable question; unicast health
+    fetch isolated the failure layer without leaving any machine.
+  - Deployment footprint left deliberately: binaries + minted identities
+    remain at `~/zen-v1/` on the three stones (processes stopped after the
+    witness). D8 (same-host port sharing) remains open — one moss per box
+    here.
+  - Not yet witnessed: graceful-goodbye, expiry, appliance modality (D9),
+    offerings.

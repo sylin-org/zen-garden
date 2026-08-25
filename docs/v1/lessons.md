@@ -171,3 +171,15 @@ own name; moss is a guest.
 **Rule:** identity is two-layered: the garden name (always) and the host
 name (appliance modality only). Default modality is companion - never
 mutate a host you were merely invited onto.
+
+## L24 - Rooms take a breath before they carry
+W2, first cross-machine contact: joins registered at the kernel, sockets
+bound, firewalls open - yet the room was silent between stones for minutes.
+Then, with zero code changed, all heartbeats flowed. The switches were
+running IGMP snooping without an active forwarding state for our group;
+a querier cycle had to pass before group traffic crossed.
+**Rule:** after any change to room membership or network path, allow one
+querier cycle (roughly 60-125s) before declaring discovery broken. A
+silent first minute is convergence, not failure. Witnesses budget for it;
+tests asserting instant cross-host delivery measure the switch, not the
+garden.

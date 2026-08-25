@@ -39,7 +39,7 @@ $distDir = Join-Path $repoRoot "dist\v1\linux-x64"
 $lockFile = Join-Path $v1Workspace "Cargo.lock"
 $markerFile = Join-Path $distDir ".container-lockhash"
 $profile = if ($DebugBuild) { "debug" } else { "release" }
-$binaryName = "moss"
+$binaries = @("moss", "rake")
 
 function Test-Docker {
     try { docker version *> $null; return $LASTEXITCODE -eq 0 } catch { return $false }
@@ -86,14 +86,16 @@ docker run -d --name $ContainerName `
 if ($LASTEXITCODE -ne 0) { Write-Host "docker run failed." -ForegroundColor Red; exit 1 }
 
 try {
-    Write-Host "Compiling garden ($profile)..." -ForegroundColor Cyan
-    docker exec $ContainerName cargo build --${profile} -p garden-moss
+    Write-Host "Compiling $($binaries -join ', ') ($profile)..." -ForegroundColor Cyan
+    docker exec $ContainerName cargo build --${profile} -p garden-moss -p garden-rake
     if ($LASTEXITCODE -ne 0) { Write-Host "cargo build failed." -ForegroundColor Red; exit 1 }
 
     # docker cp out (volume mounts may not reflect immediately on Windows)
-    $outPath = Join-Path $distDir $binaryName
-    docker cp "${ContainerName}:/build/target/${profile}/${binaryName}" $outPath
-    if ($LASTEXITCODE -ne 0) { Write-Host "docker cp failed." -ForegroundColor Red; exit 1 }
+    foreach ($b in $binaries) {
+        $outPath = Join-Path $distDir $b
+        docker cp "${ContainerName}:/build/target/${profile}/${b}" $outPath
+        if ($LASTEXITCODE -ne 0) { Write-Host "docker cp failed for ${b}." -ForegroundColor Red; exit 1 }
+    }
 
     # record lock hash only after a successful compile with current lockfile
     Set-Content -Path $markerFile -Value $currentLockHash -NoNewline

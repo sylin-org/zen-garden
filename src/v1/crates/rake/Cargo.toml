@@ -1,0 +1,22 @@
+[package]
+name = "garden-rake"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rake"
+path = "src/main.rs"
+
+[dependencies]
+garden-contract.workspace = true
+garden-kernel.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+socket2 = "0.6"
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

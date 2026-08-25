@@ -353,6 +353,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "garden-rake"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "garden-contract",
+ "garden-kernel",
+ "serde",
+ "serde_json",
+ "socket2",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

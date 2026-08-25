@@ -161,7 +161,8 @@ impl Ingress {
 /// Eligible IPv4 interfaces for multicast joins: no loopback, no
 /// link-local, no known virtual adapters by name (PoC COMM-0003 heuristic,
 /// minimal form; the MAC-OUI table was dead code there and is not missed).
-fn eligible_interfaces() -> Vec<IpAddr> {
+/// Shared by every garden speaker — moss's ingress and rake's ear alike.
+pub fn eligible_interfaces() -> Vec<IpAddr> {
     const VIRTUAL: [&str; 9] = [
         "veth", "virbr", "docker", "br-", "vmnet", "vboxnet", "wsl", "hyper-v", "loopback",
     ];

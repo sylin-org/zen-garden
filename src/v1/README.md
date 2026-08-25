@@ -27,7 +27,7 @@ you link (L16: delight is load-bearing; L20: names are decisions too).
 | Asset | Kind | Status |
 |---|---|---|
 | **moss** | The stone's resident service (this daemon) | live |
-| **rake** | The gardener's CLI — humans *and* agents walk the garden with it | reserved, next |
+| **rake** | The gardener's CLI — humans *and* agents walk the garden with it | live (`observe`, `find`) |
 | pond | A storage cluster | inherited name, M3+ |
 | firefly, cricket | Companions | inherited names, M5 |
 | lantern | PoC registry endpoint discovery | retired unless missed |
@@ -44,13 +44,19 @@ you link (L16: delight is load-bearing; L20: names are decisions too).
 ## Running
 
 ```bash
+# a stone joins the garden and announces itself
 cargo run -p garden-moss -- --stone-name proto-stone
+
+# walk the garden
+cargo run -p garden-rake -- observe          # every stone that answers
+cargo run -p garden-rake -- find fen         # stones matching a name
+cargo run -p garden-rake -- observe --json   # agent-readable
 ```
 
 Defaults are the v1 room; nothing to isolate from. Overrides
-(`--discovery-port`, `--mcast-group`, env twins `MOSS_*`) exist for
-experiments. All deployment config lives on moss's CLI; the kernel ships
-pure defaults only.
+(`--discovery-port`, `--mcast-group`, env twins `MOSS_*` / `RAKE_*`) exist
+for experiments. All deployment config lives on each binary's CLI; the
+kernel ships pure defaults only.
 
 ## Ledger
 

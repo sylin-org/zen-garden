@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/glossary", "crates/contract", "crates/kernel", "crates/moss"]
+members = ["crates/glossary", "crates/contract", "crates/kernel", "crates/moss", "crates/rake"]
 
 [workspace.package]
 edition = "2024"
@@ -12,6 +12,7 @@ garden-glossary = { path = "crates/glossary" }
 garden-contract = { path = "crates/contract" }
 garden-kernel = { path = "crates/kernel" }
 garden-moss = { path = "crates/moss" }
+garden-rake = { path = "crates/rake" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

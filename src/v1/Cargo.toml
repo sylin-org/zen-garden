@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/glossary", "crates/contract", "crates/kernel", "crates/daemon"]
+members = ["crates/glossary", "crates/contract", "crates/kernel", "crates/moss"]
 
 [workspace.package]
 edition = "2024"
@@ -11,6 +11,7 @@ license = "Apache-2.0"
 garden-glossary = { path = "crates/glossary" }
 garden-contract = { path = "crates/contract" }
 garden-kernel = { path = "crates/kernel" }
+garden-moss = { path = "crates/moss" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

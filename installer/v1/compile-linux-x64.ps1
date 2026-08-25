@@ -39,7 +39,7 @@ $distDir = Join-Path $repoRoot "dist\v1\linux-x64"
 $lockFile = Join-Path $v1Workspace "Cargo.lock"
 $markerFile = Join-Path $distDir ".container-lockhash"
 $profile = if ($DebugBuild) { "debug" } else { "release" }
-$binaryName = "garden"
+$binaryName = "moss"
 
 function Test-Docker {
     try { docker version *> $null; return $LASTEXITCODE -eq 0 } catch { return $false }
@@ -87,7 +87,7 @@ if ($LASTEXITCODE -ne 0) { Write-Host "docker run failed." -ForegroundColor Red;
 
 try {
     Write-Host "Compiling garden ($profile)..." -ForegroundColor Cyan
-    docker exec $ContainerName cargo build --${profile} -p garden-daemon
+    docker exec $ContainerName cargo build --${profile} -p garden-moss
     if ($LASTEXITCODE -ne 0) { Write-Host "cargo build failed." -ForegroundColor Red; exit 1 }
 
     # docker cp out (volume mounts may not reflect immediately on Windows)

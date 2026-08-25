@@ -70,6 +70,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "data": {
             "ok": true,
+            "asset": "moss",
             "proto": PROTO_V1,
             "stone_name": state.stone_name,
             "boot_id": state.boot_id,

@@ -1,4 +1,7 @@
-//! `garden` — a stone's daemon. M0: presence only.
+//! `moss` — the resident service of a Zen Garden stone. M0: presence only.
+//!
+//! Moss is the quiet green layer on every stone: it announces, listens,
+//! and answers. Humans and agents walk the garden with `rake`.
 //!
 //! Startup is the typed pipeline (R0.4/L17): config → ingress bind →
 //! dispatch → presence claim → expiry sweep → announcer → HTTP. Every
@@ -31,33 +34,34 @@ const DEFAULT_STONE_NAME: &str = "stone-unnamed";
 
 #[derive(Parser)]
 #[command(
-    name = "garden",
-    about = "A Zen Garden stone: announces itself, observes its peers.",
+    name = "moss",
+    about = "A Zen Garden stone's resident service: announces itself, observes its peers.",
     version
 )]
 struct Cli {
     /// Human-facing stone name.
-    #[arg(long, env = "GARDEN_V1_STONE_NAME", default_value = DEFAULT_STONE_NAME)]
+    #[arg(long, env = "MOSS_STONE_NAME", default_value = DEFAULT_STONE_NAME)]
     stone_name: String,
 
     /// HTTP port for this stone's surface.
-    #[arg(long, env = "GARDEN_V1_HTTP_PORT", default_value_t = HttpConfig::DEFAULT_PORT)]
+    #[arg(long, env = "MOSS_HTTP_PORT", default_value_t = HttpConfig::DEFAULT_PORT)]
     http_port: u16,
 
-    /// Discovery UDP port override (wins over env; default is the v1 room).
-    #[arg(long)]
+    /// Discovery UDP port override (default is the v1 room).
+    #[arg(long, env = "MOSS_DISCOVERY_PORT")]
     discovery_port: Option<u16>,
 
-    /// Multicast group override (wins over env; default is the v1 room).
-    #[arg(long)]
+    /// Multicast group override (default is the v1 room).
+    #[arg(long, env = "MOSS_MCAST_GROUP")]
     mcast_group: Option<Ipv4Addr>,
 }
 
 impl Cli {
     /// CLI > env > defaults (R3.7): v1 topology by default, then env twins,
-    /// then CLI overrides.
+    /// then CLI overrides. All deployment config lives here, at the binary —
+    /// the kernel ships pure defaults only.
     fn discovery_config(&self) -> DiscoveryConfig {
-        let mut cfg = DiscoveryConfig::default().from_env();
+        let mut cfg = DiscoveryConfig::default();
         if let Some(p) = self.discovery_port {
             cfg.port = p;
         }
@@ -160,7 +164,7 @@ async fn main() {
         group = %discovery.group,
         discovery_port = discovery.port,
         http_port,
-        "garden v1 awake"
+        "moss awake"
     );
 
     // ---- run until signalled ----------------------------------------------

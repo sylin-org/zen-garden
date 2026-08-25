@@ -1,9 +1,9 @@
-//! Typed configuration with env twins (CODE-RULES R3.7).
+//! Typed configuration defaults (CODE-RULES R3.7).
 //!
 //! Defaults are the v1 topology (contract::consts — block 7284–7299): this
 //! generation owns its room. The PoC's garden is a legacy reference, never
-//! a default; deliberate overrides (`--discovery-port`, `--mcast-group`,
-//! env twins) exist for experiments, not for coexistence.
+//! a default. Environment twins live in the binary that reads them
+//! (`moss`'s CLI, `MOSS_*` vars); the kernel ships pure defaults only.
 
 use garden_contract::consts;
 use std::net::Ipv4Addr;
@@ -36,24 +36,6 @@ impl Default for DiscoveryConfig {
     }
 }
 
-impl DiscoveryConfig {
-    /// Env twins: `GARDEN_V1_DISCOVERY_PORT`, `GARDEN_V1_MCAST_GROUP`.
-    /// Environment is for deployment concerns only; absent vars keep defaults.
-    pub fn from_env(mut self) -> Self {
-        if let Ok(v) = std::env::var("GARDEN_V1_DISCOVERY_PORT")
-            && let Ok(p) = v.parse()
-        {
-            self.port = p;
-        }
-        if let Ok(v) = std::env::var("GARDEN_V1_MCAST_GROUP")
-            && let Ok(g) = v.parse()
-        {
-            self.group = g;
-        }
-        self
-    }
-}
-
 /// HTTP surface config. Port 7285 sits inside the declared v1 block
 /// (contract::consts registry); it deliberately never shared a number with
 /// the PoC's moss API so both generations can run side-by-side untouched.
@@ -64,12 +46,4 @@ pub struct HttpConfig {
 
 impl HttpConfig {
     pub const DEFAULT_PORT: u16 = 7285;
-
-    pub fn from_env() -> Self {
-        let port = std::env::var("GARDEN_V1_HTTP_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(Self::DEFAULT_PORT);
-        Self { port }
-    }
 }

@@ -310,27 +310,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "garden-daemon"
-version = "0.1.0"
-dependencies = [
- "axum",
- "chrono",
- "clap",
- "garden-contract",
- "garden-glossary",
- "garden-kernel",
- "if-addrs",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "garden-glossary"
 version = "0.1.0"
 
@@ -349,6 +328,27 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "garden-moss"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "clap",
+ "garden-contract",
+ "garden-glossary",
+ "garden-kernel",
+ "if-addrs",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

@@ -179,12 +179,13 @@ fn discovery_response_omits_absent_options() {
 }
 
 /// R1.7/R0.5 pin: the typed multicast groups equal their historical dotted
-/// forms — one truth, the other pinned.
+/// forms — one truth per room, the other pinned. The PoC group is legacy
+/// reference only; the v1 group is the default room.
 #[test]
 fn multicast_group_consts_match_historical_dotted_forms() {
-    assert_eq!(consts::MULTICAST_GROUP.to_string(), consts::MULTICAST_GROUP_STR);
+    assert_eq!(consts::MULTICAST_GROUP_V1.to_string(), consts::MULTICAST_GROUP_V1_STR);
     assert_eq!(
-        consts::MULTICAST_GROUP_ISOLATED.to_string(),
-        consts::MULTICAST_GROUP_ISOLATED_STR
+        consts::MULTICAST_GROUP_POC.to_string(),
+        consts::MULTICAST_GROUP_POC_STR
     );
 }

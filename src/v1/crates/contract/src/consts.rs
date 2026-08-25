@@ -1,21 +1,48 @@
 //! Discovery-domain constants — the wire's fixed points (R1.7).
 //!
-//! Values harvested from the PoC (branch `poc`); changing any of these is a
-//! breaking change to R0.5 and must fail fixture tests before it merges.
+//! v1 owns a declared topology of its own (charter amendment 2026-08-25):
+//! the PoC proved the mechanisms work; v1 chooses its room deliberately
+//! instead of inheriting one. Port management is part of the design: the
+//! v1 block is **7284–7299**, assigned below and in the registry comments.
+//!
+//! Changing an assignment is a contract change: it must land here first,
+//! with its fixture pin updated in the same commit.
 
-/// UDP port every garden voice speaks discovery on.
-pub const DISCOVERY_PORT: u16 = 7184;
-/// IPv4 multicast group chirps are spoken to (octet-form of
-/// [`MULTICAST_GROUP_STR`; pinned equal by test).
-pub const MULTICAST_GROUP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(239, 255, 42, 99);
-/// Isolation group for v1 experiments (DEBT D1: use until interop is proven).
-pub const MULTICAST_GROUP_ISOLATED: std::net::Ipv4Addr = std::net::Ipv4Addr::new(239, 255, 42, 199);
-/// The production group in dotted form; fixture test pins it to [`MULTICAST_GROUP`].
-pub const MULTICAST_GROUP_STR: &str = "239.255.42.99";
-/// The isolated group in dotted form; fixture test pins it to [`MULTICAST_GROUP_ISOLATED`].
-pub const MULTICAST_GROUP_ISOLATED_STR: &str = "239.255.42.199";
-/// Isolation port for v1 experiments.
-pub const DISCOVERY_PORT_ISOLATED: u16 = 7284;
+use std::net::Ipv4Addr;
+
+// ---------------------------------------------------------------------------
+// The v1 topology — this generation's home. Every default points here.
+// ---------------------------------------------------------------------------
+
+/// UDP port where v1 stones speak discovery (chirps, ask/tell).
+pub const DISCOVERY_PORT_V1: u16 = 7284;
+/// IPv4 multicast group of the v1 discovery room.
+pub const MULTICAST_GROUP_V1: Ipv4Addr = Ipv4Addr::new(239, 255, 42, 199);
+/// The v1 group in dotted form; fixture test pins it to [`MULTICAST_GROUP_V1`].
+pub const MULTICAST_GROUP_V1_STR: &str = "239.255.42.199";
+
+// Block registry (assigned / reserved):
+//   7284/udp      discovery multicast room        (this file)
+//   7285/tcp      stone HTTP surface              (kernel::config::HttpConfig)
+//   7286..7299    reserved for v1 subsystems — storage proxy, MCP surface,
+//                 companions; claim here before first bind anywhere else.
+
+// ---------------------------------------------------------------------------
+// The PoC topology — legacy reference only. Never a default again.
+// Kept so ops tooling and docs can name the old room precisely.
+// ---------------------------------------------------------------------------
+
+/// UDP port the PoC fleet speaks discovery on.
+pub const DISCOVERY_PORT_POC: u16 = 7184;
+/// IPv4 multicast group of the PoC discovery room.
+pub const MULTICAST_GROUP_POC: Ipv4Addr = Ipv4Addr::new(239, 255, 42, 99);
+/// The PoC group in dotted form; fixture test pins it to [`MULTICAST_GROUP_POC`].
+pub const MULTICAST_GROUP_POC_STR: &str = "239.255.42.99";
+
+// ---------------------------------------------------------------------------
+// Protocol timing and vocabulary (shared shape with the PoC wire format).
+// ---------------------------------------------------------------------------
+
 /// How long a received `msg_id` is remembered before it may be accepted again.
 pub const DEDUP_TTL_SECS: u64 = 5;
 /// Heartbeat interval; also the debounce floor for change-driven chirps.

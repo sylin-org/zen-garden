@@ -18,8 +18,9 @@ proved it.
 
 ## v1
 
-- **W1 — two stones meet, and ask** (2026-08-25, isolated room
-  239.255.42.199:7284, Windows workstation, `garden` debug build).
+- **W1 — two stones meet, and ask** (2026-08-25, the v1 room
+  `239.255.42.199:7284` by default, Windows workstation, `garden` debug
+  build).
   `stone-smoke-alpha` boots, chirps, and *asks the room who's here*;
   ten seconds later `stone-smoke-beta` does the same. Both `/api/v1/observe`
   views list both stones within ~2s of beta's boot — no heartbeat waited:
@@ -37,4 +38,5 @@ proved it.
   - Wire correction caught before first contact: discriminators are lowercase
     on the v0 wire; v1's constants were fixed and re-pinned by fixture (L19).
   - Not yet witnessed: graceful-goodbye path (force-killed here; needs a
-    console ctrl_c harness), expiry, cross-machine delivery, PoC interop.
+    console ctrl_c harness), expiry, cross-machine delivery in the v1 room.
+    (PoC interop is not on the bar: v1 owns its topology by design.)

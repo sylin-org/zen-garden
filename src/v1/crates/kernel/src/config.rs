@@ -1,8 +1,9 @@
 //! Typed configuration with env twins (CODE-RULES R3.7).
 //!
-//! Defaults are the PoC wire values so v1 is fleet-compatible out of the
-//! box; `--isolate` (or the env twins) points experiments at the isolated
-//! group/port so production gardens stay unbothered (DEBT D1).
+//! Defaults are the v1 topology (contract::consts — block 7284–7299): this
+//! generation owns its room. The PoC's garden is a legacy reference, never
+//! a default; deliberate overrides (`--discovery-port`, `--mcast-group`,
+//! env twins) exist for experiments, not for coexistence.
 
 use garden_contract::consts;
 use std::net::Ipv4Addr;
@@ -22,27 +23,20 @@ pub struct DiscoveryConfig {
     pub dedup_ttl_secs: u64,
 }
 
-impl DiscoveryConfig {
-    /// Fleet-compatible defaults (PoC wire values).
-    pub fn fleet_default() -> Self {
+impl Default for DiscoveryConfig {
+    /// The v1 topology — this generation's declared room.
+    fn default() -> Self {
         Self {
-            port: consts::DISCOVERY_PORT,
-            group: consts::MULTICAST_GROUP,
+            port: consts::DISCOVERY_PORT_V1,
+            group: consts::MULTICAST_GROUP_V1,
             heartbeat_secs: consts::HEARTBEAT_SECS,
             offline_threshold_secs: consts::OFFLINE_THRESHOLD_SECS,
             dedup_ttl_secs: consts::DEDUP_TTL_SECS,
         }
     }
+}
 
-    /// Isolated experiment values (DEBT D1) — same protocol, private room.
-    pub fn isolated() -> Self {
-        Self {
-            port: consts::DISCOVERY_PORT_ISOLATED,
-            group: consts::MULTICAST_GROUP_ISOLATED,
-            ..Self::fleet_default()
-        }
-    }
-
+impl DiscoveryConfig {
     /// Env twins: `GARDEN_V1_DISCOVERY_PORT`, `GARDEN_V1_MCAST_GROUP`.
     /// Environment is for deployment concerns only; absent vars keep defaults.
     pub fn from_env(mut self) -> Self {
@@ -60,8 +54,9 @@ impl DiscoveryConfig {
     }
 }
 
-/// HTTP surface config. Default is deliberately NOT the PoC's 7185: a v1
-/// proto must never collide with a live PoC moss on the same machine.
+/// HTTP surface config. Port 7285 sits inside the declared v1 block
+/// (contract::consts registry); it deliberately never shared a number with
+/// the PoC's moss API so both generations can run side-by-side untouched.
 #[derive(Debug, Clone)]
 pub struct HttpConfig {
     pub port: u16,

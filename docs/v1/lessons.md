@@ -130,3 +130,15 @@ joined the live garden, every PoC stone would have silently ignored it.
 authoring time (file:line in the comment), never recalled. A fixture's
 expected bytes come from the oracle, not the author. When any doubt exists,
 capture a live datagram before first contact.
+
+## L20 - Informed inheritance
+The PoC proved that things work; v1 exists to make better, informed
+decisions about everything the PoC did - not to re-implement its choices.
+v1's first defaults inherited the PoC's discovery room "for coexistence";
+the need was assumed, never stated, and it shaped code (an --isolate flag,
+a debt entry) before anyone asked for it.
+**Rule:** every PoC mechanism arrives at v1 as evidence, not as law.
+Re-derive the justification before inheriting the shape; when the
+justification is absent, decide fresh and record why (topology separation
+was one such decision). On-media formats stay forever-compatible (R0.5);
+network and internal design answer only to evidence plus intent.

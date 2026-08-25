@@ -44,25 +44,20 @@ struct Cli {
     #[arg(long, env = "GARDEN_V1_HTTP_PORT", default_value_t = HttpConfig::DEFAULT_PORT)]
     http_port: u16,
 
-    /// Speak on the isolated group/port instead of production (DEBT D1).
-    #[arg(long)]
-    isolate: bool,
-
-    /// Discovery UDP port override (wins over --isolate and env).
+    /// Discovery UDP port override (wins over env; default is the v1 room).
     #[arg(long)]
     discovery_port: Option<u16>,
 
-    /// Multicast group override (wins over --isolate and env).
+    /// Multicast group override (wins over env; default is the v1 room).
     #[arg(long)]
     mcast_group: Option<Ipv4Addr>,
 }
 
 impl Cli {
-    /// CLI > env > defaults (R3.7): base defaults, then env twins, then CLI.
+    /// CLI > env > defaults (R3.7): v1 topology by default, then env twins,
+    /// then CLI overrides.
     fn discovery_config(&self) -> DiscoveryConfig {
-        let mut cfg =
-            if self.isolate { DiscoveryConfig::isolated() } else { DiscoveryConfig::fleet_default() };
-        cfg = cfg.from_env();
+        let mut cfg = DiscoveryConfig::default().from_env();
         if let Some(p) = self.discovery_port {
             cfg.port = p;
         }

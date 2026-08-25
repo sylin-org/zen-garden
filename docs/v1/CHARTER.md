@@ -96,6 +96,16 @@ The PoC fleet is the first migrator. New trunk ships behind the existing
 deploy channel; stones migrate garden-by-garden; the old daemon's
 DEPLOY-0001 machinery is the safety net for its own replacement. No flag-day.
 
+*(Amended 2026-08-25)* Migration joins a stone to **v1's own topology**
+(discovery UDP `7284`, multicast `239.255.42.199`, HTTP `7285`; declared
+block 7284–7299) — cutover per stone is atomic: stop moss, start garden,
+the stone changes rooms. The generations never share a discovery room;
+coexistence was a requirement invented by assumption, not by need. The PoC
+proved the mechanisms; v1 makes better, informed decisions about everything
+it inherited — topology, ports, handshake, all of it. Wire format remains
+fixture-pinned for on-media compat (CODE-RULES R0.5 as amended); network
+design answers only to v1.
+
 ## Sequencing (stop-anywhere value)
 
 | Milestone | Delivers | Gate |

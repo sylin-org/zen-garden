@@ -30,11 +30,17 @@ sitting. (PoC scar: phases 5/14/17 missing, boot-time exits mid-sequence.)
 capabilities accumulate, nothing tears down, nothing skips. A step that cannot
 run aborts startup loudly with its name; the garden is never half-built.
 
-**R0.5** Two kinds of contracts, two lifetimes. *Wire and on-media contracts* —
-chirp format, mDNS records, envelope shape, `.zen-garden/manifest.json` — are
-forever-compatible: v1 reads what the PoC wrote, in the field, on a drive pulled
-from a drawer. *Internal state* (stores, caches, ledgers) is migratable with
-tooling. When unsure which kind a format is, it's the first kind.
+**R0.5** Two kinds of contracts, two lifetimes. *On-media contracts* —
+`.zen-garden/manifest.json`, stored state formats, anything read off a drive
+pulled from a drawer — are forever-compatible: v1 reads what the PoC wrote,
+in the field. *Network protocol* is v1's own design: v1 runs a declared,
+separate topology (charter amendment 2026-08-25) and may evolve its wire
+freely between its own versions, using the `proto` chirp marker to
+distinguish speakers. The chirp/envelope *shapes* stay PoC-compatible for
+now — not because coexistence is required, but because the format fixtures
+already guard them and they cost nothing. When unsure which kind a format
+is, it's the on-media kind. *(Amended 2026-08-25: originally bound network
+wire to PoC compatibility under an assumed shared room.)*
 
 ## P1 — Fewest *meaningful* moving parts
 

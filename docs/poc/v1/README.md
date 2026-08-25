@@ -32,7 +32,8 @@ Four sources, cross-checked so nothing is invented twice:
 - `inventory/*.yaml` — one file per domain, entries follow `_template.yaml`
 - `lessons.md` — normative design constraints distilled from PoC experience;
   each phrased as a rule the greenfield must satisfy
-- `CHARTER.md` *(pending)* — greenfield objectives, architecture bets, migration strategy
+- `CHARTER.md` — greenfield mission, pillars, architecture bets (B1–B11),
+  ports/redesigns/cuts, migration story, milestone sequencing
 
 ## Status
 

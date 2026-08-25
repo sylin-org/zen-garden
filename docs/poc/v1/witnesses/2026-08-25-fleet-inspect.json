@@ -1,0 +1,2759 @@
+{
+  "inspected_at": "2026-08-25T00:59:02.901201547+00:00",
+  "summary": {
+    "total": 5,
+    "inspected": 5,
+    "unreachable": 0
+  },
+  "stones": [
+    {
+      "name": "stone-emerald-vale",
+      "id": "8f94010a-1071-52ba-b223-702eeedb0501",
+      "endpoint": "http://192.168.1.82:7185",
+      "core": {
+        "stone_id": "8f94010a-1071-52ba-b223-702eeedb0501",
+        "stone_name": "stone-emerald-vale",
+        "hardware": {
+          "cpu": {
+            "model": "Intel(R) Pentium(R) Silver J5005 CPU @ 1.50GHz",
+            "cores": 4,
+            "architecture": "x86_64",
+            "features": [
+              "fpu",
+              "vme",
+              "de",
+              "pse",
+              "tsc",
+              "msr",
+              "pae",
+              "mce",
+              "cx8",
+              "apic",
+              "sep",
+              "mtrr",
+              "pge",
+              "mca",
+              "cmov",
+              "pat",
+              "pse36",
+              "clflush",
+              "dts",
+              "acpi",
+              "mmx",
+              "fxsr",
+              "sse",
+              "sse2",
+              "ss",
+              "ht",
+              "tm",
+              "pbe",
+              "syscall",
+              "nx",
+              "pdpe1gb",
+              "rdtscp",
+              "lm",
+              "constant_tsc",
+              "art",
+              "arch_perfmon",
+              "pebs",
+              "bts",
+              "rep_good",
+              "nopl",
+              "xtopology",
+              "nonstop_tsc",
+              "cpuid",
+              "aperfmperf",
+              "tsc_known_freq",
+              "pni",
+              "pclmulqdq",
+              "dtes64",
+              "monitor",
+              "ds_cpl",
+              "vmx",
+              "est",
+              "tm2",
+              "ssse3",
+              "sdbg",
+              "cx16",
+              "xtpr",
+              "pdcm",
+              "sse4_1",
+              "sse4_2",
+              "x2apic",
+              "movbe",
+              "popcnt",
+              "tsc_deadline_timer",
+              "aes",
+              "xsave",
+              "rdrand",
+              "lahf_lm",
+              "3dnowprefetch",
+              "cpuid_fault",
+              "cat_l2",
+              "pti",
+              "cdp_l2",
+              "ssbd",
+              "ibrs",
+              "ibpb",
+              "stibp",
+              "ibrs_enhanced",
+              "tpr_shadow",
+              "flexpriority",
+              "ept",
+              "vpid",
+              "ept_ad",
+              "fsgsbase",
+              "tsc_adjust",
+              "smep",
+              "erms",
+              "mpx",
+              "rdt_a",
+              "rdseed",
+              "smap",
+              "clflushopt",
+              "intel_pt",
+              "sha_ni",
+              "xsaveopt",
+              "xsavec",
+              "xgetbv1",
+              "xsaves",
+              "dtherm",
+              "ida",
+              "arat",
+              "pln",
+              "pts",
+              "vnmi",
+              "umip",
+              "rdpid",
+              "md_clear",
+              "arch_capabilities"
+            ]
+          },
+          "memory": {
+            "total_mb": 7769
+          },
+          "gpus": [
+            {
+              "vendor": "Intel",
+              "model": "Intel Corporation GeminiLake [UHD Graphics 605] (rev 03)",
+              "capabilities": [
+                "vulkan"
+              ]
+            }
+          ],
+          "disk": {
+            "total_gb": 53,
+            "disk_type": "Unknown"
+          },
+          "swap_mb": 3055,
+          "ai_capabilities": {
+            "runtimes": [],
+            "vendors": [
+              "intel"
+            ],
+            "total_vram_mb": 0,
+            "gpu_count": 0,
+            "detection_complete": true
+          },
+          "system_manufacturer": "Dell Inc.",
+          "system_product": "Wyse 5070 Thin Client"
+        },
+        "runtime": {
+          "docker_version": "26.1.5+dfsg1",
+          "os": "linux/Debian GNU/Linux 13 (trixie)",
+          "kernel": "6.12.69+deb13-amd64"
+        },
+        "detection_status": "complete"
+      },
+      "topology": {
+        "fingerprint": "b0d86e1dc9a206b12dedb38ffb4ae6a44000ee5140a24a492517390b7c4c2c83",
+        "probe_version": 4,
+        "probed_at": "2026-04-06T19:25:27.751093477+00:00",
+        "status": "complete",
+        "system": {
+          "manufacturer": "Dell Inc.",
+          "product": "Wyse 5070 Thin Client",
+          "serial": "CB7LDW2",
+          "uuid": "Uuid(4c4c4544-0042-3710-804c-c3c04f445732)",
+          "bios_version": "1.1.4",
+          "bios_date": "12/06/2018",
+          "chassis_type": "desktop",
+          "board_manufacturer": "Dell Inc.",
+          "board_product": "02D0WN"
+        },
+        "expansion": {
+          "pcie": [
+            {
+              "address": "0000:00:17.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Signal processing controller",
+              "device_name": "Celeron/Pentium Silver Processor I2C 4",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31b4",
+              "driver": "intel-lpss"
+            },
+            {
+              "address": "0000:00:1c.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "System peripheral",
+              "device_name": "Celeron/Pentium Silver Processor SDA Standard Compliant SD Host Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31cc",
+              "driver": "sdhci-pci"
+            },
+            {
+              "address": "0000:00:1f.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Bridge",
+              "device_name": "Celeron/Pentium Silver Processor LPC Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31e8"
+            },
+            {
+              "address": "0000:01:00.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Network controller",
+              "device_name": "RTL8111/8168/8211/8411 PCI Express Gigabit Ethernet Controller",
+              "vendor_name": "Realtek Semiconductor Co., Ltd.",
+              "device_id": "10ec:8168",
+              "driver": "r8169"
+            },
+            {
+              "address": "0000:00:17.3",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Signal processing controller",
+              "device_name": "Celeron/Pentium Silver Processor I2C 7",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31ba",
+              "driver": "intel-lpss"
+            },
+            {
+              "address": "0000:00:0f.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Communication controller",
+              "device_name": "Celeron/Pentium Silver Processor Trusted Execution Engine Interface",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:319a",
+              "driver": "mei_me"
+            },
+            {
+              "address": "0000:00:00.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Bridge",
+              "device_name": "Gemini Lake Host Bridge",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31f0"
+            },
+            {
+              "address": "0000:00:12.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Mass storage controller",
+              "device_name": "Celeron/Pentium Silver Processor SATA Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31e3",
+              "driver": "ahci"
+            },
+            {
+              "address": "0000:00:1f.1",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "Celeron/Pentium Silver Processor Gaussian Mixture Model",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31d4",
+              "driver": "i801_smbus"
+            },
+            {
+              "address": "0000:00:15.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "Celeron/Pentium Silver Processor USB 3.0 xHCI Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31a8",
+              "driver": "xhci_hcd"
+            },
+            {
+              "address": "0000:00:0e.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Multimedia controller",
+              "device_name": "Celeron/Pentium Silver Processor High Definition Audio",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3198",
+              "driver": "snd_hda_intel"
+            },
+            {
+              "address": "0000:00:00.3",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "System peripheral",
+              "device_name": "Celeron/Pentium Silver Processor Gaussian Mixture Model",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3190"
+            },
+            {
+              "address": "0000:00:02.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "VGA compatible controller",
+              "device_name": "GeminiLake [UHD Graphics 605]",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3184",
+              "driver": "i915"
+            },
+            {
+              "address": "0000:00:14.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Bridge",
+              "device_name": "Gemini Lake PCI Express Root Port",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31d6",
+              "driver": "pcieport"
+            }
+          ],
+          "m2": [
+            {
+              "designation": "SLOT2_M.2",
+              "key": "M",
+              "in_use": false
+            }
+          ],
+          "usb": {
+            "ports": [
+              {
+                "version": "1.1",
+                "count": 1
+              },
+              {
+                "version": "2.0",
+                "count": 2
+              },
+              {
+                "version": "3.0",
+                "count": 2
+              }
+            ],
+            "connected_devices": [
+              {
+                "vendor": "0bda",
+                "product": "4-Port USB 3.0 Hub",
+                "bus_version": "3.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "2-Port USB 3.0 Hub",
+                "bus_version": "3.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "4-Port USB 2.0 Hub",
+                "bus_version": "2.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "2-Port USB 2.0 Hub",
+                "bus_version": "2.0"
+              },
+              {
+                "vendor": "1a86",
+                "product": "USB Serial",
+                "bus_version": "1.1"
+              }
+            ]
+          }
+        },
+        "network": [
+          {
+            "name": "enp1s0",
+            "kind": "ethernet",
+            "speed_mbps": 1000,
+            "mac": "6c:2b:59:64:ee:0e",
+            "pcie_address": "0000:01:00.0"
+          }
+        ],
+        "firmware": [
+          {
+            "component": "BIOS",
+            "vendor": "Dell Inc.",
+            "version": "1.1.4",
+            "date": "12/06/2018"
+          },
+          {
+            "component": "ATA drive",
+            "vendor": "",
+            "version": "SFDM1B3B",
+            "updatable": true,
+            "device_name": "64GB SATA Flash Drive"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel Corporation",
+            "version": "03",
+            "updatable": false,
+            "device_name": "GeminiLake [UHD Graphics 605]"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "KEK CA"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": true,
+            "device_name": "Key Exchange Key"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel",
+            "version": "0x00000042",
+            "updatable": false,
+            "device_name": "Pentium Silver J5005 CPU @ 1.50GHz"
+          },
+          {
+            "component": "UEFI Platform Key",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": false,
+            "device_name": "Platform Key"
+          },
+          {
+            "component": "UEFI System Resource Table device (updated via NVRAM)",
+            "vendor": "Dell",
+            "version": "1.1.4",
+            "updatable": true,
+            "device_name": "System Firmware"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Nuvoton Technology",
+            "version": "7.2.0.1",
+            "updatable": true,
+            "device_name": "TPM"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "UEFI CA"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": true,
+            "device_name": "UEFI DB"
+          },
+          {
+            "component": "UEFI revocation database",
+            "vendor": "",
+            "version": "20160809",
+            "updatable": true,
+            "device_name": "UEFI dbx"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "Windows Production PCA"
+          }
+        ],
+        "memory": {
+          "slots": [
+            {
+              "locator": "SODIMM1",
+              "populated": true,
+              "size_mb": 4096,
+              "memory_type": "DDR4",
+              "form_factor": "SODIMM",
+              "speed_mts": 2400,
+              "manufacturer": "Samsung"
+            },
+            {
+              "locator": "SODIMM2",
+              "populated": true,
+              "size_mb": 4096,
+              "memory_type": "DDR4",
+              "form_factor": "SODIMM",
+              "speed_mts": 2400,
+              "manufacturer": "Samsung"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "stone-topaz-butte",
+      "id": "33e0c974-47f7-5d4b-91bc-5e766a384107",
+      "endpoint": "http://192.168.1.111:7185",
+      "core": {
+        "stone_id": "33e0c974-47f7-5d4b-91bc-5e766a384107",
+        "stone_name": "stone-topaz-butte",
+        "hardware": {
+          "cpu": {
+            "model": "Intel(R) Pentium(R) Silver J5005 CPU @ 1.50GHz",
+            "cores": 4,
+            "architecture": "x86_64",
+            "features": [
+              "fpu",
+              "vme",
+              "de",
+              "pse",
+              "tsc",
+              "msr",
+              "pae",
+              "mce",
+              "cx8",
+              "apic",
+              "sep",
+              "mtrr",
+              "pge",
+              "mca",
+              "cmov",
+              "pat",
+              "pse36",
+              "clflush",
+              "dts",
+              "acpi",
+              "mmx",
+              "fxsr",
+              "sse",
+              "sse2",
+              "ss",
+              "ht",
+              "tm",
+              "pbe",
+              "syscall",
+              "nx",
+              "pdpe1gb",
+              "rdtscp",
+              "lm",
+              "constant_tsc",
+              "art",
+              "arch_perfmon",
+              "pebs",
+              "bts",
+              "rep_good",
+              "nopl",
+              "xtopology",
+              "nonstop_tsc",
+              "cpuid",
+              "aperfmperf",
+              "tsc_known_freq",
+              "pni",
+              "pclmulqdq",
+              "dtes64",
+              "monitor",
+              "ds_cpl",
+              "vmx",
+              "est",
+              "tm2",
+              "ssse3",
+              "sdbg",
+              "cx16",
+              "xtpr",
+              "pdcm",
+              "sse4_1",
+              "sse4_2",
+              "x2apic",
+              "movbe",
+              "popcnt",
+              "tsc_deadline_timer",
+              "aes",
+              "xsave",
+              "rdrand",
+              "lahf_lm",
+              "3dnowprefetch",
+              "cpuid_fault",
+              "cat_l2",
+              "pti",
+              "cdp_l2",
+              "ssbd",
+              "ibrs",
+              "ibpb",
+              "stibp",
+              "ibrs_enhanced",
+              "tpr_shadow",
+              "flexpriority",
+              "ept",
+              "vpid",
+              "ept_ad",
+              "fsgsbase",
+              "tsc_adjust",
+              "smep",
+              "erms",
+              "mpx",
+              "rdt_a",
+              "rdseed",
+              "smap",
+              "clflushopt",
+              "intel_pt",
+              "sha_ni",
+              "xsaveopt",
+              "xsavec",
+              "xgetbv1",
+              "xsaves",
+              "dtherm",
+              "ida",
+              "arat",
+              "pln",
+              "pts",
+              "vnmi",
+              "umip",
+              "rdpid",
+              "md_clear",
+              "arch_capabilities"
+            ]
+          },
+          "memory": {
+            "total_mb": 7769
+          },
+          "gpus": [
+            {
+              "vendor": "Intel",
+              "model": "Intel Corporation GeminiLake [UHD Graphics 605] (rev 03)",
+              "capabilities": [
+                "vulkan"
+              ]
+            }
+          ],
+          "disk": {
+            "total_gb": 53,
+            "disk_type": "Unknown"
+          },
+          "swap_mb": 3055,
+          "ai_capabilities": {
+            "runtimes": [],
+            "vendors": [
+              "intel"
+            ],
+            "total_vram_mb": 0,
+            "gpu_count": 0,
+            "detection_complete": true
+          },
+          "system_manufacturer": "Dell Inc.",
+          "system_product": "Wyse 5070 Thin Client"
+        },
+        "runtime": {
+          "docker_version": "26.1.5+dfsg1",
+          "os": "linux/Debian GNU/Linux 13 (trixie)",
+          "kernel": "6.12.69+deb13-amd64"
+        },
+        "detection_status": "complete"
+      },
+      "topology": {
+        "fingerprint": "b0d86e1dc9a206b12dedb38ffb4ae6a44000ee5140a24a492517390b7c4c2c83",
+        "probe_version": 4,
+        "probed_at": "2026-06-24T22:32:13.907192817+00:00",
+        "status": "complete",
+        "system": {
+          "manufacturer": "Dell Inc.",
+          "product": "Wyse 5070 Thin Client",
+          "serial": "HRX6H13",
+          "uuid": "Uuid(4c4c4544-0052-5810-8036-c8c04f483133)",
+          "bios_version": "1.4.2",
+          "bios_date": "12/03/2019",
+          "chassis_type": "desktop",
+          "board_manufacturer": "Dell Inc.",
+          "board_product": "02D0WN"
+        },
+        "expansion": {
+          "pcie": [
+            {
+              "address": "0000:00:17.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Signal processing controller",
+              "device_name": "Celeron/Pentium Silver Processor I2C 4",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31b4",
+              "driver": "intel-lpss"
+            },
+            {
+              "address": "0000:00:1c.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "System peripheral",
+              "device_name": "Celeron/Pentium Silver Processor SDA Standard Compliant SD Host Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31cc",
+              "driver": "sdhci-pci"
+            },
+            {
+              "address": "0000:00:1f.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Bridge",
+              "device_name": "Celeron/Pentium Silver Processor LPC Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31e8"
+            },
+            {
+              "address": "0000:01:00.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Network controller",
+              "device_name": "RTL8111/8168/8211/8411 PCI Express Gigabit Ethernet Controller",
+              "vendor_name": "Realtek Semiconductor Co., Ltd.",
+              "device_id": "10ec:8168",
+              "driver": "r8169"
+            },
+            {
+              "address": "0000:00:17.3",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Signal processing controller",
+              "device_name": "Celeron/Pentium Silver Processor I2C 7",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31ba",
+              "driver": "intel-lpss"
+            },
+            {
+              "address": "0000:00:0f.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Communication controller",
+              "device_name": "Celeron/Pentium Silver Processor Trusted Execution Engine Interface",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:319a",
+              "driver": "mei_me"
+            },
+            {
+              "address": "0000:00:00.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Bridge",
+              "device_name": "Gemini Lake Host Bridge",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31f0"
+            },
+            {
+              "address": "0000:00:12.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Mass storage controller",
+              "device_name": "Celeron/Pentium Silver Processor SATA Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31e3",
+              "driver": "ahci"
+            },
+            {
+              "address": "0000:00:1f.1",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "Celeron/Pentium Silver Processor Gaussian Mixture Model",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31d4",
+              "driver": "i801_smbus"
+            },
+            {
+              "address": "0000:00:15.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "Celeron/Pentium Silver Processor USB 3.0 xHCI Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31a8",
+              "driver": "xhci_hcd"
+            },
+            {
+              "address": "0000:00:0e.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Multimedia controller",
+              "device_name": "Celeron/Pentium Silver Processor High Definition Audio",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3198",
+              "driver": "snd_hda_intel"
+            },
+            {
+              "address": "0000:00:00.3",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "System peripheral",
+              "device_name": "Celeron/Pentium Silver Processor Gaussian Mixture Model",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3190"
+            },
+            {
+              "address": "0000:00:02.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "VGA compatible controller",
+              "device_name": "GeminiLake [UHD Graphics 605]",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3184",
+              "driver": "i915"
+            },
+            {
+              "address": "0000:00:14.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Bridge",
+              "device_name": "Gemini Lake PCI Express Root Port",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31d6",
+              "driver": "pcieport"
+            }
+          ],
+          "m2": [
+            {
+              "designation": "SLOT2_M.2",
+              "key": "M",
+              "in_use": false
+            }
+          ],
+          "usb": {
+            "ports": [
+              {
+                "version": "1.1",
+                "count": 1
+              },
+              {
+                "version": "2.0",
+                "count": 2
+              },
+              {
+                "version": "3.0",
+                "count": 2
+              }
+            ],
+            "connected_devices": [
+              {
+                "vendor": "0bda",
+                "product": "4-Port USB 3.0 Hub",
+                "bus_version": "3.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "2-Port USB 3.0 Hub",
+                "bus_version": "3.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "4-Port USB 2.0 Hub",
+                "bus_version": "2.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "2-Port USB 2.0 Hub",
+                "bus_version": "2.0"
+              },
+              {
+                "vendor": "1a86",
+                "product": "USB Serial",
+                "bus_version": "1.1"
+              }
+            ]
+          }
+        },
+        "network": [
+          {
+            "name": "enp1s0",
+            "kind": "ethernet",
+            "speed_mbps": 1000,
+            "mac": "f0:d4:e2:fa:ec:c5",
+            "pcie_address": "0000:01:00.0"
+          }
+        ],
+        "firmware": [
+          {
+            "component": "BIOS",
+            "vendor": "Dell Inc.",
+            "version": "1.4.2",
+            "date": "12/03/2019"
+          },
+          {
+            "component": "ATA drive",
+            "vendor": "",
+            "version": "SFDM1B3B",
+            "updatable": true,
+            "device_name": "64GB SATA Flash Drive"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel Corporation",
+            "version": "03",
+            "updatable": false,
+            "device_name": "GeminiLake [UHD Graphics 605]"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "KEK CA"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": true,
+            "device_name": "Key Exchange Key"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel",
+            "version": "0x00000042",
+            "updatable": false,
+            "device_name": "Pentium Silver J5005 CPU @ 1.50GHz"
+          },
+          {
+            "component": "UEFI Platform Key",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": false,
+            "device_name": "Platform Key"
+          },
+          {
+            "component": "UEFI System Resource Table device (updated via NVRAM)",
+            "vendor": "Dell",
+            "version": "1.4.2",
+            "updatable": true,
+            "device_name": "System Firmware"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Nuvoton Technology",
+            "version": "7.2.0.1",
+            "updatable": true,
+            "device_name": "TPM"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "UEFI CA"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": true,
+            "device_name": "UEFI DB"
+          },
+          {
+            "component": "UEFI revocation database",
+            "vendor": "",
+            "version": "20160809",
+            "updatable": true,
+            "device_name": "UEFI dbx"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "Windows Production PCA"
+          }
+        ],
+        "memory": {
+          "slots": [
+            {
+              "locator": "SODIMM1",
+              "populated": true,
+              "size_mb": 4096,
+              "memory_type": "DDR4",
+              "form_factor": "SODIMM",
+              "speed_mts": 2400,
+              "manufacturer": "Micron_Technolog"
+            },
+            {
+              "locator": "SODIMM2",
+              "populated": true,
+              "size_mb": 4096,
+              "memory_type": "DDR4",
+              "form_factor": "SODIMM",
+              "speed_mts": 2400,
+              "manufacturer": "Micron_Technolog"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "stone-obsidian-summit",
+      "id": "bebd3717-1357-5c57-bf8b-b5649e0152a6",
+      "endpoint": "http://192.168.1.195:7185",
+      "core": {
+        "stone_id": "bebd3717-1357-5c57-bf8b-b5649e0152a6",
+        "stone_name": "stone-obsidian-summit",
+        "hardware": {
+          "cpu": {
+            "model": "13th Gen Intel(R) Core(TM) i5-13500",
+            "cores": 20,
+            "architecture": "x86_64",
+            "features": [
+              "fpu",
+              "vme",
+              "de",
+              "pse",
+              "tsc",
+              "msr",
+              "pae",
+              "mce",
+              "cx8",
+              "apic",
+              "sep",
+              "mtrr",
+              "pge",
+              "mca",
+              "cmov",
+              "pat",
+              "pse36",
+              "clflush",
+              "dts",
+              "acpi",
+              "mmx",
+              "fxsr",
+              "sse",
+              "sse2",
+              "ss",
+              "ht",
+              "tm",
+              "pbe",
+              "syscall",
+              "nx",
+              "pdpe1gb",
+              "rdtscp",
+              "lm",
+              "constant_tsc",
+              "art",
+              "arch_perfmon",
+              "pebs",
+              "bts",
+              "rep_good",
+              "nopl",
+              "xtopology",
+              "nonstop_tsc",
+              "cpuid",
+              "aperfmperf",
+              "tsc_known_freq",
+              "pni",
+              "pclmulqdq",
+              "dtes64",
+              "monitor",
+              "ds_cpl",
+              "vmx",
+              "smx",
+              "est",
+              "tm2",
+              "ssse3",
+              "sdbg",
+              "fma",
+              "cx16",
+              "xtpr",
+              "pdcm",
+              "pcid",
+              "sse4_1",
+              "sse4_2",
+              "x2apic",
+              "movbe",
+              "popcnt",
+              "tsc_deadline_timer",
+              "aes",
+              "xsave",
+              "avx",
+              "f16c",
+              "rdrand",
+              "lahf_lm",
+              "abm",
+              "3dnowprefetch",
+              "cpuid_fault",
+              "epb",
+              "ssbd",
+              "ibrs",
+              "ibpb",
+              "stibp",
+              "ibrs_enhanced",
+              "tpr_shadow",
+              "flexpriority",
+              "ept",
+              "vpid",
+              "ept_ad",
+              "fsgsbase",
+              "tsc_adjust",
+              "bmi1",
+              "avx2",
+              "smep",
+              "bmi2",
+              "erms",
+              "invpcid",
+              "rdseed",
+              "adx",
+              "smap",
+              "clflushopt",
+              "clwb",
+              "intel_pt",
+              "sha_ni",
+              "xsaveopt",
+              "xsavec",
+              "xgetbv1",
+              "xsaves",
+              "split_lock_detect",
+              "user_shstk",
+              "avx_vnni",
+              "dtherm",
+              "ida",
+              "arat",
+              "pln",
+              "pts",
+              "hwp",
+              "hwp_notify",
+              "hwp_act_window",
+              "hwp_epp",
+              "hwp_pkg_req",
+              "hfi",
+              "vnmi",
+              "umip",
+              "pku",
+              "ospke",
+              "waitpkg",
+              "gfni",
+              "vaes",
+              "vpclmulqdq",
+              "rdpid",
+              "movdiri",
+              "movdir64b",
+              "fsrm",
+              "md_clear",
+              "serialize",
+              "pconfig",
+              "arch_lbr",
+              "ibt",
+              "flush_l1d",
+              "arch_capabilities"
+            ]
+          },
+          "memory": {
+            "total_mb": 15713
+          },
+          "gpus": [
+            {
+              "vendor": "Intel",
+              "model": "Intel Corporation AlderLake-S GT1 (rev 0c)",
+              "capabilities": [
+                "vulkan"
+              ]
+            }
+          ],
+          "disk": {
+            "total_gb": 440,
+            "disk_type": "SSD"
+          },
+          "swap_mb": 16103,
+          "ai_capabilities": {
+            "runtimes": [],
+            "vendors": [
+              "intel"
+            ],
+            "total_vram_mb": 0,
+            "gpu_count": 0,
+            "detection_complete": true
+          }
+        },
+        "runtime": {
+          "os": "linux/Debian GNU/Linux 13 (trixie)",
+          "kernel": "6.12.90+deb13.1-amd64"
+        },
+        "detection_status": "complete"
+      },
+      "topology": {
+        "fingerprint": "eda51593ce621b1af20f7ed2f532b67cd4edb5ed975c3b92551cc1775267140c",
+        "probe_version": 4,
+        "probed_at": "2026-06-19T15:12:35.114392634+00:00",
+        "status": "complete",
+        "system": {
+          "manufacturer": "ASUS",
+          "product": "System Product Name",
+          "serial": "System Serial Number",
+          "uuid": "Uuid(a1e8682a-2342-d224-8985-a0ad9f85b177)",
+          "bios_version": "0401",
+          "bios_date": "04/01/2025",
+          "chassis_type": "desktop",
+          "board_manufacturer": "ASUSTeK COMPUTER INC.",
+          "board_product": "B760M-AYW WIFI D4 II"
+        },
+        "expansion": {
+          "pcie": [
+            {
+              "address": "0000:03:00.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Network controller",
+              "device_name": "MT7902 802.11ax PCIe Wireless Network Adapter [Filogic 310]",
+              "vendor_name": "MEDIATEK Corp.",
+              "device_id": "14c3:7902"
+            },
+            {
+              "address": "0000:00:17.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Mass storage controller",
+              "device_name": "700 Series Chipset Family SATA Controller (AHCI)",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a62",
+              "driver": "ahci"
+            },
+            {
+              "address": "0000:00:1c.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Bridge",
+              "device_name": "700 Series Chipset Family PCIe Root Port #1",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a38",
+              "driver": "pcieport"
+            },
+            {
+              "address": "0000:00:1f.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Bridge",
+              "device_name": "B760 Chipset eSPI Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a06"
+            },
+            {
+              "address": "0000:00:1c.7",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 2,
+              "bandwidth_gbps": 4.0,
+              "class": "Bridge",
+              "device_name": "700 Series Chipset Family PCIe Root Port #8",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a3f",
+              "driver": "pcieport"
+            },
+            {
+              "address": "0000:00:16.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Communication controller",
+              "device_name": "700 Series Chipset Family CSME HECI #1",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a68",
+              "driver": "mei_me"
+            },
+            {
+              "address": "0000:01:00.0",
+              "physical_width": 4,
+              "negotiated_width": 4,
+              "generation": 4,
+              "bandwidth_gbps": 63.0,
+              "class": "Mass storage controller",
+              "device_name": "P5 Plus NVMe PCIe SSD",
+              "vendor_name": "Micron/Crucial Technology",
+              "device_id": "c0a9:5407",
+              "driver": "nvme"
+            },
+            {
+              "address": "0000:00:1f.5",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "700 Series Chipset Family SPI (flash) Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a24"
+            },
+            {
+              "address": "0000:00:1f.3",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Multimedia controller",
+              "device_name": "700 Series Chipset Family HD Audio Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a50",
+              "driver": "snd_hda_intel"
+            },
+            {
+              "address": "0000:00:00.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Bridge",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:4640"
+            },
+            {
+              "address": "0000:00:1c.1",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Bridge",
+              "device_name": "700 Series Chipset Family PCIe Root Port #2",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a39",
+              "driver": "pcieport"
+            },
+            {
+              "address": "0000:00:15.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "700 Series Chipset Family I2C Controller #0",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a4c",
+              "driver": "intel-lpss"
+            },
+            {
+              "address": "0000:00:1a.0",
+              "physical_width": 4,
+              "negotiated_width": 4,
+              "generation": 4,
+              "bandwidth_gbps": 63.0,
+              "class": "Bridge",
+              "device_name": "700 Series Chipset Family PCIe Root Port #25",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a48",
+              "driver": "pcieport"
+            },
+            {
+              "address": "0000:00:1d.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Bridge",
+              "device_name": "700 Series Chipset Family PCIe Root Port #15",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a36",
+              "driver": "pcieport"
+            },
+            {
+              "address": "0000:00:0e.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Mass storage controller",
+              "device_name": "Volume Management Device NVMe RAID Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:467f",
+              "driver": "vmd"
+            },
+            {
+              "address": "0000:00:14.2",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Memory controller",
+              "device_name": "700 Series Chipset Family Shared SRAM",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a27"
+            },
+            {
+              "address": "0000:04:00.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 2,
+              "bandwidth_gbps": 4.0,
+              "class": "Network controller",
+              "device_name": "RTL8125 2.5GbE Controller",
+              "vendor_name": "Realtek Semiconductor Co., Ltd.",
+              "device_id": "10ec:8125",
+              "driver": "r8169"
+            },
+            {
+              "address": "0000:00:02.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "VGA compatible controller",
+              "device_name": "Alder Lake-S GT1 [UHD Graphics 770]",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:4680",
+              "driver": "i915"
+            },
+            {
+              "address": "0000:00:14.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "700 Series Chipset Family USB 3.2 Gen 2x2 (20 Gbs) xHCI Host Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a60",
+              "driver": "xhci_hcd"
+            },
+            {
+              "address": "0000:00:1f.4",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "700 Series Chipset Family SMBus",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:7a23",
+              "driver": "i801_smbus"
+            },
+            {
+              "address": "0000:00:0a.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Signal processing controller",
+              "device_name": "Platform Monitoring Technology",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:467d",
+              "driver": "intel_vsec"
+            }
+          ],
+          "m2": [
+            {
+              "designation": "M.2_1",
+              "key": "M",
+              "in_use": false
+            },
+            {
+              "designation": "M.2_2",
+              "key": "M",
+              "in_use": true
+            },
+            {
+              "designation": "M.2(WIFI)",
+              "key": "E",
+              "in_use": true
+            }
+          ],
+          "usb": {
+            "ports": [
+              {
+                "version": "1.1",
+                "count": 2
+              },
+              {
+                "version": "2.0",
+                "count": 1
+              }
+            ],
+            "connected_devices": [
+              {
+                "vendor": "13d3",
+                "product": "Wireless_Device",
+                "bus_version": "2.0"
+              },
+              {
+                "vendor": "0b05",
+                "product": "AURA LED Controller",
+                "bus_version": "1.1"
+              },
+              {
+                "vendor": "046d",
+                "product": "USB Receiver",
+                "bus_version": "1.1"
+              }
+            ]
+          }
+        },
+        "network": [
+          {
+            "name": "enp4s0",
+            "kind": "ethernet",
+            "mac": "a0:ad:9f:85:b1:77",
+            "pcie_address": "0000:04:00.0"
+          }
+        ],
+        "firmware": [
+          {
+            "component": "BIOS",
+            "vendor": "American Megatrends Inc.",
+            "version": "0401",
+            "date": "04/01/2025"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel",
+            "version": "0x0000003d",
+            "updatable": false,
+            "device_name": "13th Gen Intel Core™ i5-13500"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Unknown",
+            "version": "0",
+            "updatable": true,
+            "device_name": "ASUSTeK KEK Certificate"
+          },
+          {
+            "component": "UEFI Platform Key",
+            "vendor": "Unknown",
+            "version": "0",
+            "updatable": false,
+            "device_name": "ASUSTeK PK Certificate"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Unknown",
+            "version": "0",
+            "updatable": true,
+            "device_name": "ASUSTeK SW Key Certificate"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel Corporation",
+            "version": "0c",
+            "updatable": false,
+            "device_name": "AlderLake-S GT1"
+          },
+          {
+            "component": "NVM Express solid state drive",
+            "vendor": "Micron/Crucial Technology",
+            "version": "P7CR403",
+            "updatable": true,
+            "device_name": "CT500P5PSSD8"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2023",
+            "updatable": true,
+            "device_name": "KEK CA"
+          },
+          {
+            "component": "Generation number based revocation mechanism",
+            "vendor": "",
+            "version": "1.7.4",
+            "updatable": true,
+            "device_name": "SBAT"
+          },
+          {
+            "component": "UEFI System Resource Table device (Updated via capsule-on-disk)",
+            "vendor": "ASUS",
+            "version": "1025",
+            "updatable": true,
+            "device_name": "System Firmware"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel",
+            "version": "600.18.32.2473",
+            "updatable": false,
+            "device_name": "TPM"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2023",
+            "updatable": true,
+            "device_name": "UEFI CA"
+          },
+          {
+            "component": "UEFI System Resource Table device (Updated via capsule-on-disk)",
+            "vendor": "",
+            "version": "1",
+            "updatable": true,
+            "device_name": "UEFI Device Firmware"
+          },
+          {
+            "component": "UEFI System Resource Table device (Updated via capsule-on-disk)",
+            "vendor": "",
+            "version": "1",
+            "updatable": true,
+            "device_name": "UEFI Device Firmware"
+          },
+          {
+            "component": "UEFI System Resource Table device (Updated via capsule-on-disk)",
+            "vendor": "",
+            "version": "18876841",
+            "updatable": true,
+            "device_name": "UEFI Device Firmware"
+          },
+          {
+            "component": "UEFI revocation database",
+            "vendor": "",
+            "version": "20220801",
+            "updatable": true,
+            "device_name": "UEFI dbx"
+          },
+          {
+            "component": "Miniaturised USB wireless receiver",
+            "vendor": "",
+            "version": "RQR24.11_B0036",
+            "updatable": true,
+            "device_name": "Unifying Receiver"
+          },
+          {
+            "component": "ATA drive",
+            "vendor": "Western Digital",
+            "version": "03.01A03",
+            "updatable": true,
+            "device_name": "WD10EZEX-60M2NA0"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "Windows Production PCA"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2023",
+            "updatable": true,
+            "device_name": "Windows UEFI CA"
+          }
+        ],
+        "memory": {
+          "slots": [
+            {
+              "locator": "Controller0-ChannelA-DIMM0",
+              "populated": true,
+              "size_mb": 8192,
+              "memory_type": "DDR4",
+              "form_factor": "DIMM",
+              "speed_mts": 2133,
+              "manufacturer": "G Skill Intl"
+            },
+            {
+              "locator": "Controller1-ChannelA-DIMM0",
+              "populated": true,
+              "size_mb": 8192,
+              "memory_type": "DDR4",
+              "form_factor": "DIMM",
+              "speed_mts": 2133,
+              "manufacturer": "G Skill Intl"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "stone-limpid-dune",
+      "id": "ac71dfd8-c0f0-5205-82bd-ef529a4f9edb",
+      "endpoint": "http://192.168.1.97:7185",
+      "core": {
+        "stone_id": "ac71dfd8-c0f0-5205-82bd-ef529a4f9edb",
+        "stone_name": "stone-limpid-dune",
+        "hardware": {
+          "cpu": {
+            "model": "Intel(R) Pentium(R) Silver J5005 CPU @ 1.50GHz",
+            "cores": 4,
+            "architecture": "x86_64",
+            "features": [
+              "fpu",
+              "vme",
+              "de",
+              "pse",
+              "tsc",
+              "msr",
+              "pae",
+              "mce",
+              "cx8",
+              "apic",
+              "sep",
+              "mtrr",
+              "pge",
+              "mca",
+              "cmov",
+              "pat",
+              "pse36",
+              "clflush",
+              "dts",
+              "acpi",
+              "mmx",
+              "fxsr",
+              "sse",
+              "sse2",
+              "ss",
+              "ht",
+              "tm",
+              "pbe",
+              "syscall",
+              "nx",
+              "pdpe1gb",
+              "rdtscp",
+              "lm",
+              "constant_tsc",
+              "art",
+              "arch_perfmon",
+              "pebs",
+              "bts",
+              "rep_good",
+              "nopl",
+              "xtopology",
+              "nonstop_tsc",
+              "cpuid",
+              "aperfmperf",
+              "tsc_known_freq",
+              "pni",
+              "pclmulqdq",
+              "dtes64",
+              "monitor",
+              "ds_cpl",
+              "vmx",
+              "est",
+              "tm2",
+              "ssse3",
+              "sdbg",
+              "cx16",
+              "xtpr",
+              "pdcm",
+              "sse4_1",
+              "sse4_2",
+              "x2apic",
+              "movbe",
+              "popcnt",
+              "tsc_deadline_timer",
+              "aes",
+              "xsave",
+              "rdrand",
+              "lahf_lm",
+              "3dnowprefetch",
+              "cpuid_fault",
+              "cat_l2",
+              "pti",
+              "cdp_l2",
+              "ssbd",
+              "ibrs",
+              "ibpb",
+              "stibp",
+              "ibrs_enhanced",
+              "tpr_shadow",
+              "flexpriority",
+              "ept",
+              "vpid",
+              "ept_ad",
+              "fsgsbase",
+              "tsc_adjust",
+              "smep",
+              "erms",
+              "mpx",
+              "rdt_a",
+              "rdseed",
+              "smap",
+              "clflushopt",
+              "intel_pt",
+              "sha_ni",
+              "xsaveopt",
+              "xsavec",
+              "xgetbv1",
+              "xsaves",
+              "dtherm",
+              "ida",
+              "arat",
+              "pln",
+              "pts",
+              "vnmi",
+              "umip",
+              "rdpid",
+              "md_clear",
+              "arch_capabilities"
+            ]
+          },
+          "memory": {
+            "total_mb": 7769
+          },
+          "gpus": [
+            {
+              "vendor": "Intel",
+              "model": "Intel Corporation GeminiLake [UHD Graphics 605] (rev 03)",
+              "capabilities": [
+                "vulkan"
+              ]
+            }
+          ],
+          "disk": {
+            "total_gb": 53,
+            "disk_type": "Unknown"
+          },
+          "swap_mb": 3055,
+          "ai_capabilities": {
+            "runtimes": [],
+            "vendors": [
+              "intel"
+            ],
+            "total_vram_mb": 0,
+            "gpu_count": 0,
+            "detection_complete": true
+          },
+          "system_manufacturer": "Dell Inc.",
+          "system_product": "Wyse 5070 Thin Client"
+        },
+        "runtime": {
+          "docker_version": "26.1.5+dfsg1",
+          "os": "linux/Debian GNU/Linux 13 (trixie)",
+          "kernel": "6.12.69+deb13-amd64"
+        },
+        "detection_status": "complete"
+      },
+      "topology": {
+        "fingerprint": "b0d86e1dc9a206b12dedb38ffb4ae6a44000ee5140a24a492517390b7c4c2c83",
+        "probe_version": 4,
+        "probed_at": "2026-04-06T19:25:15.935987021+00:00",
+        "status": "complete",
+        "system": {
+          "manufacturer": "Dell Inc.",
+          "product": "Wyse 5070 Thin Client",
+          "serial": "6GX3P23",
+          "uuid": "Uuid(4c4c4544-0047-5810-8033-b6c04f503233)",
+          "bios_version": "1.4.2",
+          "bios_date": "12/03/2019",
+          "chassis_type": "desktop",
+          "board_manufacturer": "Dell Inc.",
+          "board_product": "02D0WN"
+        },
+        "expansion": {
+          "pcie": [
+            {
+              "address": "0000:00:17.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Signal processing controller",
+              "device_name": "Celeron/Pentium Silver Processor I2C 4",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31b4",
+              "driver": "intel-lpss"
+            },
+            {
+              "address": "0000:00:1c.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "System peripheral",
+              "device_name": "Celeron/Pentium Silver Processor SDA Standard Compliant SD Host Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31cc",
+              "driver": "sdhci-pci"
+            },
+            {
+              "address": "0000:00:1f.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Bridge",
+              "device_name": "Celeron/Pentium Silver Processor LPC Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31e8"
+            },
+            {
+              "address": "0000:01:00.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Network controller",
+              "device_name": "RTL8111/8168/8211/8411 PCI Express Gigabit Ethernet Controller",
+              "vendor_name": "Realtek Semiconductor Co., Ltd.",
+              "device_id": "10ec:8168",
+              "driver": "r8169"
+            },
+            {
+              "address": "0000:00:17.3",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Signal processing controller",
+              "device_name": "Celeron/Pentium Silver Processor I2C 7",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31ba",
+              "driver": "intel-lpss"
+            },
+            {
+              "address": "0000:00:0f.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Communication controller",
+              "device_name": "Celeron/Pentium Silver Processor Trusted Execution Engine Interface",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:319a",
+              "driver": "mei_me"
+            },
+            {
+              "address": "0000:00:00.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Bridge",
+              "device_name": "Gemini Lake Host Bridge",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31f0"
+            },
+            {
+              "address": "0000:00:12.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Mass storage controller",
+              "device_name": "Celeron/Pentium Silver Processor SATA Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31e3",
+              "driver": "ahci"
+            },
+            {
+              "address": "0000:00:1f.1",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "Celeron/Pentium Silver Processor Gaussian Mixture Model",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31d4",
+              "driver": "i801_smbus"
+            },
+            {
+              "address": "0000:00:15.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "Celeron/Pentium Silver Processor USB 3.0 xHCI Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31a8",
+              "driver": "xhci_hcd"
+            },
+            {
+              "address": "0000:00:0e.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Multimedia controller",
+              "device_name": "Celeron/Pentium Silver Processor High Definition Audio",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3198",
+              "driver": "snd_hda_intel"
+            },
+            {
+              "address": "0000:00:00.3",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "System peripheral",
+              "device_name": "Celeron/Pentium Silver Processor Gaussian Mixture Model",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3190"
+            },
+            {
+              "address": "0000:00:02.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "VGA compatible controller",
+              "device_name": "GeminiLake [UHD Graphics 605]",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3184",
+              "driver": "i915"
+            },
+            {
+              "address": "0000:00:14.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Bridge",
+              "device_name": "Gemini Lake PCI Express Root Port",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31d6",
+              "driver": "pcieport"
+            }
+          ],
+          "m2": [
+            {
+              "designation": "SLOT2_M.2",
+              "key": "M",
+              "in_use": false
+            }
+          ],
+          "usb": {
+            "ports": [
+              {
+                "version": "1.1",
+                "count": 1
+              },
+              {
+                "version": "2.0",
+                "count": 2
+              },
+              {
+                "version": "3.0",
+                "count": 2
+              }
+            ],
+            "connected_devices": [
+              {
+                "vendor": "0bda",
+                "product": "4-Port USB 3.0 Hub",
+                "bus_version": "3.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "2-Port USB 3.0 Hub",
+                "bus_version": "3.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "4-Port USB 2.0 Hub",
+                "bus_version": "2.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "2-Port USB 2.0 Hub",
+                "bus_version": "2.0"
+              },
+              {
+                "vendor": "1a86",
+                "product": "USB Serial",
+                "bus_version": "1.1"
+              }
+            ]
+          }
+        },
+        "network": [
+          {
+            "name": "enp1s0",
+            "kind": "ethernet",
+            "speed_mbps": 1000,
+            "mac": "a4:bb:6d:1c:c0:28",
+            "pcie_address": "0000:01:00.0"
+          }
+        ],
+        "firmware": [
+          {
+            "component": "BIOS",
+            "vendor": "Dell Inc.",
+            "version": "1.4.2",
+            "date": "12/03/2019"
+          },
+          {
+            "component": "ATA drive",
+            "vendor": "",
+            "version": "SFDM1B4D",
+            "updatable": true,
+            "device_name": "64GB SATA Flash Drive"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel Corporation",
+            "version": "03",
+            "updatable": false,
+            "device_name": "GeminiLake [UHD Graphics 605]"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "KEK CA"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": true,
+            "device_name": "Key Exchange Key"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel",
+            "version": "0x00000042",
+            "updatable": false,
+            "device_name": "Pentium Silver J5005 CPU @ 1.50GHz"
+          },
+          {
+            "component": "UEFI Platform Key",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": false,
+            "device_name": "Platform Key"
+          },
+          {
+            "component": "UEFI System Resource Table device (updated via NVRAM)",
+            "vendor": "Dell",
+            "version": "1.4.2",
+            "updatable": true,
+            "device_name": "System Firmware"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Nuvoton Technology",
+            "version": "7.2.0.2",
+            "updatable": true,
+            "device_name": "TPM"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "UEFI CA"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": true,
+            "device_name": "UEFI DB"
+          },
+          {
+            "component": "UEFI revocation database",
+            "vendor": "",
+            "version": "20160809",
+            "updatable": true,
+            "device_name": "UEFI dbx"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "Windows Production PCA"
+          }
+        ],
+        "memory": {
+          "slots": [
+            {
+              "locator": "SODIMM1",
+              "populated": true,
+              "size_mb": 4096,
+              "memory_type": "DDR4",
+              "form_factor": "SODIMM",
+              "speed_mts": 2400,
+              "manufacturer": "Micron_Technolog"
+            },
+            {
+              "locator": "SODIMM2",
+              "populated": true,
+              "size_mb": 4096,
+              "memory_type": "DDR4",
+              "form_factor": "SODIMM",
+              "speed_mts": 2400,
+              "manufacturer": "Micron_Technolog"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "stone-quartz-fen",
+      "id": "138d0681-6b9f-5963-85ad-d67410139c4f",
+      "endpoint": "http://192.168.1.168:7185",
+      "core": {
+        "stone_id": "138d0681-6b9f-5963-85ad-d67410139c4f",
+        "stone_name": "stone-quartz-fen",
+        "hardware": {
+          "cpu": {
+            "model": "Intel(R) Pentium(R) Silver J5005 CPU @ 1.50GHz",
+            "cores": 4,
+            "architecture": "x86_64",
+            "features": [
+              "fpu",
+              "vme",
+              "de",
+              "pse",
+              "tsc",
+              "msr",
+              "pae",
+              "mce",
+              "cx8",
+              "apic",
+              "sep",
+              "mtrr",
+              "pge",
+              "mca",
+              "cmov",
+              "pat",
+              "pse36",
+              "clflush",
+              "dts",
+              "acpi",
+              "mmx",
+              "fxsr",
+              "sse",
+              "sse2",
+              "ss",
+              "ht",
+              "tm",
+              "pbe",
+              "syscall",
+              "nx",
+              "pdpe1gb",
+              "rdtscp",
+              "lm",
+              "constant_tsc",
+              "art",
+              "arch_perfmon",
+              "pebs",
+              "bts",
+              "rep_good",
+              "nopl",
+              "xtopology",
+              "nonstop_tsc",
+              "cpuid",
+              "aperfmperf",
+              "tsc_known_freq",
+              "pni",
+              "pclmulqdq",
+              "dtes64",
+              "monitor",
+              "ds_cpl",
+              "vmx",
+              "est",
+              "tm2",
+              "ssse3",
+              "sdbg",
+              "cx16",
+              "xtpr",
+              "pdcm",
+              "sse4_1",
+              "sse4_2",
+              "x2apic",
+              "movbe",
+              "popcnt",
+              "tsc_deadline_timer",
+              "aes",
+              "xsave",
+              "rdrand",
+              "lahf_lm",
+              "3dnowprefetch",
+              "cpuid_fault",
+              "cat_l2",
+              "pti",
+              "cdp_l2",
+              "ssbd",
+              "ibrs",
+              "ibpb",
+              "stibp",
+              "ibrs_enhanced",
+              "tpr_shadow",
+              "flexpriority",
+              "ept",
+              "vpid",
+              "ept_ad",
+              "fsgsbase",
+              "tsc_adjust",
+              "smep",
+              "erms",
+              "mpx",
+              "rdt_a",
+              "rdseed",
+              "smap",
+              "clflushopt",
+              "intel_pt",
+              "sha_ni",
+              "xsaveopt",
+              "xsavec",
+              "xgetbv1",
+              "xsaves",
+              "dtherm",
+              "ida",
+              "arat",
+              "pln",
+              "pts",
+              "vnmi",
+              "umip",
+              "rdpid",
+              "md_clear",
+              "arch_capabilities"
+            ]
+          },
+          "memory": {
+            "total_mb": 7769
+          },
+          "gpus": [
+            {
+              "vendor": "Intel",
+              "model": "Intel Corporation GeminiLake [UHD Graphics 605] (rev 03)",
+              "capabilities": [
+                "vulkan"
+              ]
+            }
+          ],
+          "disk": {
+            "total_gb": 53,
+            "disk_type": "Unknown"
+          },
+          "swap_mb": 3055,
+          "ai_capabilities": {
+            "runtimes": [],
+            "vendors": [
+              "intel"
+            ],
+            "total_vram_mb": 0,
+            "gpu_count": 0,
+            "detection_complete": true
+          },
+          "system_manufacturer": "Dell Inc.",
+          "system_product": "Wyse 5070 Thin Client"
+        },
+        "runtime": {
+          "docker_version": "26.1.5+dfsg1",
+          "os": "linux/Debian GNU/Linux 13 (trixie)",
+          "kernel": "6.12.69+deb13-amd64"
+        },
+        "detection_status": "complete"
+      },
+      "topology": {
+        "fingerprint": "b0d86e1dc9a206b12dedb38ffb4ae6a44000ee5140a24a492517390b7c4c2c83",
+        "probe_version": 4,
+        "probed_at": "2026-04-06T19:20:43.741401236+00:00",
+        "status": "complete",
+        "system": {
+          "manufacturer": "Dell Inc.",
+          "product": "Wyse 5070 Thin Client",
+          "serial": "HD4T4Z2",
+          "uuid": "Uuid(4c4c4544-0044-3410-8054-c8c04f345a32)",
+          "bios_version": "1.1.4",
+          "bios_date": "12/06/2018",
+          "chassis_type": "desktop",
+          "board_manufacturer": "Dell Inc.",
+          "board_product": "02D0WN"
+        },
+        "expansion": {
+          "pcie": [
+            {
+              "address": "0000:00:17.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Signal processing controller",
+              "device_name": "Celeron/Pentium Silver Processor I2C 4",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31b4",
+              "driver": "intel-lpss"
+            },
+            {
+              "address": "0000:00:1c.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "System peripheral",
+              "device_name": "Celeron/Pentium Silver Processor SDA Standard Compliant SD Host Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31cc",
+              "driver": "sdhci-pci"
+            },
+            {
+              "address": "0000:00:1f.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Bridge",
+              "device_name": "Celeron/Pentium Silver Processor LPC Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31e8"
+            },
+            {
+              "address": "0000:01:00.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Network controller",
+              "device_name": "RTL8111/8168/8211/8411 PCI Express Gigabit Ethernet Controller",
+              "vendor_name": "Realtek Semiconductor Co., Ltd.",
+              "device_id": "10ec:8168",
+              "driver": "r8169"
+            },
+            {
+              "address": "0000:00:17.3",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Signal processing controller",
+              "device_name": "Celeron/Pentium Silver Processor I2C 7",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31ba",
+              "driver": "intel-lpss"
+            },
+            {
+              "address": "0000:00:0f.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Communication controller",
+              "device_name": "Celeron/Pentium Silver Processor Trusted Execution Engine Interface",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:319a",
+              "driver": "mei_me"
+            },
+            {
+              "address": "0000:00:00.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Bridge",
+              "device_name": "Gemini Lake Host Bridge",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31f0"
+            },
+            {
+              "address": "0000:00:12.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Mass storage controller",
+              "device_name": "Celeron/Pentium Silver Processor SATA Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31e3",
+              "driver": "ahci"
+            },
+            {
+              "address": "0000:00:1f.1",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "Celeron/Pentium Silver Processor Gaussian Mixture Model",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31d4",
+              "driver": "i801_smbus"
+            },
+            {
+              "address": "0000:00:15.0",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Serial bus controller",
+              "device_name": "Celeron/Pentium Silver Processor USB 3.0 xHCI Controller",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31a8",
+              "driver": "xhci_hcd"
+            },
+            {
+              "address": "0000:00:0e.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "Multimedia controller",
+              "device_name": "Celeron/Pentium Silver Processor High Definition Audio",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3198",
+              "driver": "snd_hda_intel"
+            },
+            {
+              "address": "0000:00:00.3",
+              "physical_width": 0,
+              "negotiated_width": 0,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "System peripheral",
+              "device_name": "Celeron/Pentium Silver Processor Gaussian Mixture Model",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3190"
+            },
+            {
+              "address": "0000:00:02.0",
+              "physical_width": 255,
+              "negotiated_width": 255,
+              "generation": 0,
+              "bandwidth_gbps": 0.0,
+              "class": "VGA compatible controller",
+              "device_name": "GeminiLake [UHD Graphics 605]",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:3184",
+              "driver": "i915"
+            },
+            {
+              "address": "0000:00:14.0",
+              "physical_width": 1,
+              "negotiated_width": 1,
+              "generation": 1,
+              "bandwidth_gbps": 2.0,
+              "class": "Bridge",
+              "device_name": "Gemini Lake PCI Express Root Port",
+              "vendor_name": "Intel Corporation",
+              "device_id": "8086:31d6",
+              "driver": "pcieport"
+            }
+          ],
+          "m2": [
+            {
+              "designation": "SLOT2_M.2",
+              "key": "M",
+              "in_use": false
+            }
+          ],
+          "usb": {
+            "ports": [
+              {
+                "version": "1.1",
+                "count": 1
+              },
+              {
+                "version": "2.0",
+                "count": 2
+              },
+              {
+                "version": "3.0",
+                "count": 2
+              }
+            ],
+            "connected_devices": [
+              {
+                "vendor": "0bda",
+                "product": "4-Port USB 3.0 Hub",
+                "bus_version": "3.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "2-Port USB 3.0 Hub",
+                "bus_version": "3.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "4-Port USB 2.0 Hub",
+                "bus_version": "2.0"
+              },
+              {
+                "vendor": "0bda",
+                "product": "2-Port USB 2.0 Hub",
+                "bus_version": "2.0"
+              },
+              {
+                "vendor": "1a86",
+                "product": "USB Serial",
+                "bus_version": "1.1"
+              }
+            ]
+          }
+        },
+        "network": [
+          {
+            "name": "enp1s0",
+            "kind": "ethernet",
+            "speed_mbps": 1000,
+            "mac": "e4:54:e8:26:63:f2",
+            "pcie_address": "0000:01:00.0"
+          }
+        ],
+        "firmware": [
+          {
+            "component": "BIOS",
+            "vendor": "Dell Inc.",
+            "version": "1.1.4",
+            "date": "12/06/2018"
+          },
+          {
+            "component": "ATA drive",
+            "vendor": "",
+            "version": "SFDM1B3B",
+            "updatable": true,
+            "device_name": "64GB SATA Flash Drive"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel Corporation",
+            "version": "03",
+            "updatable": false,
+            "device_name": "GeminiLake [UHD Graphics 605]"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "KEK CA"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": true,
+            "device_name": "Key Exchange Key"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Intel",
+            "version": "0x00000042",
+            "updatable": false,
+            "device_name": "Pentium Silver J5005 CPU @ 1.50GHz"
+          },
+          {
+            "component": "UEFI Platform Key",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": false,
+            "device_name": "Platform Key"
+          },
+          {
+            "component": "UEFI System Resource Table device (updated via NVRAM)",
+            "vendor": "Dell",
+            "version": "1.1.4",
+            "updatable": true,
+            "device_name": "System Firmware"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Nuvoton Technology",
+            "version": "7.2.0.1",
+            "updatable": true,
+            "device_name": "TPM"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "UEFI CA"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Dell",
+            "version": "0",
+            "updatable": true,
+            "device_name": "UEFI DB"
+          },
+          {
+            "component": "UEFI revocation database",
+            "vendor": "",
+            "version": "20160809",
+            "updatable": true,
+            "device_name": "UEFI dbx"
+          },
+          {
+            "component": "Unknown",
+            "vendor": "Microsoft",
+            "version": "2011",
+            "updatable": true,
+            "device_name": "Windows Production PCA"
+          }
+        ],
+        "memory": {
+          "slots": [
+            {
+              "locator": "SODIMM1",
+              "populated": true,
+              "size_mb": 4096,
+              "memory_type": "DDR4",
+              "form_factor": "SODIMM",
+              "speed_mts": 2400,
+              "manufacturer": "SK_Hynix"
+            },
+            {
+              "locator": "SODIMM2",
+              "populated": true,
+              "size_mb": 4096,
+              "memory_type": "DDR4",
+              "form_factor": "SODIMM",
+              "speed_mts": 2400,
+              "manufacturer": "SK_Hynix"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "unreachable": []
+}

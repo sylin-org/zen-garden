@@ -32,3 +32,6 @@ installer/build-all-platforms copy.ps1
 
 # Local dev sandbox (scripts/dev-firefly.ps1, scripts/dev-run-moss.ps1)
 dev/
+
+# Pavilion: untracked build artifacts; sources live on archive/pavilion branch
+src/pavilion/

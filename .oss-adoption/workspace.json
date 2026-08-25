@@ -1,0 +1,20 @@
+{
+  "context": {
+    "invocation_dir": "F:\\Replica\\NAS\\Files\\repo\\github\\sylin-org\\zen-garden",
+    "playbook_is_inside_target": false,
+    "playbook_relative_to_target": null,
+    "playbook_root": "F:\\Replica\\NAS\\Files\\repo\\github\\sylin-org\\open-source-out-and-about",
+    "target_root": "F:\\Replica\\NAS\\Files\\repo\\github\\sylin-org\\zen-garden",
+    "target_source": "vcs-root",
+    "vcs_root": "F:\\Replica\\NAS\\Files\\repo\\github\\sylin-org\\zen-garden",
+    "workspace_root": "F:\\Replica\\NAS\\Files\\repo\\github\\sylin-org\\zen-garden\\.oss-adoption"
+  },
+  "created_at": "2026-07-19T03:42:46Z",
+  "external_publication_authorized": false,
+  "playbook_version": "0.1.0",
+  "previous_run_archived_to": null,
+  "run_id": "20260719T034246Z",
+  "schema_version": 1,
+  "status": "complete",
+  "target_head": "1fb8205a8b204ef34f29c1d464e8009168bb1870"
+}

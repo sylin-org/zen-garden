@@ -66,6 +66,17 @@ one-paragraph justification of its seam — what it isolates, who depends on it.
 Within a crate, `pub(crate)` by default; `pub` is a commitment with a
 maintenance price.
 
+**R1.7** No magic values. Every literal that participates in logic, comparison,
+wire format, or timing lives as a named constant in *its own domain's*
+constants module — never a global grab-bag (PoC scar: `common/constants` grew
+into a junk drawer holding two different constants for the same `STONE_CHIRP`
+string). Names carry units and glossary nouns (`OFFLINE_THRESHOLD_SECS`, not
+`OFFLINE_THRESHOLD`). Wire-format literals — mDNS TXT keys, announcement types,
+header names, vault key templates — are declared beside their protocol
+definition and pinned by fixture tests: changing one is a breaking change
+(R0.5) and must fail CI, never slip past review. The test for "magic": would a
+reviewer ask *"what is this?"* If yes, it's magic.
+
 ## P2 — Complexity lives at the seams
 
 **R2.1** Every external boundary — disk, network, Docker, OS, koi, clock, randomness

@@ -215,6 +215,7 @@ pub async fn renew_member_identity(state: &Moss) -> Result<RenewOutcome> {
         &renew.ca_cert,
         None,
         None,
+        None,
         &[],
         None,
     )

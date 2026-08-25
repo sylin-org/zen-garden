@@ -677,6 +677,7 @@ async fn local_enrollment(
         invite_token: None,
         csr: Some(csr),
         sans: payload.sans,
+        role: Some("member".to_string()),
     };
 
     let join_resp = core.enroll(&join_req).await.map_err(certmesh_err)?;
@@ -819,6 +820,7 @@ async fn proxy_enrollment(
         &hostname,
         &service_cert,
         &ca_cert,
+        None,
         None,
         None,
         &payload.sans,

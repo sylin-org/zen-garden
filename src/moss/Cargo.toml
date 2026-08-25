@@ -27,6 +27,7 @@ regex.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "io-util", "net", "signal", "process", "fs", "sync", "time", "macros"] }
 tokio-stream = { workspace = true, features = ["sync"] }
 tokio-util = "0.7"
+async-trait = "0.1"
 async-stream.workspace = true
 futures-util.workspace = true
 

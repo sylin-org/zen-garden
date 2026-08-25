@@ -129,6 +129,16 @@ impl Discovery {
         &self.koi
     }
 
+    /// Access koi through the [`KoiGateway`] port (GATEWAY-0001).
+    ///
+    /// Preferred over [`Discovery::koi`] for new code: the port is the seam
+    /// that later swaps the embedded backend for a remote sidecar client
+    /// without touching consumers. Wraps the handle per call — cheap (`Arc`
+    /// clone); the gateway itself is stateless apart from lazy event wiring.
+    pub fn gateway(&self) -> Arc<dyn crate::gateway::KoiGateway> {
+        Arc::new(crate::gateway::EmbeddedKoiGateway::new(self.koi.clone()))
+    }
+
     /// Whether mDNS is currently registered.
     pub fn mdns_registered(&self) -> bool {
         self.mdns.as_ref().is_some_and(|m| m.is_registered())

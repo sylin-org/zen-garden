@@ -1,0 +1,24 @@
+# Capability entry template (one per capability)
+id: kebab-case-id
+name: Human name
+domain: discovery-plane | moss-kernel | service-lifecycle | storage-estate | security-trust | clients-companions | delivery-ops
+what: >
+  User/operator-visible behavior, one paragraph max.
+how: >
+  Mechanism — protocols, data structures, key algorithms. Reference, don't restate.
+moving_parts:
+  - "process/task/endpoint — file:line"
+supporting_scripts:
+  - "script or packaging artifact — what it contributes"
+evidence:
+  - "file:line — what it proves"
+docs:
+  - "docs/poc/... canonical reference"
+maturity: live-proven | code-complete-unsoaked | scaffolded | doc-fiction
+fleet_notes: >
+  What was observed on the real garden (or 'never deployed').
+surprises: >
+  Anything not visible from docs/API surface — hidden behavior, quirks, drift.
+v2_verdict: keep | port | redesign | cut
+v2_note: >
+  Why this verdict; what the greenfield must preserve or do differently.

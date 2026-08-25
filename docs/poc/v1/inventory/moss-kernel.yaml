@@ -1,0 +1,85 @@
+# Moss kernel — capability inventory
+# Survey: 2026-08-24 · sources: bootstrap/*, app_state, tasks/registry+supervisor, metrics, subsystems, installer module, cli/main
+
+- id: bootstrap-phase-machine
+  name: Startup phase machine (3 stages, ~20 numbered phases)
+  maturity: live-proven
+  verdict: redesign
+  what: build_state (sequential fallible phases 0-11) -> start_background_tasks -> serve (Phase 18).
+  surprises: Phases 5/14/17 DO NOT EXIST (numbering holes); Phase 12 blocks 3s on fixed peer-discovery window BEFORE server/watchdog exist; first-boot EXITS process mid-daemon under systemd (post-1.5 phases never run that boot); election service built twice + struct-update late-bind; task set varies per boot (MdnsLurkListener depends on runtime bind success).
+  v2_note: Renumber cleanly, make discovery window async, single construction pass.
+
+- id: task-supervisor
+  name: Task registry (~31 always-on + conditional) + dependency-validating supervisor
+  maturity: live-proven
+  verdict: keep
+  what: Single source of truth; Kahn-DAG validation of dependency edges; watch-channel readiness gates.
+  surprise: A dependency that FAILS (not exits) leaves dependents Waiting forever - only sender-drop or cancel unblocks (task_trait.rs:78-104).
+
+- id: moss-shutdown-sequence
+  name: Phased cooperative shutdown (MOSS-0004)
+  maturity: live-proven
+  verdict: keep
+  what: One root CancellationToken as single source of truth; goodbye+topology flush pre-drain; axum drain deadline 8s; hard watchdog exit 15s; sd_notify READY/WATCHDOG(25s)/STOPPING; exit-code contract STOP=0/FATAL/RESTART_APPLY=10/RESTART=11.
+
+- id: moss-crash-loop-guard
+  name: DEPLOY-0001 crash-loop rollback + mark-good + systemd unit self-heal
+  maturity: live-proven
+  verdict: keep
+  what: Self-upgrades snapshot binaries to data_dir/rollback (OUTSIDE bin_install so companion launchers cannot exec them); 3 bad boots -> restore + exit(RESTART); MARK_GOOD_SECS=20 commits. Legacy ExecStartPre shimmed not deleted (original bricking bug). Windows SCM failure policy restart 5s/10s/none.
+  surprise: Guard counts BOOTS not crashes.
+
+- id: moss-hostname-heal-motd
+  name: Hostname healing every boot + MOTD writer
+  maturity: live-proven
+  verdict: keep
+  what: stone_name reapplied as OS hostname (Android drifts to localhost breaking mDNS); MOTD from capabilities + storage-set summary; Windows DNS-hostname registry maintenance retries every boot.
+
+- id: moss-first-boot-init
+  name: First-boot init flows per OS
+  maturity: live-proven
+  verdict: port
+  what: Linux generates collision-checked unique name then exit(0) for systemd re-exec; Windows resolves name synchronously BEFORE config load closing async-name race. Prints stone/stone creds on completion.
+
+- id: subsystems-metrics
+  name: Subsystems readiness flags + Metrics aggregate (ARCH-0018/0023)
+  maturity: live-proven
+  verdict: keep
+  what: Ephemeral readiness registry (network/docker) via watch channels; lock-free per-domain/per-task counters, latency histogram buckets, SSE stream; 7 JSON endpoints under /api/v1/metrics*.
+  note: This answers why my earlier /api/v1/metrics probe 404ed - real paths are /api/v1/stone/metrics*.
+
+- id: moss-installer-cli
+  name: garden-moss binary CLI + install/uninstall/pre-start subcommands
+  maturity: live-proven
+  verdict: keep
+  what: One binary; install modes Fresh/Update{from,to}/Repair; resolve_package local-or-GitHub; Linux unit Type=notify WatchdogSec=60; Windows sc.exe + firewall rules w/ legacy cleanup; version breadcrumb file.
+  surprise: Hidden self-update lifecycle flags (update_finalize/cleanup_old/cleanup_updater).
+
+- id: console-mode
+  name: Runtime console verbosity API with auto-revert
+  maturity: live-proven
+  verdict: keep
+  what: GET/POST /api/v1/console/mode; silent/minimal/informative/verbose; timeout_minutes auto-reverts (default 30); persist option.
+  bug: Persistence round-trips TOML through serde_json::Value and writes CWD-relative garden-moss.toml on WINDOWS (api/v1/console.rs:135).
+
+- id: host-writes-outside-data-dir
+  name: Host mutations beyond data/config dirs
+  maturity: live-proven
+  verdict: redesign (inventory + consent)
+  what: resolved.conf.d drop-in + systemctl restart systemd-resolved (DNS-0002); unit regeneration + daemon-reload + legacy-script removal; /etc/{hostname,hosts,motd}; avahi restart; Windows registry DNS hostname, Explorer drive context-menu, firewall rules; reads+deletes /home/stone/garden-moss-preinstall.json; /dev/tty1 console output.
+  v2_note: Greenfield needs an explicit privileged-actions manifest so operators can audit what install touches.
+
+## Environment variables (complete inventory)
+STONE_NAME, STONE_HOST/ZG_STONE_HOST, PORT, RUST_LOG, FAST_SYNC_TIMEOUT,
+ZG_POND_ENFORCE, LANTERN_ENDPOINT, RUNNING_AS_SERVICE, ZEN_GARDEN_CONTAINER/ZG_CONTAINER,
+ZG_/GARDEN_ path overrides (DATA_DIR CONFIG_DIR LOGS_DIR SHARED_DATA_DIR COMPANIONS_DIR FIRST_RUN_FLAG MOTD_FILE HOSTS_FILE HOSTNAME_FILE STAGING_DIR HARVEST_DIR VOLUMES_DIR JOBS_FILE STORED_DIR CEREMONY_DIR TEMP_DIR BIN_INSTALL_DIR MANIFESTS_DIR),
+GARDEN_STONE_HOME/USER, DISCOVERY_PORT/MCAST_GROUP/ENABLE_BCAST_FALLBACK/LIMITED_BCAST,
+GARDEN_HOST_PROFILE/SCHEDULER/DNS_PROVISIONING/NET_CONFIG_METHOD/NETWORK_INTERFACE/PRIVILEGE_ESCALATION/TLS_ROOT_SOURCE/EXTRA_CA_BUNDLE/IMAGE_PULL_POLICY/DOCKER_SOCKET/CONTAINER_{BIND_ADDRESS,NETWORK,PRIVILEGE,RESTART,USER},
+GARDEN_MIN_DISK_FREE_GB/MIN_MEMORY_FREE_MB/MAX_CONCURRENT_OPS/MAX_LOG_RETENTION_DAYS,
+~20 GARDEN_*_TIMEOUT knobs, NO_COLOR/GARDEN_UNICODE/GARDEN_FIREFLY_ROSTER.
+Surprise: STONE_NAME env LOSES to cached hostname in precedence chain.
+
+## Ports
+7182 sign oracle (loopback) | 7183 HTTPS mTLS (retired under Enforce) | 7184/UDP discovery |
+7185 moss HTTP | 7186 lantern | 7187-7199 companions (sequential pool, exhaustion = hard failure) | 5641 koi embedded.
+Channel caps: LOG 1024, PULSE/TOOL_DELTA 512, event bus 256, STORAGE_EVENT 64.

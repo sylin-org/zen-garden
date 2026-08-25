@@ -1,0 +1,107 @@
+# Discovery plane — capability inventory
+# Survey: 2026-08-24 · sources: p2p.rs, announcement_types.rs, src/discovery, moss discovery/topology/elections, lantern
+
+- id: p2p-udp-transport-singleton
+  name: P2P UDP transport (multicast-first, tiered fallback)
+  maturity: live-proven
+  verdict: keep
+  what: All UDP discovery traffic flows through one process-wide singleton; receiver bound 0.0.0.0:7184 joining multicast on every eligible NIC; per-interface sender sockets.
+  how: Tier 1 multicast 239.255.42.99:7184 TTL=1; Tier 2 directed broadcast per-interface (default ON); Tier 3 limited broadcast only if enabled AND sent_count==0. Envelope validated then fanned out over tokio broadcast.
+  moving_parts: ["DiscoveryConfig env loader — common/src/infra/communications/p2p.rs:114-138", "tiered send_udp_packet — p2p.rs:845-1002", "reinit_senders on reconnect — p2p.rs:604-660"]
+  evidence: ["constants/mod.rs:63 DISCOVERY_UDP=7184", "p2p.rs:1224 sender binds iface IP:0"]
+  notes: Built to survive multi-homed Win11 (WSL/Hyper-V); Windows bind retries 10x backoff; SIO_UDP_CONNRESET disabled; 65535B recv buf.
+
+- id: interface-enumeration-virtual-filter
+  name: Interface enumeration & virtual adapter skip
+  maturity: live-proven · verdict: port
+  what: Eligible IPv4 NICs enumerated per init; loopback/link-local/virtual excluded by NAME heuristics + 172.17.x.x check.
+  surprise: MAC-OUI virtual detection table exists but is DEAD — if_addrs exposes no MAC (p2p.rs:274-276 passes None). Spec says "deprioritized"; code hard-excludes.
+  v2_note: Pick an enumeration API exposing MAC/prefix so OUI filtering actually runs.
+
+- id: udp-envelope-dedup
+  name: UdpAnnouncement envelope + GUIDv7 dedup window
+  maturity: live-proven · verdict: keep
+  what: Every datagram one JSON envelope {msg_id?, type, data, signature?, sender_cert?}; receivers drop repeats of same msg_id for 5s.
+  surprise: Envelopes without msg_id bypass dedup entirely (types/discovery.rs:47-48 Option).
+  v2_note: Keep JSON wire (debuggability) + GUIDv7 time-sortability.
+
+- id: pond-chirp-signing-hooks
+  name: Envelope enricher/verifier OnceLock hooks
+  maturity: code-complete-unsoaked · verdict: redesign
+  what: Optional global hooks sign outbound / verify inbound announcements when pond activates.
+  CRITICAL: Verifier checks signature against ATTACKER-SUPPLIED key — never chains sender_cert to pond CA (CA PEM loaded then ignored, run.rs:1683-1703) + blanket accept-unsigned during "transition" (run.rs:1688). Integrity-only, zero authentication. False confidence.
+  v2_note: Chain to CA or drop the pretense; make signing a transport-layer capability, not global mutable hooks.
+
+- id: announcement-type-registry
+  name: Announcement types (9): discovery_request/response, stone_chirp, stone_goodbye, election_request/candidate/result, storage_beacon, tools_beacon
+  maturity: live-proven · verdict: keep
+  surprise: Legacy duplicate STONE_CHIRP constant coexists (constants/mod.rs:458); only chirps debounced (100ms).
+
+- id: moss-chirp-announcer
+  name: Periodic chirp announcer (30s) + goodbye (3×@50ms)
+  maturity: live-proven · verdict: keep
+  what: Full state every 30s; every 2nd tick adds tools beacon snapshot.
+  how: stripped_for_chirp drops cpu.features (~35-46% of chirp!), threads, swap_mb, docker_version (COMM-0005).
+  surprise: announce_if_changed hash-dedup machinery exists but dormant — heartbeats unconditional by design.
+
+- id: topology-aggregate-offline-persistence
+  name: Topology cache, offline marking, garden-topology.json persistence
+  maturity: live-proven · verdict: keep
+  what: Peers cached by stone_id; >90s silence → Offline+dormant (kept for WoL); >24h evicted; LRU cap 64; atomic tmp+rename flush every 30s + shutdown.
+  DOC DRIFT: specs/journeys say 45s offline threshold (topology-cache.md:23; CHANGELOG records 90→45 cut) but code reverted to 90s (topology/mod.rs:57) without doc sync.
+
+- id: moss-mdns-registration
+  name: mDNS registration _moss._tcp + _http._tcp (via koi-embedded)
+  maturity: live-proven · verdict: keep
+  what: Dual records re-registered on IP/MAC/health change; TXT {stone_id,stone_name,version,health,api_port,mac?,pond=active?,https_port=7183?} + web record {path=/,garden-component,garden-role}.
+  note: Only koi-embedded provides registration (no zen-native impl); browse uses mdns-sd elsewhere — two mDNS stacks coexist by design tension.
+
+- id: certmesh-mdns-ca
+  name: _certmesh._tcp cornerstone CA announcement
+  maturity: live-proven · verdict: keep
+  what: Unlocked cornerstone announces CA {role,fingerprint,profile,auth=totp} solving pre-enrollment chicken-and-egg; client browse all-platform via mdns-sd.
+
+- id: mdns-lurk-listener-flow
+  name: Passive lurk-listener → DiscoveredStone → topology seeding
+  maturity: live-proven · verdict: keep
+  what: Moss browses neighbor _moss._tcp, requires stone_id TXT else drops, synthesizes TopologyEntry (health=initializing until first chirp).
+  note: Works on Windows because moss/lantern use KOI-embedded browse while discovery crate uses mdns-sd Linux-only — different stacks, same protocol.
+
+- id: discovery-crate-public-api
+  name: garden-discovery crate (rake/pavilion/lantern surface)
+  maturity: live-proven · verdict: keep
+  what: Linux parallel mDNS+UDP merged via seen-set; Windows UDP-only stubs; resolve cascade explicit→env→broadcast-first-responder; cache TTL 90s.
+  surprise: DiscoveryRequest.requester hardcoded "rake-cli" even for lantern path.
+
+- id: election-protocol-fitness
+  name: Distributed elections (ELECTION-0001 Blake delay + ORCH-0001 Fitness score)
+  maturity: live-proven · verdict: keep
+  what: Requester-owned elections over UDP. Blake: hash-delay 0–7650ms candidacy. Fitness: immediate i16 score [-1000,1000], 1001=pinned wins outright; quiet 1s / hard-cap 3s collection; ties → pin_timestamp → stone_id.
+  surprises: No term limits (stateless per-event); candidate "unicast" comment vs broadcast reality; UpdateSource/CeremonyCoordinator reachable ONLY via rake CLI.
+
+- id: beacons-storage-tools
+  name: storage_beacon & tools_beacon payloads
+  maturity: live-proven · verdict: keep
+  what: Capability deltas atop presence chirps; snapshot=true triggers reconciliation deletions; new-stone chirp triggers reciprocal beacon burst.
+  rule: Receivers deliberately never rebroadcast learned deltas (anti-loop, discovery.rs:270-275).
+
+- id: lantern-registry
+  name: Lantern registry (optional cross-subnet aggregator)
+  maturity: live-proven · verdict: port
+  what: Stones POST /api/v1/register every 45s when LANTERN_ENDPOINT set; TTL 135s; portrait enrichment every 15s; placeholder-dist build.rs for fresh clones.
+  BUG: IP-change/reconnect handler posts /api/register (tasks/lantern.rs:91,125) but router serves /api/v1/register — those re-registrations 404 silently.
+
+## Wire format summary (authoritative)
+Transport UDP:7184 group 239.255.42.99 · JSON encoding (not bincode) · dedup 5s msg_id ·
+fallback mcast→directed-bcast(default ON)→limited-bcast(default OFF, senders[0] only, iff 0 sent) ·
+chirp 30s / maintenance 30s / offline>90s / evict 24h / LRU 64 / cache TTL 90s /
+lantern reg 45s TTL 135s enrich 15s / election blake 0-7650ms, fitness quiet 1s cap 3s ·
+ports: 7182 sign(loopback) 7183 https 7184 udp 7185 moss 7186 lantern 5641 koi ·
+topology persistence = bare TopologyEntry[] pretty JSON atomic-rename.
+
+## Surprises (consolidated)
+1. Offline-threshold doc drift 45↔90s. 2. MAC-OUI filter dead code. 3. Spec/code conflict on exclusion semantics.
+4. Directed-broadcast math lives in if_addrs crate, not our code. 5. Lantern re-register path bug (silent 404).
+6. Election comment/broadcast mismatch. 7. No election term limits. 8. UpdateSource has no moss-side caller.
+9. Chirp verifier accepts unsigned during transition. 10. Three staleness windows coexist (90/90/135s).
+11. Two mDNS stacks (mdns-sd browse vs koi-embedded register/browse). 12. _moss/_http share only `version` TXT key.

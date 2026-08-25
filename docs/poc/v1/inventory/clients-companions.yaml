@@ -1,0 +1,107 @@
+# Clients & companions — capability inventory
+# Survey: 2026-08-24 · sources: rake, companion-sdk/usb, cricket, firefly, pavilion, probe
+
+- id: rake-command-manifest
+  name: Manifest-driven CLI (36 commands / 8 categories, Clap generated)
+  maturity: live-proven
+  verdict: keep
+  what: Single source of truth generates parser+help+validation; remote-capable flags inject --at targeting.
+  gaps: `logs` command missing from validate_manifest expected-list; `watch stone <n> logs` advertised but STUBBED (watch.rs:210).
+
+- id: rake-connection-layers
+  name: RAKE-0011 layered connection (provenance cascade + resilient retry)
+  maturity: live-proven (failover witnessed live on fleet)
+  verdict: keep
+  what: --at > GARDEN_STONE env > .tending cache > UDP discovery; soft origins flushed on TCP failure; retry-once re-resolve. Lantern fallback at priority 4.5 for bare names.
+  surprise: ADR's Connected/Local context split never landed - Context keeps Option<StoneApi> with runtime expect().
+
+- id: rake-signing-context
+  name: Request signing via loopback oracle
+  maturity: code-complete-unsoaked
+  verdict: redesign
+  what: Signs mutating requests when target stone NAME known; silent unsigned fallback otherwise.
+  concern: Couples client to co-located moss; no user-visible warning on degrade.
+
+- id: rake-ui-conventions
+  name: Terminal-aware rendering (tables/gauges/vitality classes/pulse frames)
+  maturity: live-proven
+  verdict: keep
+  what: 1453-line rendering module + gauge/layout/colors; extract_json_field for --field scripting; pulse full-screen ANSI frames.
+
+- id: rake-firefly-roster-push
+  name: Firefly roster push (scp+ssh shell-outs)
+  maturity: code-complete-unsoaked
+  verdict: keep
+  what: Validate -> scp to /tmp -> ssh sudo mv into managed path, chown/chmod. StrictHostKeyChecking=accept-new.
+  gap: No read-back verification after push (one-way blind copy); password prompts block non-interactive use.
+
+- id: hey-passthrough
+  name: hey tell companion pass-through protocol
+  maturity: live-proven
+  verdict: keep
+  what: Raw args forwarded via POST /stone/companions/{id}/command; moss auto-starts stopped companions, proxies to companion's own loopback HTTP server (5s timeout); "all" broadcast fans out topology-wide.
+  envelope_inconsistency: Moss returns CommandResponse BARE while most endpoints wrap ApiResponse - third envelope drift site confirmed.
+
+- id: rake-api-command-bug
+  name: `garden-rake api` reference command
+  maturity: scaffolded (BROKEN)
+  verdict: fix-in-poc
+  CONFIRMED BUG: moss returns bare Json<ApiManifest> (manifest.rs:11-21); StoneApi::get unwraps required ApiResponse.data (stone_api.rs:461-477) -> always fails. Fix exists nearby: get_bare(). Same class hits /election/start.
+
+- id: companion-sdk-runtime
+  name: companion-sdk spawn/lifecycle contract
+  maturity: live-proven
+  verdict: keep
+  what: Builder -> run(): SSE-in (backoff 1..32s) + HTTP command server + adapters; 50ms coalesced event cadence; enabled flag persisted in state_dir; SIGTERM contract honored by moss (taskkill fallback Windows).
+  drift: Two enabled-flag formats coexist ({dir}/sse_enabled vs {dir}/enabled), cricket bridges ad-hoc.
+
+- id: moss-companion-registry
+  name: Companion discovery/registration (scan, ports, liveness)
+  maturity: live-proven
+  verdict: keep
+  what: Boot-scan {data_dir}/companions/, probe --dump-commands for CommandManifest, PortLedger assigns from 7187-7199 pool (exhaustion = hard failure), liveness = alive flag or GET /health adoption reconcile.
+  note: PID is bookkeeping only (COMPANION-0016).
+
+- id: cricket-audio
+  name: Cricket audio companion + tune format
+  maturity: live-proven (probe e2e plays sound)
+  verdict: keep
+  what: YAML tune = event-kind -> sample + channel (foreground/midground/background) + debounce; zen-tech tune ships CC0 mp3s; offline `test` subcommand for rehearsal without stone.
+
+- id: firefly-device-families
+  name: Firefly visual companions (RP2040-Matrix 5x5 / OLED v1-v2 / T-Display ST7789)
+  maturity: live-proven
+  verdict: keep
+  what: One SDK adapter per family driven by FireflyOrchestrator; USB hotplug via companion-usb Monitor/UsbRegistry; identity handshake writes b"I" expecting JSON within 4s deadline - COMPILE-TIME ASSERT pins the latency assumption.
+  commands: status/pixel/fill/clear/brightness/animate/stop/info.
+  fleet_note: Live commands 504-timeout on current garden despite registration (registered-but-unreachable state unreconciled).
+
+- id: firefly-roster-minting
+  name: Provisioning ritual (GUIDv7 mint + roster)
+  maturity: live-proven (24 devices minted)
+  verdict: keep
+  what: FireflyDeviceId.psm1 implements RFC 9562 GUIDv7 by hand; descriptor templates operator-declared only; roster at ~/.zen-garden/firefly-roster.json write-then-rename.
+  correction: Firmware NOT uniformly v1.0.0 - OLED mints 0.2.0, matrix/tdisplay 1.0.0.
+
+- id: companion-usb-crate
+  name: companion-usb device layer
+  maturity: code-complete-unsoaked
+  verdict: keep
+  what: udev_monitor (non-musl) + PollMonitor fallback publishing RegistryEvent<UsbSerialDevice> with per-device reader task + state machine. Sole consumer: firefly (despite generic naming).
+
+- id: pavilion-windows-client
+  name: Pavilion Windows client (Tauri tray + Cloud Filter provider)
+  maturity: PARKED - fiction in-tree
+  verdict: redesign-from-archive
+  CRITICAL: ADR PAVILION-0001 "accepted" but implementation PARKED to archive/pavilion branch (commit 9893600c, 2026-06-15, M1 Cloud Filter upload broken per PAVILION-0002). ZERO tracked files under src/pavilion; moss's cloud_filter dir also gone from tree (~6.8k Rust + ~4.6k TS survive only on that branch). Wire-contract comments still reference Pavilion as consumer.
+  v2_note: Recover branch FIRST if Windows Explorer projection remains a goal; then decide Tauri vs native fresh.
+
+- id: probe-live-garden
+  name: Probe e2e harness (LiveGarden, TestRegistry ~60 tests, SSH executor)
+  maturity: live-proven
+  verdict: keep
+  what: UDP-or-topology discovery w/ failover caching; category/tag-filtered test defs accumulating Bag evidence; physical SSH validation tests (restore local/remote, retention, failover); companion e2e incl. cricket play.
+  friction: Hardcoded plink dependency (Windows-operator centric); STONE_SSH creds default stone/stone contradicting key-auth assumptions elsewhere.
+
+## Surprises (consolidated)
+1. rake api bug both-sides confirmed w/ fix nearby. 2. Pavilion parked-and-stripped despite accepted ADR. 3. RAKE-0011 half-implemented (context split missing). 4. Firmware version claim wrong in docs. 5. Two enabled-flag formats. 6. Envelope inconsistency (companions bare vs wrapped elsewhere). 7. watch stone logs stubbed though advertised. 8. hey.rs contains literal ? glyphs where unicode was (encoding artifact).

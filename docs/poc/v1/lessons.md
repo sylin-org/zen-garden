@@ -1,0 +1,106 @@
+# v1 Lessons Ledger — normative constraints for the greenfield
+
+Each rule below is distilled from PoC evidence (see `inventory/*.yaml` for provenance).
+The greenfield must satisfy every rule or explicitly argue an exception in its ADR.
+Phrased as directives, not observations.
+
+---
+
+## L1 — One wire contract, generated everywhere
+Three live envelope mismatches (`rake api`, `/election/start`, companions bare-vs-wrapped)
+are one bug class: hand-maintained contracts across components.
+**Rule:** a single schema source generates moss handlers, StoneApi, rake, resolvers, and web
+types. Bare-vs-enveloped is a compile-time property, not per-handler taste.
+
+## L2 — Security chains to the trust root or does not exist
+The chirp verifier checks attacker-supplied keys; presign secrets derive from published
+values; TOFU skips the fingerprint check it already holds; three production clients disable
+cert validation; the storage proxy plane is unauthenticated.
+**Rule:** every verification path names its trust anchor in code and fails closed when
+absent. "Unsigned during transition" needs an expiry date enforced by CI, not a comment.
+
+## L3 — Degrade-don't-crash, but never silently
+Uniform Unavailable-degradation is good engineering (gateway port proves it) — but security
+off is always silent-success today: Observe default, unsigned cold-start sends, dormant pond,
+undocumented ZG_POND_ENFORCE.
+**Rule:** posture is observable: every stone advertises its enforcement stage, signing state,
+and degraded capabilities in /health and chirps. Operators see the gap.
+
+## L4 — Presence is soft-state; duties need leases
+90s offline windows, beacon elections resolved post-hoc, no election term limits, gateway
+TTLs work because they're explicit.
+**Rule:** any *duty* (primary, update-source, coordinator) carries an explicit lease with
+heartbeat + expiry + deterministic takeover. Membership presence stays soft-state.
+
+## L5 — Identity lives on the media; identity is not a database row
+The .zen-garden manifest contract is the best design decision in storage — plug-and-recognize
+works. But roaming detection stops at a boolean nothing consumes.
+**Rule:** identity-on-media stays; device-move events must trigger a defined flow
+(quarantine/re-auth/replication catch-up), not a display flag.
+
+## L6 — Replication must detect divergence before destroying it
+Full-sync deletes replica-local files Primary-wins; a briefly-promoted replica loses unique
+writes silently.
+**Rule:** divergence is a first-class state (warn, quarantine, operator decision) — never a
+silent delete. Cursor+full-sync machinery itself is sound; keep it.
+
+## L7 — The self-description must be true
+API manifest documents 26 of 281 routes; offerings doc says 30 vs ~50; offline threshold
+45↔90s drift; compose-files described that don't exist; dead pre-install feature documented
+as live; firmware versions wrong.
+**Rule:** self-descriptions (manifest endpoint, catalogs, docs' load-bearing claims) are
+generated or CI-verified against code. Stale truth is worse than missing truth.
+
+## L8 — Small kernel, guests at the edge
+Orchestrators-as-containers with gateway leases, companions as spawned peripherals with
+command manifests — the inversion works and scales conceptually.
+**Rule:** new capability = new process speaking the contract, unless it cannot be. Moss core
+stays supervisor + registry + presence + routing.
+
+## L9 — Manifest-driven surfaces are the house style
+Rake's command manifest (generates CLI), companion --dump-commands, offering manifests with
+predicate DSL — all prove the pattern.
+**Rule:** user-facing surfaces declare themselves declaratively and get behavior wired to
+declarations. No parallel hand-written help/validation.
+
+## L10 — Distribution wraps the garden, not the reverse
+deploy.ps1 using UDP discovery + /stone/deploy to ship binaries fleet-wide is the right
+primitive; perennial Docker builders solve cross-compilation; the musl-under-QEMU trick works.
+**Rule:** keep fleet-native deployment; add tags→artifacts→signing upstream of it. Sleeping
+stones get wake-and-catch-up on boot (nourish-before-serve) rather than indefinite skew.
+
+## L11 — Ceremonies without recovery consumers are type-fiction
+Vacate/Replant modeled, unexecuted; ceremony journals written but nothing resumes them at boot;
+jobs non-persistent while carrying long installs.
+**Rule:** no state machine ships without its crash-recovery path implemented and tested.
+Descope honestly instead.
+
+## L12 — Name things once
+Three unrelated "leases", two "banks", two enabled-flag file formats, two canonical-layout
+validators, duplicate STONE_CHIRP constant, version scheme drifting between entry points.
+**Rule:** a shared glossary crate owns domain nouns; lint for duplicate constants; formats
+have one writer.
+
+## L13 — Secrets derive from secrets
+Presign-from-fingerprint is the cautionary tale; vault usage elsewhere is sound.
+**Rule:** key material comes from the vault or is generated per-install; identifiers
+(fingerprints, stone_ids) are public by definition and never key derivation input.
+
+## L14 — Every platform is a citizen or gets a fence
+Windows storage is scan-only yet mount allowlists reject drive letters; macOS absent from the
+Platform enum while APFS tokens exist; Windows CWD-relative data_dir sprays repo roots;
+Pavilion parked out-of-tree.
+**Rule:** each platform's supported surface is declared (enum + capability table); anything
+outside it is refused loudly at startup, not halfway through operations.
+
+## L15 — Tests run where CI runs
+Orchestrators carry ~162 tests CI never executes; local Linux builds skip tests; probe e2e
+needs plink + stone/stone creds.
+**Rule:** CI matrix mirrors build matrix including test execution; e2e harness authenticates
+the way production does.
+
+## L16 — Delight is load-bearing
+Firefly compile-time latency asserts, cricket tunes, pulse's no-raw-mode rule, named ponds,
+portrait colors — the aesthetic layer is engineered like the rest.
+**Rule:** the greenfield budgets for companions/pulse/portraits as first-class subsystems
+with contracts (COMPANION-0004/0008/0016/0018 carry forward), not garnish.

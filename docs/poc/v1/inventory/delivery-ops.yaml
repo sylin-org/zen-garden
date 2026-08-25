@@ -1,0 +1,106 @@
+# Delivery & ops — capability inventory
+# Survey: 2026-08-24 · sources: installer/*, dist.json, Dockerfiles, CI, tools/scripts/samples/firmware/dev, docs corpus
+
+- id: multi-platform-build-coordinator
+  name: Build coordination (4 platforms: linux-x64/x86/arm64-glibc/windows-x64 + android musl)
+  maturity: live-proven
+  verdict: keep
+  what: build.ps1 resolves deps once then platform builds --frozen; staging destroyed per run; packages ALWAYS include previously-built binaries so core-tier iteration keeps old companions.
+  drift: Tier defaults differ by entry point (core vs full vs core).
+
+- id: docker-perennial-builder
+  name: Perennial Docker cross-build containers
+  maturity: live-proven
+  verdict: port
+  what: Builder image reused until Cargo.lock hash changes (SHA-16 marker); workspace + ../koi mounted RO; target+cargo cache in named volumes; mold via env not config (x86 cross safety).
+  constraint: koi path dep requires sibling checkout mounted at /koi.
+
+- id: cross-target-matrix
+  name: Cross-target strategies (x86 bookworm pin / arm64 glibc / android QEMU-native musl)
+  maturity: live-proven
+  verdict: keep
+  what: x86+arm64 pinned to rust:bookworm (trixie glibc too new; phone kernel 4.9); Android builds NATIVE musl under qemu binfmt from arm64 alpine - sidesteps aarch64 cross pain; moss drops udev feature on musl; firefly gates libudev by cfg.
+  v2_note: The musl-native-under-QEMU trick is worth preserving verbatim.
+
+- id: dist-config-packaging
+  name: dist.json-driven packaging (tiers core=[moss,rake] full=[+lantern,cricket,firefly])
+  maturity: live-proven
+  verdict: keep
+  what: Declarative binary->destination map; assets intentionally empty per BUILD-0003 (moss generates all system config at install); externalTools ships ../tools as bin/tools/.
+  drift: android block reuses linux-arm64-musl distDir - platform label lies.
+
+- id: version-stamping
+  name: Version scheme (0.2.0.<yyyyMMddHHmm>+<gitsha>)
+  maturity: live-proven
+  verdict: redesign
+  what: version.json major.minor + build.ps1 timestamp -> CARGO_BUILD_NUMBER -> build-utils capture + rerun-if-env-changed -> cli.rs concat.
+  drift: Standalone compile scripts default GARDEN_VERSION=0.1.$rev and one uses dotted stamp; timestamp-in-patch breaks semver ordering.
+
+- id: newstone-usb-preseed
+  name: NewStone unattended USB installer (Debian preseed)
+  maturity: live-proven (fleet provisioned this way)
+  verdict: redesign
+  what: Auto-detects Debian netinst+SHA256, FAT32 MBR USB, preseed patched into grub/isolinux, extracts release tar.gz to stone-root, writes service/toml/sudoers, .zen-garden-sentinel marker protects Zen media, disk set read-only. Default creds stone/stone pre-hashed.
+  DEAD CODE: Pre-install manifest flow disabled at :816-817 yet write-path (:949-960,:1114-1124), setup hook, AND first-stone.md all still describe it. Synopsis still promises Traefik/Registry/Homepage contradicting BUILD-0003.
+  v2_note: Keep preseed+sentinel ideas; kill dead path; per-stone generated credentials mandatory.
+
+- id: legacy-boot-repair
+  name: Repair-LegacyBoot (SYSLINUX MBR + bootia32.efi for old BIOS/32-bit UEFI)
+  maturity: code-complete-unsoaked
+  verdict: keep
+  note: Manual post-step, not wired into NewStone main flow.
+
+- id: fleet-deploy-api
+  name: Fleet self-deployment over discovery + HTTP (/api/v1/stone/deploy)
+  maturity: live-proven (primary update channel of real garden)
+  verdict: keep
+  what: UDP discovery {type:discovery_request} -> parallel /health probes (os/arch match) -> POST raw package bytes w/ X-Package-SHA256 -> 8s grace + 20x3s health polls; virtual-range filter skips Docker/Hyper-V/WSL; arm64 prefers musl package.
+  risks: Wire contract embedded independently in TWO scripts (drift); HTTP not HTTPS despite tls_port fields; sleeping stones simply miss deploys (observed skew cause).
+
+- id: one-liner-installers
+  name: curl|bash (install.sh) + irm|iex (install.ps1) bootstrap installers
+  maturity: code-complete-unsoaked (FRONT DOOR IS FAKE)
+  verdict: keep
+  what: Elevation -> GitHub releases/latest -> extract garden-moss -> `install --yes`; arch detect; ZG_INSTALL_FLAGS passthrough.
+  CRITICAL: No workflow produces the assets they fetch (.github/workflows has ONLY ci.yml); releasing.md confirms tag-driven release.yml deliberately deferred pending koi surface stability.
+
+- id: android-phone-stone
+  name: Android LineageOS phone-Stone delivery (static musl + dockerd + Magisk watchdog)
+  maturity: code-complete-unsoaked (partial LAN notes exist)
+  verdict: port
+  what: Stage bootstrap via ADB (static docker bundle + PINNED runc 1.1.12 for kernel 4.9 + Magisk service), then standard HTTP deploy path thereafter.
+  hygiene: Hardcoded personal device serial default (89TY0BAV9).
+
+- id: orchestrator-images-glue
+  name: Orchestrator images (multi-stage, ports 7190/7191, optional -Push) + root glue
+  maturity: code-complete-unsoaked
+  verdict: keep
+  what: Orchestrators excluded from workspace with own CI matrix [common,ollama,mongodb]; Dockerfile.moss wraps PRE-BUILT debug binary (dev convenience); pavilion-run.ps1 Tauri build modes.
+  gaps: src/orchestrators/ai exists UNCHECKED by CI; Dockerfile.moss copies debug while everything else moved fast/release.
+
+- id: branding-firefly-tooling
+  name: Installer branding pipeline + NewFirefly provisioning
+  maturity: code-complete-unsoaked
+  verdict: keep (separate delight from necessity when porting)
+  what: Versioned art source -> prepared overlays (isolinux splash, grub theme, GTK initrd repack via WSL, MOTD/banner) w/ 30-day freshness manifest; GUIDv7 minting; firmware flash per family.
+  hygiene: branding/prepared committed despite .gitignore intent; firmware/.cache junk committed; tools/koi/tool.json leaks operator-local absolute path (F:/Replica/NAS/...) and windows-only platforms.
+
+- id: ci-quality-gate
+  name: CI quality gate (check/clippy -W/test/deny) + koi sibling checkout contract
+  maturity: live-proven
+  verdict: keep
+  what: KOI_REF env drives koi checkout (EMPTY = default branch footgun); cargo-deny denies vulns/yanked/unlicensed/copyleft/wildcards; orchestrator matrix job; scaffolding doc-status checker script.
+  gaps: clippy warns not denies (ratchet TODO); orchestrators get check only - THEIR ~162 TESTS NEVER RUN; Linux local builds have no test step (Windows leg is de facto test gate).
+
+## Docs corpus map (post-restructure, docs/poc/)
+9 root files (README DOCUMENTATION CHANGELOG code-standards glossary introduction scaffolding SURFACES zen-garden-archaeology)
+decisions/187 · presentations/3521 (node_modules BLOAT) · proposals/65 · guides/38 · archive/49 · journeys/28 · notes/27 · specs/35 · philosophy/12 · reference/18 · homepage/6 · prior-art/6 · ops/6 · security/3 · templates/3 · v1/(this inventory)
+
+## Stale-doc flags (code-checked)
+offerings.md "30 services" vs ~50 actual; manifests-at-root-manifests/ claim vs embedded reality;
+first-stone.md + offering-lifecycle.md describe docker-compose mechanics that DON'T EXIST (direct bollard);
+koi-dependency.md still lists koi-truststore (now os-truststore); build-distribution.md references nonexistent installer/bin/;
+first-stone.md documents dead pre-install-manifest feature.
+
+## Surprises (consolidated)
+Dead pre-install flow · committed stone/stone cred hash echoed at completion · fake front door (no release assets) · version generator located · fallback version drift · root moss.toml.example drifts from real template (port 3001!) · operator-local path leak · presentations node_modules bloat (3521 files) · firmware cache junk committed · asymmetric local test gates.

@@ -1,0 +1,82 @@
+# Service lifecycle — capability inventory
+# Survey: 2026-08-24 · sources: domain/{offerings,services,catalog,ceremony,adoption-jobs,health,capacity,orchestration}, embedded manifests
+
+- id: offering-catalog-embedded
+  name: Embedded offering catalog (~50 sw manifests / 18 categories + hw manifests)
+  maturity: live-proven
+  verdict: keep
+  what: rust-embed compiled catalog with filesystem-overlay precedence; taxonomy dictionary for intent tokens; well-known-ports; compatibility sources doc.
+  surprise: hw/ manifests ship embedded next to sw (Dell Wyse 5070 full kit) indexed via find_hw_manifest(make,model).
+  note: docs/poc/reference/offerings.md says "30 services" - stale by ~2x.
+
+- id: managed-install-flow
+  name: Managed offering install (offer -> container)
+  maturity: live-proven
+  verdict: port
+  what: Manifest template + config patches merge into effective container spec (NO docker-compose files anywhere); bollard create/start; health wait (3s poll); static IP refcounted across offerings.
+  surprises: Compatibility fallback can RENAME instance FQN to ::legacy at install time on failed rules; post-install LOG REGEX first-match drives image fallback config; port remaps replay from stored port_map but silently abandoned if manifest port-name count mismatches.
+
+- id: remove-volume-contract-bug
+  name: Soft-remove vs volume preservation
+  maturity: live-proven
+  verdict: fix-in-poc
+  CONTRADICTION: service_lifecycle::remove documents "(soft delete)... volumes preserved" but delegates to remove_service with v:true - ASSOCIATED VOLUMES DELETED. Only recreate uses v:false. Doc-vs-code contradiction on a destructive path.
+
+- id: ceremony-domain
+  name: Ceremony machinery (journal, crash recovery, rollback)
+  maturity: scaffolded
+  verdict: redesign
+  what: Multi-phase long-running ops model with persistent journal. NourishOffering fully executed. Vacate/Replant/Store/NourishStone are TYPE-FICTION - modeled in CeremonyType with no executors. No boot-time recovery consumer found for active/*.json journals.
+  v2_note: Replant is a headline promise; greenfield must either implement or descope honestly.
+
+- id: nourish-updates
+  name: Garden-wide updates (nourish): offerings + moss + firmware
+  maturity: live-proven
+  verdict: keep
+  what: Parallel stone queries, scoped execution (all/offerings/firmware), SSE progress, automatic rollback on health-check failure.
+  platform_gap: fwupd shim Linux-only (shells fwupdmgr get-updates --json + regex device IDs); Windows detect returns empty.
+
+- id: self-upgrade-rollback
+  name: Moss self-upgrade (.old snapshots + crash-loop + RESTART_APPLY exit contract)
+  maturity: live-proven
+  verdict: keep
+  what: Separate from ceremonies: deploy endpoint stages binary, staging/validated markers drive exit(RESTART_APPLY=10), supervisor respawns into new binary, mark-good commits. Compose-on-start rebuild can CYCLE drifted containers without pull or port pre-flight.
+
+- id: adoption-borrow
+  name: Adoption/borrow/release of foreign services
+  maturity: live-proven
+  verdict: keep
+  what: Stray-container claims, detected-service adoption (pluggable probes), borrowed external endpoints w/ credentials to vault.
+  bug: credentials_key recorded even when vault write failed (dangling reference).
+
+- id: jobs-ephemeral
+  name: Jobs registry (install carrier)
+  maturity: code-complete-unsoaked
+  verdict: redesign
+  what: Deliberately NON-PERSISTENT ephemeral map, TTL-swept terminal jobs, EventBus JobEvent wire events.
+  concern: Long-running installs have no durability story across daemon restarts.
+
+- id: health-monitor-reconcile
+  name: Health monitoring + missing-container reconciliation
+  maturity: live-proven (WINDOWS, witnessed 2026-08-25)
+  verdict: keep
+  what: HealthProbe port (DockerHealthProbe via inspect); 30s monitor re-enters install for missing containers sharing ReconcileResult writeback; wait_until_healthy primitive reused by flows.
+  live_evidence: Running dist garden-moss.exe on Windows workstation (ephemeral mode) after containers vanished -> boot reconcile pulled 6 images (searxng, qdrant v1.18.0, whisper.cpp, speaches, kokoro-fastapi-cpu ~83MB, infinity) attempt 1/5, RECONCILED with "ports preserved" (stored port_map replay), containers live again from host-mapped persistent content. Also visible live: config precedence CLI>Env>Config>Defaults, 51 manifests loaded, DxDiag GPU detection, capability cache persisted, auto-adoption probing adopted-native ollama at :11434 (failing honestly while ollama down).
+  fleet_mystery_solved: "stone-leaded-sparkle" (the 'sleeping stone' from fleet sweeps) IS this Windows workstation running moss ephemerally, part-time. It misses deploys while moss is down -> explains observed version skew. Part-time/ephemeral stones are a REAL usage mode the greenfield should own explicitly (nourish-on-wake), not warn about.
+  live_evidence_2: Same session, `rake tend this` + `rake list`: 9 services — the 6 reconciled containers came back DORMANT (created-not-started) because the registry remembered them rested before the wipe; reconcile restored DESIRED STATE, not blanket-running. Ports preserved, state memory honored. Meanwhile ollama::adopted flipped failing->thriving live once the native ollama process started — the adopted-service health loop closing end-to-end (probe fail reported honestly, recovery detected, status corrected).
+
+- id: greenhouse-authoring
+  name: Greenhouse manifest authoring SPA (/stone/greenhouse/*)
+  maturity: code-complete-unsoaked
+  verdict: keep
+  what: Catalog browse, manifest file CRUD with overlay semantics (DELETE resets to built-in), live validation, GENERATE-from-running-container bootstrap, bundle export.
+
+- id: gateway-registry-leases
+  name: Tool/gateway registry + orchestrator leases (TOOLS-0003/ORCH-0004)
+  maturity: live-proven
+  verdict: keep
+  what: Write-through GardenRegistry (Local|Gateway|Announced origins); orchestrators dual-register (koi mDNS + moss gateway PUT, 30s heartbeat / 60s TTL); ollama adds adaptive VRAM model leases (15s x1.25 cap 300s).
+  naming_hazard: THREE unrelated "lease" concepts share vocabulary (mDNS lease, gateway TTL, VRAM lease).
+
+## Surprises (consolidated)
+1. Remove-volumes contradiction (destructive-path doc-vs-code). 2. Vacate/Replant type-fiction. 3. Every managed container silently gets RW mount of shared topology dir (docker/lifecycle.rs:456-461). 4. Fallback renames instances ::legacy. 5. Log-regex image fallbacks. 6. Port remaps silently abandoned on mismatch. 7. Static IP refcounting. 8. Capacity fails open. 9. Jobs non-persistent despite long installs. 10. Self-heal race returns "try again shortly" not queue. 11. await_container_removed polls inspect-404 (Docker remove returns before cleanup). 12. fwupd Windows-empty. 13. Compose-on-start cycles containers on daemon restart. 14. Three lease vocabularies. 15. hw manifests embedded. 16. Ceremony journal writers without recovery consumer. 17. Greenhouse generate-from-container unadvertised.

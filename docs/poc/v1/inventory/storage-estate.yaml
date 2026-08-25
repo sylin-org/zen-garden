@@ -1,0 +1,99 @@
+# Storage estate — capability inventory
+# Survey: 2026-08-24 · sources: domain/storage/*, tasks/storage_*, api storage groups, common/storage.rs
+
+- id: unified-storage-domain
+  name: Unified volume/medium domain
+  maturity: code-complete-unsoaked · verdict: keep
+  what: Volume state machine keyed by device path + physical media map + StorageChanged broadcast. Management enrichment only when .zen-garden/manifest.json parses.
+  v2_note: Clean hexagonal split (ports.rs StoragePlatform) worth preserving wholesale.
+
+- id: dotfolder-contract
+  name: .zen-garden on-media contract (manifest.json / pin.json / meta/ / memories/ / last-known-good/)
+  maturity: live-proven (manifest v5) · verdict: port
+  what: Identity ON THE MEDIA — plug drive into any stone, moss recognizes it. Roaming flag = origin_stone≠hostname, computed at classify().
+  surprise: Layout validation drift — analysis.rs wants blobs/+journal/, health.rs wants memories/+meta/: two incompatible "canonical" definitions.
+
+- id: primary-election
+  name: Seed-bank Primary election
+  maturity: code-complete-unsoaked · verdict: redesign
+  what: Every 3s scan banks vs garden beacons; assert/yield Primary. Pinned claims persist (pin.json travels with device); both-pinned → higher GUIDv7 pin_id wins; unpinned → higher stone_id keeps.
+  CRITICAL: No consensus protocol — dual-primary is EXPECTED transiently, resolved post-hoc deterministically. Split-brain window bounded by beacon staleness (~6s).
+  v2_note: Works for 2-3 stones; tiebreak churns on rename; greenfield needs real leases/quorum or explicit acceptance.
+
+- id: storage-routing
+  name: Read/write routing (STORAGE-0009)
+  maturity: live-proven · verdict: redesign
+  what: Reads any online replica local-first else proxy to Primary's stone; writes Primary-only else proxied. Offline volumes invisible → fall through to remote.
+  CRITICAL: Proxy hops use http::INSECURE_PROXY — danger_accept_invalid_certs(true), NO app-layer auth token; sole protection is X-Zen-Proxied loop-guard header (http.rs:47-53).
+  CLIENTS MID-REROUTE: ERROR not transparent retry — single attempt → 502 UPSTREAM_ERROR; demoted-stone write → 503. Clients must retry themselves.
+
+- id: replication-pull
+  name: Changelog pull replication (60s cursor-based)
+  maturity: code-complete-unsoaked · verdict: port
+  what: Replicas pull C/M/D from Primary /changes endpoint every 60s or on tick doorbell; GUIDv7 cursors; full directory-walk reconciliation when compacted away; errors hold cursor for retry.
+  CRITICAL: Conflict resolution = Primary-wins ONLY. Full sync DELETES replica-local files not on Primary (:430-441) — a briefly-promoted Replica's unique writes silently destroyed.
+  v2_note: Keep cursor+full-sync design; add divergence detection before delete.
+
+- id: tick-aggregator
+  name: Storage tick aggregator (250ms poll, 2s quiet, 10s cap)
+  maturity: live-proven · verdict: keep
+  what: Quantizes raw per-write ticks (PUT fires 2 ticks: content + .meta.json sidecar) into per-bank aggregated windows feeding SSE + replication doorbell.
+
+- id: encryption-story
+  name: Pond-scoped content encryption
+  maturity: scaffolded · verdict: redesign
+  what: encrypted=true bank seals every object ChaCha20-Poly1305 under 32B DEK; visibility forced Pond-only; key custody in koi vault, never on media.
+  CRITICAL: Per-file AEAD inside normal filesystem — filenames, sizes, .meta sidecars stay WORLD-READABLE on stolen drive. Whole-file decrypt+slice for ranges (no streaming); reader-writes rejected.
+  v2_note: Streaming AEAD + key rotation before trusting sensitive media; or LUKS layer.
+
+- id: s3-gateway
+  name: S3 gateway + presigned URLs + multipart (STORAGE-0016 per-bank listeners)
+  maturity: code-complete-unsoaked · verdict: port
+  what: Each Primary arms dedicated S3 listener reactively off StorageChanged; dormant→503 degrade not disarm; HMAC-SHA256 presign over {method,bucket/key,exp}; multipart staged+assembled.
+  CRITICAL: UNSIGNED REQUESTS ACCEPTED BY DEFAULT — presign validates only when X-Moss-Token params present; no SigV4 verification at all (s3_gateway.rs:261-264).
+
+- id: file-sharing-surfaces
+  name: Cloud-drive surface (cfapi provider) + WebDAV + SMB signpost
+  maturity: LIVE-ARTIFACT (workstation) — HKLM SyncRootManager key ZenGarden!SID! registered, C:\Users\<user>\Zen Garden\storage exists as cfapi ReparsePoint, visible in Explorer nav pane WITH NO CLIENT PROCESS INSTALLED/RUNNING. Registration layer persists and renders independently of provider; hydration dormant without it. Residual from dev-session run (no installed binary found).
+  verdict: PROMOTE (pending client decision)
+  what: PROVEN CHAIN (code-inspected on archive/pavilion) - registration.rs creates a real Windows Cloud Filter sync root ("Zen Garden" folder, sync_root_id, icons); provider.rs implements cfapi callbacks (fetch_placeholders via list(), fetch_data range reads via read_file_range, dehydrate lifecycle); uploader.rs = fs-watcher-driven uploads w/ same-mtime echo dedup. TRANSPORT CORRECTION - hydration/uploads ride moss REST files API (:7185) through StorageRoute Local/Proxy dispatch (STORAGE-0012 rebuild -> STORAGE-0015 unified router), NOT WebDAV. Drive-moved-to-another-stone transparently serves hydration from the new Primary via the Proxy arm - plug-and-play across machines confirmed at code level.
+  webdav_role: Independent standards surface OVER THE SAME ROUTER; changelog convergence VERIFIED in current tree (webdav.rs:165-170 record_changelog -> ContentStore.record_external_change). Valuable for generic clients (WebClient/Finder/gvfs), not the CF transport.
+  dependencies: Client PARKED on archive/pavilion (M1 upload admittedly broken per PAVILION-0002; uploader watcher design present = mid-repair when parked).
+  security_note: Hydration traffic rides the storage plane whose proxy hops are INSECURE_PROXY/unauthenticated today - promoting this experience promotes fixing L2/L6 first.
+  v2_note: If plug-and-play cloud storage is a core pillar, the REST files plane + cfapi provider are CORE; decide revive-Tauri vs native-fresh for the provider.
+
+- id: capacity-reclaimers
+  name: Capacity governor + graduated reclaimers (STORAGE-0020)
+  maturity: code-complete-unsoaked · verdict: keep
+  what: Disk-pressure watchdog denies writes at Critical; reclaims leaked images before offering snapshots; fails OPEN when free space unmeasurable (df hiccup never blocks backups).
+
+- id: foreign-filesystems
+  name: Foreign filesystem tiers (STORAGE-0019)
+  maturity: code-complete-unsoaked · verdict: keep
+  what: Native (ext4/btrfs/xfs) / Foreign-RW (NTFS/exFAT/ReFS) / Foreign-RO (APFS/HFS+) gate election eligibility; FsCapabilities carries case/POSIX/xattr/sparse facts.
+  surprise: Unknown FS defaults to MOST permissive tier (Native) unless consumer checks capabilities directly.
+
+- id: platform-storage-paths
+  name: Windows/macOS storage reality
+  maturity: scaffolded · verdict: redesign
+  what: Linux-first mount/format/unmount; Windows scan-only enumeration (drive letters REJECTED by mount allowlist analysis.rs:14-20); macOS absent from Platform enum entirely despite APFS/HFS+ tokens defined.
+  surprise: Windows moss run from repo sprays live .zen-garden/ data dir into the checkout (CWD-relative data_dir) — observed in repo root.
+
+- id: seed-bank-ab-slots
+  name: Nurturing A/B backup slots + seed-bank failover replication
+  maturity: live-proven · verdict: port
+  what: Two rotating local snapshot slots in index.json ledger; snapshots replicate outward with failover across candidate banks; restore pulls through ContentStore transparently decrypting.
+  surprise: Slot metadata stone-local in config_dir while payloads live on banks — losing config dir orphans bookkeeping.
+
+## Hunt answers (direct)
+primary_election: beacon-lurk + deterministic yield, see entry.
+two_primary: transient by design; pin_id GUIDv7 > stone_id compare; loser auto-unpins if outbid.
+proxy_auth: NONE app-layer (see routing entry); replication stone-to-stone uses StoneClient mTLS iff pond certs exist, plain HTTP otherwise.
+device_move_end_to_end: PASSIVE ONLY — roaming boolean surfaces in portrait API and NOTHING consumes it. No quarantine/re-auth flow.
+windows_macos: scan-only; macOS not in Platform enum.
+mid_reroute_clients: explicit errors, self-retry.
+
+## Surprises (consolidated)
+1. Unauthenticated insecure-TLS proxy plane. 2. S3 unsigned-by-default. 3. Silent data loss on full-sync divergence.
+4. Two conflicting canonical layouts. 5. Roaming flag inert. 6. Repo-root .zen-garden pollution. 7. Unknown-FS→Native permissive default.
+8. Election without consensus layer. 9. Automount negative-cache 300s anti-journal-flood hack. 10. Synthetic minimum-GUIDv7 compaction trick.

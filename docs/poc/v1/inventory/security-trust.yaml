@@ -1,0 +1,102 @@
+# Security & trust — capability inventory
+# Survey: 2026-08-24 · sources: domain/security, api/v1/pond*, gateway/, infra/secrets, run.rs hooks, rake enrollment
+
+- id: pond-ceremony-surface
+  name: Pond ceremony API (init/join/unlock/invite/revoke/promote/drain/status/ceremony+QR)
+  maturity: live-proven · verdict: redesign
+  what: Full trust bootstrap over koi-certmesh CertmeshCore via in-process tower oneshot. CSR-only enrollment (key never leaves joining stone); trust profiles flatten to two booleans; ceremony host with crash-recovery journal; QR for authenticator setup.
+  surprises: Invite ttl_minutes accepted-but-never-enforced (windows stay open until explicit close); unlock prefers totp_code when both given.
+  v2_note: Keep semantics (CSR-only, two-boolean profiles, sanitized bags); drop tower-oneshot indirection + ignored TTL.
+
+- id: pond-enforce-stage-matrix
+  name: Control-plane envelope enforcement (ZG_POND_ENFORCE Off/Observe/Enforce)
+  maturity: code-complete-unsoaked · verdict: port
+  what: Middleware authorizes MUTATING verbs on /stone|/garden|/admin by clear-signed envelope bound to method+path+audience+body-hash. Observe default = log-only. Enforce rejects unsigned/replayed/unbound AND retires the mTLS listener entirely (clear-plane end-state, run.rs:1716-1723).
+  scope_exemptions: reads always; /pond/* self-verifying; deploy/upgrade (infra self-update BY DESIGN plain); storage+S3/WebDAV data plane; gateway (orchestrators have no koi identity); offering volume writes.
+  CRITICAL: Per-stone posture variance — an un-enrolled stone in an enforcing fleet enforces NOTHING (no identity ⇒ pass-through). ZG_POND_ENFORCE documented NOWHERE in docs/.
+  v2_note: Preserve scope matrix + staged rollout; make stage a config artifact; document Open-stone gap.
+
+- id: inter-stone-envelope-signing
+  name: Inter-stone request signing (X-Koi-Envelope)
+  maturity: code-complete-unsoaked · verdict: port
+  what: Signed today: rake mutations (loopback oracle), /pond/renew, companion "all" broadcasts. Plaintext by design: deploy/upgrade, data plane, gateway registrations, volume writes, all reads.
+  how: canonical bytes = verb+path+query+audience+blake3(body); core.sign mode-transparent (Open⇒passthrough envelope).
+  surprise: rake sends UNSIGNED when target stone name unknown (context.rs:93) — cold-start bypasses binding silently.
+
+- id: pond-renewal-timer
+  name: Cert renewal flows (member clear-plane rotation + cornerstone CA self-leaf)
+  maturity: code-complete-unsoaked · verdict: port
+  what: Hourly task; zen drives renewal itself (koi background NOT armed). Member: CSR→sign→POST→install; CA verifies identity bind-check closing swapped-CSR impersonation (ADR-022 M1). Past-grace → warm RejoinRequired not retries.
+  crown_jewels: Two-path role split + rejoin-not-retry semantics. Gap: CA's real policy returned but deliberately unconsumed (N4) — local conservative threshold may fire early.
+
+- id: replay-nonce-defence
+  name: Single-use nonce cache (replay defence)
+  maturity: code-complete-unsoaked · verdict: redesign
+  what: In-memory (signer_cn,nonce) set, ±300s window, fails CLOSED at 100k entries; recorded only after auth.
+  gaps: Process restart wipes it (replay window reopens); per-stone only, no fleet view.
+  v2_note: Push into sidecar layer where it survives restarts.
+
+- id: loopback-sign-oracle
+  name: Loopback signing oracle (:7182)
+  maturity: live-proven · verdict: keep
+  what: rake asks LOCAL moss to sign {method,path,audience,body_hash} — body never travels; 127.0.0.1-bound socket.
+  surprise: Any local process can make moss vouch for the stone (no auth on oracle) — acceptable only on trusted hosts.
+  v2_note: Elegant pattern; consider unix-socket/named-pipe peer-credential check.
+
+- id: tls-lobby-router-split
+  name: Dual-listener TLS :7183 + public lobby router :7185
+  maturity: live-proven · verdict: redesign
+  what: Pond-active ⇒ HTTPS full router + HTTP lobby (health/read-only/discovery/ALL pond routes/deploy+upgrade). No certs ⇒ single full HTTP listener.
+  CRITICAL: Lobby exposes POST deploy/upgrade unauthenticated-by-TLS AND Enforce exempts them — genuinely unsigned by design. mTLS deferred forever at Phase-2 comment. Dual route tables already drifting.
+  v2_note: Pick ONE transport story in greenfield.
+
+- id: chirp-envelope-hooks
+  name: UDP chirp signing/verification hooks
+  maturity: live-proven · verdict: redesign
+  THE BIG ONE: Verifier checks signature against whatever key the sender supplies — sender_cert NEVER chained to pond CA (CA PEM loaded then IGNORED, run.rs:1683-1703) + blanket accept-unsigned during transition. Integrity-theater; zero authentication. Any LAN peer can forge announcements.
+
+- id: koi-gateway-port
+  name: KoiGateway seam (GATEWAY-0001)
+  maturity: scaffolded · verdict: port
+  what: Dyn-safe trait over all koi interaction using zen DTOs + koi-common wire types; embedded adapter degrades to Unavailable never-crash; lazy event forwarder maps 4 pond variants.
+  surprise: ZERO production consumers; accessor builds fresh adapter per call (separate event channels per subscriber).
+  v2_note: Exactly right shape for sidecar era; needs singleton home + actual adoption.
+
+- id: secrets-vault
+  name: Credential vault (koi_crypto) usage
+  maturity: live-proven · verdict: keep
+  what: OS-store master-key + Argon2id machine-bound fallback + AES-GCM per-secret. Consumers: borrowed-offering creds at adoption ("borrowed:{name}:credentials") + KoiGateway.vault_store.
+  BUG: adoption records credentials_key EVEN WHEN vault write failed — dangling key reference (adoption.rs:444-447).
+
+- id: ca-unlock-slots
+  name: CA unlock methods (passphrase / TOTP slot / auto-unlock)
+  maturity: code-complete-unsoaked · verdict: port
+  what: Post-reboot locked CA; three routes; TOTP slot gated on tpm::is_available() with honest unavailable UX on lean builds.
+  surprise: Auto-unlock saves passphrase-derived key to disk for JustMe/MyTeam but NOT MyOrganization (documented tradeoff, easy to miss).
+
+- id: presign-identity-derivation
+  name: Presigned URL secret derivation (STORAGE-0016 §2f)
+  maturity: code-complete-unsoaked · verdict: redesign
+  CRITICAL: Secret = SHA256 of CA FINGERPRINT — a value the API serves openly (status/ca.pem metadata). Anyone knowing the public fingerprint can mint valid tokens. Security rests on secrecy of a published value.
+  v2_note: Derive from vault-held secret, not publishable identifier.
+
+- id: rake-os-truststore
+  name: rake enrollment + OS root-store CA install (os-truststore crate)
+  maturity: live-proven · verdict: port
+  what: Installs pond CA into machine ROOT store (update-ca-certificates/certutil/security add-trusted-cert) so browsers trust pond TLS.
+  concern: Machine-root trust far exceeds garden scope; uninstall path unclear. Prefer per-app trust (NSS db/browser prompt).
+
+- id: stone-client-mtls-transport
+  name: StoneClient HTTP↔HTTPS+mTLS transport resolution
+  maturity: live-proven · verdict: port
+  what: Pooled client picks mTLS iff both sides advertise TLS + local certs exist; reactive reload on EnrollmentChanged; TOFU install on proxy join.
+  CRITICAL: Proxy join receives ca_fingerprint but passes None to installer — PIN CHECK SKIPPED. Multiple production clients set danger_accept_invalid_certs(true) (moss/http.rs:49, storage/handle.rs:1081, mongodb orchestrator) nullifying server-auth on those legs.
+
+## Surprises (cross-cutting)
+1. Enforce retires TLS entirely — clear-plane-with-envelopes is the END STATE; TLS is transitional scaffolding.
+2. Chirp verification is integrity-theater (CA ignored, unsigned accepted).
+3. Invite TTL fiction. 4. Hardcoded "30 days" expiry strings in responses (display only).
+5. Presign secret from publicly-served fingerprint. 6. TOFU without fingerprint pin-check despite having it.
+7. KoiGateway zero consumers. 8. Companion command hop unauthenticated localhost HTTP (only inter-stone leg signs).
+9. Replay cache volatile + per-stone. 10. ZG_POND_ENFORCE undocumented anywhere.
+11. danger_accept_invalid_certs(true) in production clients ×3. 12. Uniform degrade-don't-crash posture means "security off" is always silent-success — never surfaced to operators.

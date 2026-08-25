@@ -1,0 +1,1 @@
+{"rustc":8891013984288978370,"features":"[]","declared_features":"[]","target":16520849926423671496,"profile":2241668132362809309,"path":7068843235801435888,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"debug\\.fingerprint\\take_mut-994a48efa1e5e7a7\\dep-lib-take_mut","checksum":false}}],"rustflags":["-C","link-arg=/DEBUG:NONE"],"config":8247474407144887393,"compile_kind":0}

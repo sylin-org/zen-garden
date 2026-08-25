@@ -1,0 +1,8 @@
+F:\Replica\NAS\Files\repo\github\zen-garden\src\orchestrators\target\rust-analyzer\debug\deps\mongodb_internal_macros-855e1d4444087bf3.d: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\action_impl.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\option.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\rustdoc.rs
+
+F:\Replica\NAS\Files\repo\github\zen-garden\src\orchestrators\target\rust-analyzer\debug\deps\mongodb_internal_macros-855e1d4444087bf3.dll: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\action_impl.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\option.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\rustdoc.rs
+
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\lib.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\action_impl.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\option.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\mongodb-internal-macros-3.5.1\src\rustdoc.rs:

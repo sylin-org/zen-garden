@@ -1,0 +1,10 @@
+F:\Files\repo\github\sylin-org\zen-garden\src\orchestrators\mongodb\target\rust-analyzer\debug\deps\writeable-4df828cfd0a689f2.d: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\cmp.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\impls.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\ops.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\parts_write_adapter.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\try_writeable.rs
+
+F:\Files\repo\github\sylin-org\zen-garden\src\orchestrators\mongodb\target\rust-analyzer\debug\deps\libwriteable-4df828cfd0a689f2.rmeta: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\cmp.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\impls.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\ops.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\parts_write_adapter.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\try_writeable.rs
+
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\lib.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\cmp.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\impls.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\ops.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\parts_write_adapter.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\writeable-0.6.2\src\try_writeable.rs:

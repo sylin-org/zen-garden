@@ -65,7 +65,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Values are DIRECTORY names under src/orchestrators/ (package names differ,
+        # Values are DIRECTORY names under src/poc/orchestrators/ (package names differ,
         # e.g. common -> orchestrator-common). ai joins or leaves per prompt 04.
         crate: [common, ollama, mongodb]
     steps:
@@ -79,10 +79,10 @@ jobs:
           # Orchestrators are excluded from the root workspace, so scope the cache to
           # the specific crate dir — otherwise rust-cache keys off the root workspace
           # (which omits orchestrators) and every matrix leg cache-misses.
-          workspaces: zen-garden/src/orchestrators/${{ matrix.crate }}
+          workspaces: zen-garden/src/poc/orchestrators/${{ matrix.crate }}
       # `cargo check` emits metadata only and never links, so the mongodb leg needs no
       # libmongocrypt on the runner (mongocrypt-sys ships pregenerated bindings and only
       # emits a link directive). A future `cargo build`/`test` here WOULD need it.
       - name: cargo check (${{ matrix.crate }})
-        working-directory: zen-garden/src/orchestrators/${{ matrix.crate }}
+        working-directory: zen-garden/src/poc/orchestrators/${{ matrix.crate }}
         run: cargo check --all-targets

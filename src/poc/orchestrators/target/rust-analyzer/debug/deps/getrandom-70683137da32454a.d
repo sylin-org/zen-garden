@@ -1,0 +1,10 @@
+F:\Replica\NAS\Files\repo\github\zen-garden\src\orchestrators\target\rust-analyzer\debug\deps\getrandom-70683137da32454a.d: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\backends.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\error.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\util.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\../README.md C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\backends\windows.rs
+
+F:\Replica\NAS\Files\repo\github\zen-garden\src\orchestrators\target\rust-analyzer\debug\deps\libgetrandom-70683137da32454a.rmeta: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\backends.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\error.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\util.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\../README.md C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\backends\windows.rs
+
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\lib.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\backends.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\error.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\util.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\../README.md:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\getrandom-0.4.1\src\backends\windows.rs:

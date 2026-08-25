@@ -1,24 +1,27 @@
 [workspace]
 members = [
-  "src/lantern",
-  "src/common",
-  "src/discovery",
-  "src/moss",
-  "src/rake",
-  "src/cricket",
-  "src/firefly",
-  "src/companion-sdk",
-  "src/companion-usb",
-  "src/build-utils",
-  "src/probe",
+  "src/poc/lantern",
+  "src/poc/common",
+  "src/poc/discovery",
+  "src/poc/moss",
+  "src/poc/rake",
+  "src/poc/cricket",
+  "src/poc/firefly",
+  "src/poc/companion-sdk",
+  "src/poc/companion-usb",
+  "src/poc/build-utils",
+  "src/poc/probe",
 ]
 exclude = [
   # Orchestrators are standalone crates — not part of this workspace.
   # Each builds independently inside its own Docker image.
-  "src/orchestrators/common",
-  "src/orchestrators/ollama",
-  "src/orchestrators/mongodb",
-  "src/orchestrators/ai",
+  "src/poc/orchestrators/common",
+  "src/poc/orchestrators/ollama",
+  "src/poc/orchestrators/mongodb",
+  "src/poc/orchestrators/ai",
+  # v1 greenfield has its own workspace (see src/v1/Cargo.toml) with its own
+  # lint law — CODE-RULES.md P4. The PoC remains the frozen oracle (branch `poc`).
+  "src/v1",
 ]
 resolver = "2"
 

@@ -1,0 +1,10 @@
+F:\Files\repo\github\sylin-org\zen-garden\src\orchestrators\mongodb\target\rust-analyzer\debug\deps\tagptr-08e0ed00e2096afd.d: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\macros.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\macros\doc.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\imp\atomic.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\imp\non_null.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\imp\ptr.rs
+
+F:\Files\repo\github\sylin-org\zen-garden\src\orchestrators\mongodb\target\rust-analyzer\debug\deps\libtagptr-08e0ed00e2096afd.rmeta: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\macros.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\macros\doc.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\imp\atomic.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\imp\non_null.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\imp\ptr.rs
+
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\lib.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\macros.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\macros\doc.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\imp\atomic.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\imp\non_null.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tagptr-0.2.0\src\imp\ptr.rs:

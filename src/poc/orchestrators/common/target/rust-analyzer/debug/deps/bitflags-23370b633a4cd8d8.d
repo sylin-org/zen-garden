@@ -1,0 +1,11 @@
+F:\Files\repo\github\sylin-org\zen-garden\src\orchestrators\common\target\rust-analyzer\debug\deps\bitflags-23370b633a4cd8d8.d: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\iter.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\parser.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\traits.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\public.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\internal.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\external.rs
+
+F:\Files\repo\github\sylin-org\zen-garden\src\orchestrators\common\target\rust-analyzer\debug\deps\libbitflags-23370b633a4cd8d8.rmeta: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\iter.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\parser.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\traits.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\public.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\internal.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\external.rs
+
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\lib.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\iter.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\parser.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\traits.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\public.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\internal.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitflags-2.11.0\src\external.rs:

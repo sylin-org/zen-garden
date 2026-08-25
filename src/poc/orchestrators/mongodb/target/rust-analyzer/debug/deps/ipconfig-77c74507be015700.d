@@ -1,0 +1,10 @@
+F:\Files\repo\github\sylin-org\zen-garden\src\orchestrators\mongodb\target\rust-analyzer\debug\deps\ipconfig-77c74507be015700.d: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\adapter.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\bindings\mod.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\bindings\win64.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\computer.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\error.rs
+
+F:\Files\repo\github\sylin-org\zen-garden\src\orchestrators\mongodb\target\rust-analyzer\debug\deps\libipconfig-77c74507be015700.rmeta: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\adapter.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\bindings\mod.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\bindings\win64.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\computer.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\error.rs
+
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\lib.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\adapter.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\bindings\mod.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\bindings\win64.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\computer.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipconfig-0.3.2\src\error.rs:

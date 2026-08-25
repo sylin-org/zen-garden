@@ -1,0 +1,9 @@
+F:\Files\repo\github\sylin-org\zen-garden\src\orchestrators\common\target\rust-analyzer\debug\deps\futures_macro-0d5d21cc98f2597a.d: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\executor.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\join.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\select.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\stream_select.rs
+
+F:\Files\repo\github\sylin-org\zen-garden\src\orchestrators\common\target\rust-analyzer\debug\deps\futures_macro-0d5d21cc98f2597a.dll: C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\lib.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\executor.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\join.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\select.rs C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\stream_select.rs
+
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\lib.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\executor.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\join.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\select.rs:
+C:\Users\onose\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-macro-0.3.32\src\stream_select.rs:

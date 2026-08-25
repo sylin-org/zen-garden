@@ -27,6 +27,7 @@
   maturity: live-proven
   verdict: keep
   what: 1453-line rendering module + gauge/layout/colors; extract_json_field for --field scripting; pulse full-screen ANSI frames.
+  live_witness: Wall monitor fully realized on workstation 2026-08-25 — fluid regions, ASCII gauges with color thresholds, offering dot row (ok/off/degraded incl. adopted native), garden panel 6/6 with per-peer chirp freshness (7-30s), mixed-domain event ring at 32evt/min, footer connection stats. Witnessed LIVE in feed: emerald-vale goodbye x3 then return (graceful restart observed garden-wide). CAUTION: known Windows CPU/DSK sensor bugs classified the stone 'withering' and the false health PROPAGATES to the whole garden via chirps/TXT — the metric->health->advertised-state pipeline has no sensor-confidence derate (L3/L7 tension; v2 should gate health classification on sensor trust).
 
 - id: rake-firefly-roster-push
   name: Firefly roster push (scp+ssh shell-outs)

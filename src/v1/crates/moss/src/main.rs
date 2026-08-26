@@ -10,6 +10,7 @@
 
 mod http;
 mod identity;
+mod offerings;
 mod source;
 
 use clap::Parser;
@@ -106,6 +107,40 @@ async fn main() {
     );
     let chirp_source = source::StaticChirpSource::new(chirp_body.clone());
 
+    // The stone's offerings: loaded from disk, adopted split to candidates
+    // (ghost prevention, OFFERINGS.md §2).
+    let offerings = pipeline::step::<
+        Arc<offerings::registry::Registry>,
+        String,
+        _,
+    >("offerings-load", {
+        let identity_name = identity.stone_name.clone();
+        async move {
+            let dir = std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(|h| std::path::PathBuf::from(h).join(".zen-garden"))
+                .ok_or_else(|| "no home directory known".to_string())?;
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| format!("create {}: {e}", dir.display()))?;
+            let path = dir.join("offerings.json");
+            let registry = Arc::new(offerings::registry::Registry::load(path));
+            tracing::info!(
+                stone = %identity_name,
+                active = registry.snapshot().len(),
+                candidates = registry.candidate_count(),
+                "offerings loaded"
+            );
+            Ok(registry)
+        }
+    })
+    .await;
+    let _runtime_registry = offerings::runtime::RuntimeRegistry::build(
+        "null",
+        vec![Arc::new(offerings::runtime::NullRuntime)],
+    );
+    // The configured runtime is resolved lazily on first managed deploy;
+    // O1 replaces this build call with configuration-driven selection.
+
     let ingress = pipeline::step("ingress-bind", {
         let discovery = discovery.clone();
         async move { Ingress::bind(&discovery, Some(discovery.group)).await }
@@ -158,6 +193,7 @@ async fn main() {
         topology: Arc::clone(&topology),
         dispatcher: dispatcher.clone(),
         ingest_counters,
+        offerings: Arc::clone(&offerings),
         stone_name: identity.stone_name.clone(),
         boot_id,
         started_at: chrono::Utc::now(),

@@ -20,6 +20,7 @@ pub struct AppState {
     pub topology: Arc<garden_kernel::topology::Topology>,
     pub dispatcher: Dispatcher,
     pub ingest_counters: Arc<IngestCounters>,
+    pub offerings: Arc<crate::offerings::registry::Registry>,
     pub stone_name: String,
     pub boot_id: Uuid,
     pub started_at: chrono::DateTime<chrono::Utc>,
@@ -111,6 +112,10 @@ async fn posture(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> 
                 "stones": state.topology.snapshot().len(),
                 "chirps_total": state.topology.chirps_total(),
             },
+            "offerings": {
+                "active": state.offerings.snapshot().len(),
+                "candidates": state.offerings.candidate_count(),
+            },
         }
     }))
 }
@@ -152,6 +157,9 @@ mod tests {
             topology: Arc::new(garden_kernel::topology::Topology::new()),
             dispatcher: garden_kernel::dispatch::Dispatcher::new(16).0,
             ingest_counters: Arc::new(garden_kernel::ingress::IngestCounters::default()),
+            offerings: Arc::new(crate::offerings::registry::Registry::load(
+                std::env::temp_dir().join(format!("moss-test-offerings-{}.json", Uuid::now_v7())),
+            )),
             stone_name: "stone-test".into(),
             boot_id: Uuid::now_v7(),
             started_at: chrono::Utc::now(),
@@ -188,6 +196,7 @@ mod tests {
                     category: "data".into(),
                     status: "running".into(),
                     role: None,
+                    ports: Default::default(),
                 }],
                 health: garden_glossary::health::THRIVING.into(),
                 status: garden_glossary::presence::ONLINE.into(),

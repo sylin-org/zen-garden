@@ -31,7 +31,7 @@ pub struct ServiceEntry {
     /// Stable identity of the offering instance; survives renames.
     #[serde(default)]
     pub offering_id: String,
-    /// Fully-qualified offering name (e.g. `mongodb` or `mongodb::legacy`).
+    /// Fully-qualified offering name (e.g. `mongodb` or `ollama::adopted`).
     pub name: String,
     /// Catalog offering this instance was planted from.
     pub offering: String,
@@ -42,6 +42,11 @@ pub struct ServiceEntry {
     /// Orchestration role when active: primary | replica | joining | degraded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// Actual host ports by name ("default", "management"...) — populated
+    /// only where remapped from manifest defaults (PORT-0001 inherited).
+    /// Absent/empty = defaults stand (transcribed from poc discovery.rs:86-90).
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub ports: std::collections::HashMap<String, u16>,
 }
 
 /// The chirp body. v0-required core + v1 extensions (`proto`, `boot_id`,

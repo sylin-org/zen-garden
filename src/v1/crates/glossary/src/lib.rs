@@ -25,6 +25,39 @@ pub mod presence {
     pub const OFFLINE: &str = "offline";
 }
 
+/// Offering vocabulary — modes and statuses of placed work (OFFERINGS.md §1).
+/// Wire strings lowercase, byte-compatible with the PoC.
+pub mod offering {
+    /// Planted by the garden from a catalog manifest; stone drives lifecycle.
+    pub const MANAGED: &str = "managed";
+    /// Found already running on the host; the stone watches it.
+    pub const ADOPTED: &str = "adopted";
+    /// Lives elsewhere entirely; registered here for discovery only.
+    pub const BORROWED: &str = "borrowed";
+
+    /// Install in flight.
+    pub const INSTALLING: &str = "installing";
+    /// Serving.
+    pub const RUNNING: &str = "running";
+    /// At rest — reconcile will not auto-start it (OFFERINGS.md §3.2).
+    pub const STOPPED: &str = "stopped";
+    /// Scheduling fence; no runtime action implied.
+    pub const CORDONED: &str = "cordoned";
+    /// Nourish/upgrade in flight.
+    pub const MAINTENANCE: &str = "maintenance";
+    /// Reconcile exhausted its patience, or connectivity lost.
+    pub const DEGRADED: &str = "degraded";
+    /// Not yet known.
+    pub const UNKNOWN: &str = "unknown";
+
+    /// Adoption control levels: how much the stone may do to a found thing.
+    pub mod control {
+        pub const FULL: &str = "full";
+        pub const MONITOR: &str = "monitor";
+        pub const ANNOUNCE: &str = "announce";
+    }
+}
+
 /// The naming well: poetical stone names (`stone-{adjective}-{noun}`),
 /// transcribed from the PoC's dictionaries.
 pub mod naming;

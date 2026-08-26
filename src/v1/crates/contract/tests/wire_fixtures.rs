@@ -28,6 +28,7 @@ fn sample_body() -> ChirpBody {
             category: "data".into(),
             status: "running".into(),
             role: None,
+            ports: Default::default(),
         }],
         health: garden_glossary::health::THRIVING.into(),
         status: garden_glossary::presence::ONLINE.into(),

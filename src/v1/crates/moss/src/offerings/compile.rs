@@ -172,13 +172,23 @@ pub fn compile(
         workload.advanced = v;
     }
 
+    // §5.2/§6.4: the plan records EVERY compatibility outcome — passing
+    // rules included — so explain shows the whole evaluation, blind spots
+    // included, not just refusals. `chose` names the outcome.
     let decisions: Vec<Decision> = report
         .outcomes
         .iter()
-        .filter(|o| o.result == "matched")
         .map(|o| Decision {
             rule: o.rule.clone(),
-            chose: if o.decide == Decide::Fallback { format!("image -> {}", report.image) } else { "place".into() },
+            chose: if o.result == "matched" {
+                if o.decide == Decide::Fallback {
+                    format!("image -> {}", report.image)
+                } else {
+                    "place".into()
+                }
+            } else {
+                o.result.into()
+            },
             because: o.because.clone(),
             source: o.source.clone(),
         })
@@ -245,7 +255,19 @@ mod tests {
         let plan = compile(&manifest, &facts_snapshot, &inputs, &dir).unwrap();
 
         assert_eq!(plan.workload.image, "mongo:7", "AVX present: no fallback");
-        assert!(plan.decisions.is_empty(), "no compat rule fired");
+        // §5.2: EVERY compatibility outcome rides in the plan — passing
+        // rules included — so explain shows the whole evaluation. With
+        // AVX+sse4_2 present and 8GB RAM, all three refusals are live
+        // candidates evaluated as no_match.
+        let by_rule: BTreeMap<String, String> = plan
+            .decisions
+            .iter()
+            .map(|d| (d.rule.clone(), d.chose.clone()))
+            .collect();
+        assert_eq!(by_rule.len(), 3, "{by_rule:?}");
+        assert_eq!(by_rule["missing-avx-feature"], "no_match");
+        assert_eq!(by_rule["missing-sse42-feature"], "no_match");
+        assert_eq!(by_rule["insufficient-memory"], "no_match");
 
         let cfg = plan.workload.configs.first().expect("config must materialize");
         assert!(
@@ -264,6 +286,61 @@ mod tests {
         );
 
         // Cleanup probe artifacts.
+        let _ = std::fs::remove_dir_all(dir.root.clone());
+    }
+
+    const SMALL: &str = "\
+kind: software
+name: small
+category: misc
+description: Rules all present
+managed:
+  world: oci
+  image: small:1
+compatibility:
+  - name: tiny-ram-noted
+    when: [{ path: ram.total.mb, op: lt, value: 128 }]
+    decide: place
+    because: tiny machines deserve caching too
+  - name: no-unknown-facts-here
+    when: [{ path: gpu.present, op: eq, value: true }]
+    decide: deny
+    because: gpu stones should use the GPU offering
+";
+
+    /// Tri-state fidelity (§6.4): matched, unknown and the absent-rule
+    /// outcomes each land in the plan under their own chose label.
+    #[tokio::test]
+    async fn plan_records_every_outcome_state() {
+        let manifest = Catalog::parse("small", SMALL).unwrap();
+
+        // Facts: ram BELOW 128 MB (canonical bytes) so tiny-ram matches;
+        // gpu.present deliberately ABSENT (tri-state coverage).
+        let factsheet = Factsheet::empty();
+        let mut nodes = BTreeMap::new();
+        nodes.insert("ram.total.bytes".to_string(), serde_json::json!(67108864u64));
+        factsheet
+            .collect(&[std::sync::Arc::new(Static(nodes))])
+            .await;
+        let facts_snapshot = factsheet.snapshot();
+
+        let inputs = BTreeMap::new();
+        let dir = crate::offerings::directory::OfferingsRoot::new(std::path::PathBuf::from(
+            ".zen-garden-probe",
+        ))
+        .dir_for("small");
+        let plan = compile(&manifest, &facts_snapshot, &inputs, &dir).unwrap();
+
+        let by_rule: BTreeMap<String, String> = plan
+            .decisions
+            .iter()
+            .map(|d| (d.rule.clone(), d.chose.clone()))
+            .collect();
+        assert_eq!(by_rule.len(), 2, "both outcomes recorded: {by_rule:?}");
+        assert_eq!(by_rule["tiny-ram-noted"], "place");
+        // The gpu rule addresses an unprobed fact — unknown, never folded.
+        assert_eq!(by_rule["no-unknown-facts-here"], "unknown");
+
         let _ = std::fs::remove_dir_all(dir.root.clone());
     }
 }

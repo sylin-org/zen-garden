@@ -49,7 +49,7 @@ compatibility:
     suggest: Use amd64 or arm64 hardware for Ollama
   - name: gpu-present-use-ollama
     when:
-      - { path: gpu, op: present }
+      - { path: gpu.present, op: eq, value: true }
     decide: deny
     because: >-
       This stone has a GPU — use the 'ollama' (GPU) offering instead of

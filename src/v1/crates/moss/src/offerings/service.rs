@@ -179,7 +179,9 @@ impl OfferingService {
                 offering_id: uuid::Uuid::now_v7().to_string(),
                 name: m.name.clone(),
                 offering: m.name.clone(),
-                category: category.unwrap_or_else(|| m.category.clone()),
+                // Provenance is the manifest's (§5.1 machine-truth): a
+                // client-supplied category must not rewrite catalog identity.
+                category: m.category.clone(),
                 status: Status::Running,
                 location: Location {
                     host: "localhost".into(),
@@ -191,14 +193,14 @@ impl OfferingService {
                     spec: plan.workload.clone(),
                     port_map: placement.named_host_ports,
                     plan: Some(plan_value),
-                }),
-                registered_at: now,
+                }),                registered_at: now,
                 updated_at: now,
             };
             self.registry.register(offering.clone());
             self.audit(name, "Placed", serde_json::json!({ "world": kind, "catalog": true }));
             return Ok(offering);
         }
+
 
         // Ad-hoc path: a raw image with no catalog behind it.
         let Some(image) = image else {

@@ -33,7 +33,10 @@ impl DockerRuntime {
     }
 
     fn container_name(name: &str) -> String {
-        format!("{CONTAINER_PREFIX}{name}")
+        // Docker forbids ':' (and friends) in container names; instance
+        // names like 'memcache:prod' and FQNs like 'ollama::adopted' ride
+        // the same slug rule as offering directories.
+        format!("{CONTAINER_PREFIX}{}", super::directory::slug(name))
     }
 
     async fn pull(&self, image: &str) -> Result<(), RuntimeError> {
@@ -256,6 +259,10 @@ impl Runtime for DockerRuntime {
                         c.status.as_deref().map(|s| s == "restarting"),
                     );
                     Some(super::runtime::PlacedRef {
+                        // Slugged form of the offering name: instance names
+                        // ('mc:prod') read back as 'mc_prod'. No consumer
+                        // round-trips this yet; adoption detection will pair
+                        // against known registry slugs when it lands.
                         name: full_name
                             .trim_start_matches('/')
                             .trim_start_matches(CONTAINER_PREFIX)
@@ -269,5 +276,29 @@ impl Runtime for DockerRuntime {
                 Vec::new()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    /// Instance and FQN names slug into Docker-legal container names —
+    /// colons are forbidden by the engine, so `mc:prod` cannot survive
+    /// unslugged (the multi-instance bug this pins shut).
+    #[test]
+    fn instance_names_slug_into_docker_legality() {
+        assert_eq!(
+            DockerRuntime::container_name("memcached"),
+            "zen-offering-memcached"
+        );
+        assert_eq!(DockerRuntime::container_name("mc:prod"), "zen-offering-mc_prod");
+        // Each ':' maps to '_' — identical to the directory slug rule, so
+        // container and directory derivations stay consistent per name.
+        assert_eq!(
+            DockerRuntime::container_name("ollama::adopted"),
+            "zen-offering-ollama__adopted"
+        );
     }
 }

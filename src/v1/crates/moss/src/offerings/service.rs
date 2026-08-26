@@ -162,6 +162,16 @@ impl OfferingService {
         self.worlds.kinds()
     }
 
+    /// Instance suffix grammar for named installations (`{stem}:{suffix}`):
+    /// letters, digits, '-' or '_', ≤64 chars. Docker-legal via slug.
+    fn valid_instance_suffix(suffix: &str) -> bool {
+        !suffix.is_empty()
+            && suffix.len() <= 64
+            && suffix
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+    }
+
     /// Plant an offering by name (OFFERINGS.md §5). Catalog manifests
     /// compile against current facts — compatibility decides, decisions are
     /// logged into the stored plan. Ad-hoc images place directly when no
@@ -181,8 +191,24 @@ impl OfferingService {
         let kind = requested_world.unwrap_or(&self.default_world).to_string();
         let rt = self.worlds.by_kind(&kind).map_err(CommandError::WorldUnavailable)?;
 
-        // Catalog path: manifest is truth; compile decides.
-        if let Some(m) = self.catalog.get(name) {
+        // Catalog path: manifest is truth; compile decides. Named
+        // installations (`{stem}:{instance}`) inherit the stem's manifest
+        // under their own name; a malformed suffix refuses loudly rather
+        // than quietly degrading into ad-hoc placement.
+        let exact = self.catalog.get(name);
+        let via_instance = if exact.is_none()
+            && let Some((base, suffix)) = name.split_once(':')
+        {
+            if !Self::valid_instance_suffix(suffix) {
+                return Err(CommandError::Conflict(format!(
+                    "'{suffix}' is not a valid installation suffix (letters, digits, '-', '_')"
+                )));
+            }
+            self.catalog.get(base)
+        } else {
+            None
+        };
+        if let Some(m) = exact.or(via_instance) {
             // One machine-truth parse (OFFERINGS.md §5.1): a catalog-named
             // offering's image comes from its manifest. Explicit overrides
             // would fork deployed reality from compiled decisions.
@@ -215,7 +241,9 @@ impl OfferingService {
                 .map_err(|e| CommandError::Conflict(format!("plan encode: {e}")))?;
             let offering = Offering {
                 offering_id: uuid::Uuid::now_v7().to_string(),
-                name: m.name.clone(),
+                // Identity: the full invocation name; provenance: the stem.
+                // 'memcache:prod'.offering == 'memcache'.
+                name: name.to_string(),
                 offering: m.name.clone(),
                 // Provenance is the manifest's (§5.1 machine-truth): a
                 // client-supplied category must not rewrite catalog identity.
@@ -413,7 +441,7 @@ mod tests {
     use super::*;
     use crate::offerings::manifest::Catalog;
     use crate::offerings::registry::MemorySnapshotStore;
-    use crate::offerings::runtime::{NullRuntime, RuntimeRegistry};
+    use crate::offerings::runtime::{NullRuntime, Observed, Placement, PlacedRef, Runtime, RuntimeError, RuntimeRegistry};
 
     const REDIS: &str = "\
 kind: software
@@ -426,12 +454,61 @@ managed:
   ports: { default: 6379 }
 ";
 
+    /// A place-anywhere fake: binds every role exactly at its ledgered home.
+    /// Lets sequencing tests run real offer flows without Docker.
+    struct RecordingRuntime;
+
+    #[async_trait::async_trait]
+    impl Runtime for RecordingRuntime {
+        fn kind(&self) -> &'static str {
+            "rec"
+        }
+
+        async fn place(
+            &self,
+            _name: &str,
+            spec: &WorkloadSpec,
+        ) -> Result<Placement, RuntimeError> {
+            let mut named = HashMap::new();
+            for (role, alloc) in &spec.allocations {
+                named.insert(role.clone(), alloc.home);
+            }
+            Ok(Placement { named_host_ports: named })
+        }
+
+        async fn start(&self, _name: &str) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        async fn stop(&self, _name: &str) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        async fn remove(&self, _name: &str) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        async fn observe(&self, _name: &str) -> Option<Observed> {
+            Some(Observed {
+                running: true,
+                named_host_ports: HashMap::new(),
+            })
+        }
+
+        async fn list(&self) -> Vec<PlacedRef> {
+            Vec::new()
+        }
+    }
+
     fn service_with(catalog: Catalog) -> (OfferingService, std::path::PathBuf) {
         let root = std::env::temp_dir()
             .join(format!("moss-service-{}-{}", std::process::id(), uuid::Uuid::now_v7()));
         let service = OfferingService::new(
             Arc::new(Registry::new(Arc::new(MemorySnapshotStore::default()))),
-            Arc::new(RuntimeRegistry::build(vec![Arc::new(NullRuntime)])),
+            Arc::new(RuntimeRegistry::build(vec![
+                Arc::new(NullRuntime),
+                Arc::new(RecordingRuntime),
+            ])),
             "null".into(),
             Arc::new(catalog),
             Arc::new(Factsheet::empty()),
@@ -478,6 +555,56 @@ managed:
             .unwrap_err();
         // The null world's own refusal — proof the plant passed the surface.
         assert_eq!(err.to_string(), "runtime unsupported here: the null world places nothing");
+    }
+
+    /// Multi-instance hosts (operator ruling, post-W4 evaluation): two
+    /// installations of one stem coexist under distinct names, each with
+    /// its OWN ledgered address. The second draws :7301 regardless of the
+    /// first's status — claims decide, not sockets.
+    #[tokio::test]
+    async fn named_installations_share_a_stem_but_not_addresses() {
+        let catalog = Catalog::embedded([("redis", REDIS)]).unwrap();
+        let (service, _root) = service_with(catalog);
+
+        let first = service
+            .offer("redis", None, HashMap::new(), None, Some("rec"), &inputs())
+            .await
+            .unwrap();
+        let second = service
+            .offer("redis:prod", None, HashMap::new(), None, Some("rec"), &inputs())
+            .await
+            .unwrap();
+
+        // Distinct identities over shared provenance.
+        assert_eq!(first.name, "redis");
+        assert_eq!(second.name, "redis:prod");
+        assert_eq!(second.offering, "redis", "provenance stays the stem");
+        assert_ne!(first.offering_id, second.offering_id);
+
+        // And the point of it all: ledger-first addresses, ascending.
+        let m1 = first.managed().unwrap();
+        let m2 = second.managed().unwrap();
+        assert_eq!(m1.spec.allocations["default"].home, 7300);
+        assert_eq!(m2.spec.allocations["default"].home, 7301);
+        assert_eq!(m2.port_map["default"], 7301);
+    }
+
+    /// A malformed suffix refuses loudly instead of degrading into a
+    /// confusing ad-hoc 'no catalog entry' error.
+    #[tokio::test]
+    async fn invalid_installation_suffix_names_itself() {
+        let catalog = Catalog::embedded([("redis", REDIS)]).unwrap();
+        let (service, _root) = service_with(catalog);
+
+        let err = service
+            .offer("redis:b@d!suffix", None, HashMap::new(), None, Some("rec"), &inputs())
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'b@d!suffix'") && msg.contains("suffix"),
+            "got: {msg}"
+        );
     }
 }
 

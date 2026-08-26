@@ -185,6 +185,14 @@ Format laws:
   or deeper). Overlay entries OVERRIDE base entries by NAME; missing
   layers are routine, malformed manifests are skipped with warnings like
   any other. One stone's private adjustments must not fork the corpus.
+- **Named installations (2026-08-26):** `{stem}:{instance}` plants a second
+  copy of a catalog offering under its own name (`redis` and `redis:prod`
+  coexist on one stone). Instances inherit the stem's manifest and
+  category, carry their own identity/directory/decisions, draw INDEPENDENT
+  addresses from the ledger (the `offering` field keeps the stem as
+  provenance), and appear separately in chirps. Suffixes accept letters,
+  digits, '-' and '_'; anything else refuses loudly. FQN names (`::`)
+  remain adoption namespace territory.
 
 ### 5.2 Compile
 

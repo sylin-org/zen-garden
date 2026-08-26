@@ -36,7 +36,9 @@ Wire strings lowercase, byte-compatible with poc constants.
 
 One aggregate per stone: **active** pool + **candidates** pool behind one
 lock; every mutation funnels facts → persist (via the store PORT) → broadcast.
-Persistence: JSON at `{config_dir}/offerings.json`, atomic temp+rename.
+Persistence: **one directory per offering** (see ADR-0001) at
+`~/.zen-garden/offerings/{slug}/` — record.json, plan.json, events.jsonl,
+configs/, volumes/. Atomic temp+rename per file.
 
 **Ghost prevention (keep exactly):** adopted offerings load into
 *candidates*, invisible until their detector confirms them again
@@ -57,6 +59,11 @@ ledger lands (O2), wake re-derives and records remaps rather than lying.
 5. Adoption is detection, not conquest: promote on confirmation, demote on
    silence; compatibility may forbid outright (poc auto_adoption Phase 1A/1B).
 6. Borrow is registration only: excluded from reconcile, present in discovery.
+
+**The rehydration contract** — an offering is fully determined by three
+artifacts: its **registry entry**, its **directory on disk** (ADR-0001), and
+its **catalog manifest**. If rehydration fails for any constituent, the
+placed record says which one and why — silent degradation is banned.
 
 ## 4. The runtime seam
 

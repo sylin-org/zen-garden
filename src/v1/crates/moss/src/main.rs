@@ -137,6 +137,8 @@ async fn main() {
             let registry = Arc::new(offerings::registry::Registry::new(
                 store as Arc<dyn offerings::registry::SnapshotStore>,
             ));
+            // ADR-0002 slice 2: legacy records receive ledgered homes.
+            registry.derive_missing_allocations();
             tracing::info!(
                 stone = %identity_name,
                 active = registry.snapshot().len(),

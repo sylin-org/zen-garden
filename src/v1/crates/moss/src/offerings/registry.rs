@@ -132,6 +132,54 @@ impl Registry {
         self.events_tx.subscribe()
     }
 
+    /// One-time derive-migration (ADR-0002 slice 2): managed offerings
+    /// that predate allocations receive FLEXIBLE homes from their last
+    /// recorded residences, persisted immediately. Idempotent — offerings
+    /// already carrying allocations are untouched. After this pass the
+    /// ledger is complete and adapters bind explicitly on every create.
+    pub fn derive_missing_allocations(&self) {
+        use crate::offerings::model::PortAllocation;
+        use crate::offerings::ports::Tier;
+
+        let mut changed = Vec::new();
+        {
+            let mut inner = self.inner.write();
+            for o in inner.active.values_mut() {
+                let ModeData::Managed(m) = &mut o.mode_data else {
+                    continue;
+                };
+                if !m.spec.allocations.is_empty() || m.port_map.is_empty() {
+                    continue;
+                }
+                m.spec.allocations = m
+                    .port_map
+                    .iter()
+                    .map(|(role, port)| {
+                        (
+                            role.clone(),
+                            PortAllocation {
+                                home: *port,
+                                tier: Tier::Flexible,
+                            },
+                        )
+                    })
+                    .collect();
+                changed.push(o.clone());
+            }
+        }
+        if changed.is_empty() {
+            return;
+        }
+        for o in &changed {
+            tracing::info!(
+                offering = %o.name,
+                ports = ?o.managed().map(|m| m.spec.allocations.iter().map(|(r, a)| format!("{r}:{}", a.home)).collect::<Vec<_>>()),
+                "allocations derived from recorded residences (migration)"
+            );
+        }
+        self.persist();
+    }
+
     pub fn get(&self, offering_id: &str) -> Option<Offering> {
         self.inner.read().active.get(offering_id).cloned()
     }

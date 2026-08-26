@@ -13,7 +13,7 @@
 | D11 | Ceremonies (nourish/vacate/replant/store journals + rollback) deferred | Post-O2 | PoC reference poc/moss/src/domain/ceremony/ |
 | D12 | Orchestration roles/elections (primary/replica/joining) deferred | Post-O2 | ORCH-0001/0006 in PoC; wire `role` field already carried |
 | D13 | Borrow credentials vaulting (Koi vault keys) deferred | With borrow feature (O3) | PoC stored `borrowed:{name}:credentials` keys; v1 has no vault yet |
-| D14 | `start()` cannot hold ledged host ports on containers created with dynamic bindings — Docker reassigns an empty `HostPort` binding on every `docker start` | Converge/wake port-ledger polish (O2.5) | Witnessed in W4: fresh placements bind dynamically (by design), so a rest→wake cycle publishes a new random host port; moss records the remap honestly. Fix candidate: create-with-preferred-ports after first observation (recreate), or pin the ledger into `create_container` config |
+| D14 | ~~`start()` cannot hold ledged host ports on containers created with dynamic bindings~~ | Closes on implementation of [ADR-0002](../docs/v1/decisions/ADR-0002-port-allocation-and-residence.md) slices | Design retired this debt's framing: allocations are claimed ledger-first, every create emits explicit HostPort bindings (never `""`), and residence may legitimately differ from allocation. Closes when the arbiter/directory/adapter slices land + W5 witnesses the neighbour choreography |
 
 ## Closed
 

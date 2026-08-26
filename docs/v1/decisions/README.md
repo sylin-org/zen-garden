@@ -22,9 +22,10 @@ is never edited — superseding decisions reference their predecessor.
 | ADR | Status | Title |
 |-----|--------|-------|
 | [ADR-0001](ADR-0001-offering-directory.md) | Accepted | The Offering Directory as the unit of deployment |
+| [ADR-0002](ADR-0002-port-allocation-and-residence.md) | Accepted | Port addresses: stable allocation, honest residence |
 
 ## Queued (expected soon)
 
-- ADR-0002 — OCI-unified adapter: docker/podman as one engine, two sockets (§4 bet)
-- ADR-0003 — declared install forms (`inputs:`) replacing env-var incantations (§5.1)
-- ADR-0004 — declarative garden: per-stone plans lifted to `garden.yaml` (M3 bridge)
+- ADR-0003 — OCI-unified adapter: docker/podman as one engine, two sockets (§4 bet)
+- ADR-0004 — declared install forms (`inputs:`) replacing env-var incantations (§5.1)
+- ADR-0005 — declarative garden: per-stone plans lifted to `garden.yaml` (M3 bridge)

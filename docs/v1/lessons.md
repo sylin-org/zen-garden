@@ -197,3 +197,19 @@ control.
 of the garden adopt reality before they schedule it; availability is
 probed, bindings are recorded, and control levels scope what claiming
 means.
+
+## L26 - An address has an owner before it has a value
+W4's wake remapped memcached to a fresh random port - Docker reassigns
+empty HostPort bindings on every start, and the PoC's answer (re-ask the
+room) fails for services that burn a URL into config once. Fixed ports and
+floating ports are both wrong because they conflate two questions: who owns
+an address (identity, stable) and where a workload answers now (fact,
+volatile). v1 answers them separately: allocations are claimed from the
+ledger first (a rested offering's claim beats anyone's socket probe),
+residence is reported honestly wherever reality is read, homecoming is
+opportunistic (no recreation solely for addressing), and requiredness of an
+exact port is declared in the manifest - pihole IS :53; Mongo does not care.
+**Rule:** arbitrate garden members by their claims before touching sockets;
+probe only for outsiders; never recreate a healthy workload for bookkeeping;
+and when the garden meets foreign reality on a port, adopt the claim rather
+than contest it.

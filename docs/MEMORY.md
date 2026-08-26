@@ -15,6 +15,7 @@ this file points at; state lives once, decisions live once.
 | Offering Directory decision | `docs/v1/decisions/ADR-0001-offering-directory.md` |
 | Open engineering debt | `src/v1/DEBT.md` |
 | Witnessed milestones | `src/v1/WITNESSES.md` |
+| Port address law (allocation/residence) | `docs/v1/decisions/ADR-0002-port-allocation-and-residence.md` |
 | Sequenced slices (O0→later) | `docs/v1/OFFERINGS.md` §7 |
 | Session-local environment/handoff | `local/NOTES.md` (gitignored), see `local/README.md` |
 
@@ -42,8 +43,11 @@ this file points at; state lives once, decisions live once.
 ## Open threads not already owned elsewhere
 
 Owned elsewhere: O3 adoption/borrow (`OFFERINGS.md` §7), runtime events stream
-(D10), ceremonies (D11), orchestration roles (D12), borrow vaulting (D13),
-wake/start port stability (D14). The pointers below have no other home yet:
+(D10), ceremonies (D11), orchestration roles (D12), borrow vaulting (D13).
+Port addressing is DECIDED (ADR-0002 + L26) — implementation queue: pure
+arbiter+allocator → directory schema v2 + migration → adapter explicit-bind
+mechanics → Converger observation-only stage → witness W5; D14 closes on
+landing. The pointers below have no other home yet:
 
 - **Audit fan-out surfacing**: EventLog writes but nothing reads outside
   validate() tests; surface recent events per offering in

@@ -178,6 +178,13 @@ Format laws:
 - Every compatibility rule requires `because`; `source` strongly recommended.
   Feature rules MUST carry an arch scope (the ARM/AVX false-downgrade scar,
   encoded as a validation rule).
+- **Layered catalog (2026-08-26):** a moss loads its base catalog tree
+  (`MOSS_CATALOG_DIR`, default `~/.zen-garden/catalog`) plus one operator
+  overlay layer (`MOSS_CATALOG_OVERLAY_DIR`, default
+  `~/.zen-garden/manifests`; tree shape `{category}/{name}.offering.yaml`
+  or deeper). Overlay entries OVERRIDE base entries by NAME; missing
+  layers are routine, malformed manifests are skipped with warnings like
+  any other. One stone's private adjustments must not fork the corpus.
 
 ### 5.2 Compile
 

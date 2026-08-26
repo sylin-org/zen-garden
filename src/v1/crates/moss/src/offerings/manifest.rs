@@ -161,6 +161,55 @@ managed:
         assert_eq!(catalog.names(), vec!["redis".to_string()]);
         assert_eq!(catalog.get("redis").unwrap().category, "data");
     }
+
+    /// Overlays aim one stone's own manifests at the catalog without
+    /// forking the base: later layers override by NAME, siblings survive.
+    #[test]
+    fn load_layered_overrides_by_name_and_keeps_siblings() {
+        let root = std::env::temp_dir().join(format!("moss-catalog-base-{}", std::process::id()));
+        let overlay = std::env::temp_dir().join(format!("moss-catalog-over-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&overlay);
+
+        // Base: two offerings.
+        std::fs::create_dir_all(root.join("sw/data")).unwrap();
+        std::fs::write(
+            root.join("sw/data/redis.offering.yaml"),
+            GOOD.replace("description: In-memory cache", "description: BASE redis"),
+        )
+        .unwrap();
+        std::fs::write(root.join("sw/data/mongo.offering.yaml"), GOOD.replace("name: redis", "name: mongo").replace("redis:7-alpine", "mongo:7")).unwrap();
+        // Overlay: redis redefined, extra sibling, junk skipped.
+        std::fs::create_dir_all(overlay.join("sw/cache")).unwrap();
+        std::fs::write(
+            overlay.join("sw/cache/redis.offering.yaml"),
+            GOOD.replace("description: In-memory cache", "description: OPERATOR redis"),
+        )
+        .unwrap();
+        std::fs::write(overlay.join("sw/cache/valkey.offering.yaml"), GOOD.replace("name: redis", "name: valkey").replace("redis:7-alpine", "valkey:8")).unwrap();
+        std::fs::write(overlay.join("sw/cache/broken.offering.yaml"), "kind: [oops").unwrap();
+
+        let catalog = Catalog::load_layered(&root, &[overlay]);
+        let mut names = catalog.names();
+        names.sort();
+        assert_eq!(names, ["mongo", "redis", "valkey"], "base + overlay siblings");
+
+        // The override won — and it won on content, not just presence.
+        let redis = catalog.get("redis").unwrap();
+        assert_eq!(redis.description, "OPERATOR redis");
+    }
+
+    /// An absent overlay layer is routine (operators mostly run the base).
+    #[test]
+    fn missing_overlays_are_not_fatal() {
+        let root = std::env::temp_dir().join(format!("moss-catalog-missing-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("sw")).unwrap();
+        std::fs::write(root.join("sw/redis.offering.yaml"), GOOD).unwrap();
+
+        let ghost = root.parent().unwrap().join("no-such-overlay-dir");
+        let catalog = Catalog::load_layered(&root, &[ghost]);
+        assert_eq!(catalog.names(), vec!["redis".to_string()]);
+    }
 }
 
 /// A single condition over the facts tree (§6.2 grammar). Units ride on the
@@ -231,16 +280,64 @@ impl Catalog {
             tracing::warn!(root = %root.display(), "catalog dir not found; no catalog offerings");
             return catalog;
         }
-        let mut found = 0usize;
+        let found = catalog.ingest(root);
+        tracing::info!(root = %root.display(), offerings = found, "catalog loaded");
+        catalog
+    }
+
+    /// Base tree first, then every overlay layer on top: later layers
+    /// OVERRIDE earlier entries by name (identity is the stem; `sw/<cat>/`
+    /// nesting is traversal detail). Operators aim one stone's manifests at
+    /// `{data_dir}/manifests/sw/<category>/` without forking the whole base
+    /// catalog. Missing layers are noted, never fatal.
+    pub fn load_layered(
+        base: &std::path::Path,
+        overlays: &[std::path::PathBuf],
+    ) -> Self {
+        let mut catalog = Self::default();
+        if !base.is_dir() {
+            tracing::warn!(root = %base.display(), "catalog dir not found; no catalog offerings");
+        } else {
+            let found = catalog.ingest(base);
+            tracing::info!(root = %base.display(), offerings = found, "catalog loaded");
+        }
+
+        let mut added = 0usize;
+        let mut overrode = 0usize;
+        for overlay in overlays {
+            if !overlay.is_dir() {
+                tracing::info!(overlay = %overlay.display(), "overlay absent; nothing applied");
+                continue;
+            }
+            let (a, o) = catalog.ingest_counting(overlay);
+            added += a;
+            overrode += o;
+        }
+        tracing::info!(overlays = overlays.len(), added, overrode, "catalog overlays applied");
+        catalog
+    }
+
+    /// Parse-and-insert everything under `root`; returns how many landed.
+    fn ingest(&mut self, root: &std::path::Path) -> usize {
+        let (added, _) = self.ingest_counting(root);
+        added
+    }
+
+    /// Insert-count form used by the layered loader: it must know how many
+    /// entries REPLACED something (the honest override report).
+    fn ingest_counting(&mut self, root: &std::path::Path) -> (usize, usize) {
+        let mut added = 0usize;
+        let mut overrode = 0usize;
         visit_dir(root, &mut |stem, yaml| match Self::parse(stem, yaml) {
             Ok(m) => {
-                catalog.entries.insert(m.name.clone(), m);
-                found += 1;
+                if self.entries.insert(m.name.clone(), m).is_some() {
+                    overrode += 1;
+                }
+                added += 1;
             }
             Err(e) => tracing::warn!(error = %e, "manifest skipped"),
         });
-        tracing::info!(root = %root.display(), offerings = found, "catalog loaded");
-        catalog
+        (added, overrode)
     }
 
     pub fn get(&self, name: &str) -> Option<&Manifest> {

@@ -185,7 +185,9 @@ async fn main() {
     .await;
 
     // The offering catalog, DERIVED from a directory tree (no hardcoded
-    // list): MOSS_CATALOG_DIR wins; default ~/.zen-garden/catalog.
+    // list): MOSS_CATALOG_DIR wins; default ~/.zen-garden/catalog. An
+    // operator's own manifest layer ({data_dir}/manifests by default,
+    // MOSS_CATALOG_OVERLAY_DIR twin) overrides base entries BY NAME.
     let catalog_root = std::env::var_os("MOSS_CATALOG_DIR")
         .map(std::path::PathBuf::from)
         .or_else(|| {
@@ -194,6 +196,15 @@ async fn main() {
                 .map(|h| std::path::PathBuf::from(h).join(".zen-garden").join("catalog"))
         })
         .ok_or_else(|| "no home directory known".to_string());
+    let catalog_overlays = std::env::var_os("MOSS_CATALOG_OVERLAY_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(|h| std::path::PathBuf::from(h).join(".zen-garden").join("manifests"))
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
     let catalog = pipeline::step::<
         Arc<offerings::manifest::Catalog>,
         String,
@@ -201,7 +212,10 @@ async fn main() {
     >("catalog-load", {
         async move {
             match catalog_root {
-                Ok(root) => Ok(Arc::new(offerings::manifest::Catalog::load_dir(&root))),
+                Ok(root) => Ok(Arc::new(offerings::manifest::Catalog::load_layered(
+                    &root,
+                    &catalog_overlays,
+                ))),
                 Err(e) => {
                     tracing::warn!(error = %e, "catalog location unknown; empty catalog");
                     Ok(Arc::new(offerings::manifest::Catalog::default()))

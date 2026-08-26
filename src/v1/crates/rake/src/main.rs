@@ -33,8 +33,13 @@ use std::time::Duration;
 
 /// How long rake listens for discovery answers after the call (ms).
 const DEFAULT_TIMEOUT_MS: u64 = 2500;
-/// How long rake waits for a moss's HTTP answer.
+/// How long rake waits for a moss's HTTP answer to a READ.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(3);
+/// Mutations can move worlds: plant pulls images and starts containers
+/// (place witnessed taking >3s even warm), so they carry a wider budget.
+/// Rest/wake/uproot ride it too — one mutation budget is easier to reason
+/// about than per-verb budgets (P1).
+const MUTATION_HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Parser)]
 #[command(
@@ -382,6 +387,7 @@ impl Cli {
         path: String,
         body: Option<&serde_json::Value>,
     ) -> Result<(Candidate, serde_json::Value), String> {
+        let timeout = if method == "GET" { HTTP_TIMEOUT } else { MUTATION_HTTP_TIMEOUT };
         let body_owned = body.cloned();
         let (cand, value) = self
             .walk(true, "no moss answered; nothing was changed", move |cand| {
@@ -395,7 +401,7 @@ impl Cli {
                         cand.http_port,
                         &path,
                         body.as_ref(),
-                        HTTP_TIMEOUT,
+                        timeout,
                     )
                     .await
                 }

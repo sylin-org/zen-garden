@@ -6,6 +6,7 @@
 //! module sequences it and shapes the plan.
 
 use super::evaluate::{self};
+use super::directory::OfferingDir;
 use super::facts::Generation;
 use super::manifest::{Decide, Manifest};
 use crate::offerings::model::WorkloadSpec;
@@ -89,7 +90,7 @@ pub fn compile(
     m: &Manifest,
     facts_gen: &Generation,
     inputs: &BTreeMap<String, String>,
-    volumes_root: &std::path::Path,
+    dir: &OfferingDir,
 ) -> Result<PlacementPlan, CompileError> {
     let Some(managed) = &m.managed else {
         return Err(CompileError::NotPlaceable(m.name.clone()));
@@ -124,13 +125,34 @@ pub fn compile(
     workload.restart = managed.restart.clone();
     for v in &managed.volumes {
         workload.volumes.push(crate::offerings::model::VolumeMount {
-            host_path: volumes_root
-                .join(&m.name)
-                .join(&v.name)
-                .to_string_lossy()
-                .into_owned(),
+            host_path: dir.volumes().join(&v.name).to_string_lossy().into_owned(),
             container_path: v.mount.clone(),
         });
+    }
+    // Config materialization: declared shape → rendered content, staged
+    // inside the offering directory's configs/ (OFFERINGS.md §5).
+    for cfg in &managed.config_files {
+        let mount = cfg.get("mount").and_then(|x| x.as_str()).unwrap_or("");
+        let format = cfg.get("format").and_then(|x| x.as_str()).unwrap_or("raw");
+        if mount.is_empty() {
+            continue;
+        }
+        let content = match format {
+            "yaml" => "# Managed by Zen Garden\n{}\n",
+            "json" => "{}\n",
+            "toml" => "# Managed by Zen Garden\n",
+            "ini" => "; Managed by Zen Garden\n",
+            _ => "",
+        };
+        let file_name = mount.split('/').next_back().unwrap_or("config");
+        workload.configs.push(crate::offerings::model::ConfigMount {
+            host_path: dir.configs().join(file_name).to_string_lossy().into_owned(),
+            container_path: mount.to_string(),
+            content: content.into(),
+        });
+    }
+    for (k, v) in &managed.env {
+        workload.env.insert(k.clone(), v.clone());
     }
     for (k, v) in &managed.env {
         workload.env.insert(k.clone(), v.clone());
@@ -175,4 +197,73 @@ pub fn compile(
         plan_hash,
         facts_generation: facts_gen.id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    // R4.1: unwrap/expect sanctioned in tests.
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::offerings::facts::{Contributor, FactValue, Factsheet};
+    use crate::offerings::manifest::Catalog;
+    use std::collections::BTreeMap;
+
+    struct Static(BTreeMap<String, FactValue>);
+
+    #[async_trait::async_trait]
+    impl Contributor for Static {
+        fn concern(&self) -> &'static str { "static" }
+        async fn measure(&self) -> BTreeMap<String, FactValue> { self.0.clone() }
+    }
+
+    const MDB: &str = include_str!("../../../../catalog/sw/data/mongodb.offering.yaml");
+
+    #[tokio::test]
+    async fn mongodb_compiles_with_config_and_volume_paths() {
+        let manifest = Catalog::parse("mongodb", MDB).unwrap();
+        assert!(!manifest.managed.as_ref().unwrap().config_files.is_empty(),
+            "fixture must declare config_files");
+
+        let factsheet = Factsheet::empty();
+        let mut nodes = BTreeMap::new();
+        nodes.insert("machine.architecture".to_string(), serde_json::json!("x86_64"));
+        nodes.insert(
+            "cpu.features".to_string(),
+            serde_json::json!(["sse4_2", "avx"]),
+        );
+        nodes.insert("ram.total.bytes".to_string(), serde_json::json!(8589934592u64));
+        factsheet
+            .collect(&[std::sync::Arc::new(Static(nodes))])
+            .await;
+
+        let facts_snapshot = factsheet.snapshot();
+        let inputs = BTreeMap::new();
+        let dir = crate::offerings::directory::OfferingsRoot::new(std::path::PathBuf::from(
+            ".zen-garden-probe",
+        ))
+        .dir_for("mongodb");
+        let plan = compile(&manifest, &facts_snapshot, &inputs, &dir).unwrap();
+
+        assert_eq!(plan.workload.image, "mongo:7", "AVX present: no fallback");
+        assert!(plan.decisions.is_empty(), "no compat rule fired");
+
+        let cfg = plan.workload.configs.first().expect("config must materialize");
+        assert!(
+            cfg.host_path.ends_with("mongod.conf"),
+            "host_path={}",
+            cfg.host_path
+        );
+        assert_eq!(cfg.container_path, "/etc/mongod.conf");
+        assert!(!cfg.content.is_empty());
+
+        let vol = plan.workload.volumes.first().unwrap();
+        assert!(
+            vol.host_path.contains(&format!("volumes{}mongo-data", std::path::MAIN_SEPARATOR)),
+            "host_path={}",
+            vol.host_path
+        );
+
+        // Cleanup probe artifacts.
+        let _ = std::fs::remove_dir_all(dir.root.clone());
+    }
 }

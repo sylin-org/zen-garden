@@ -1,4 +1,4 @@
-// The Converger loop wires in with main.rs's background steps (O2 finish).
+﻿// The Converger loop wires in with main.rs's background steps (O2 finish).
 #![allow(dead_code)]
 
 //! The Converger (OFFERINGS.md §3.1/§6): drives reality toward the stored
@@ -54,10 +54,13 @@ pub async fn converge_once(service: &OfferingService) -> Vec<(String, Outcome)> 
             }
             // Missing while desired running: heal by re-placing the plan.
             (None, Status::Running | Status::Degraded) => {
-                match world.place(name.as_str(), &m.spec).await {
+                let mut spec = m.spec.clone();
+                spec.preferred_ports = m.port_map.clone();
+                match world.place(name.as_str(), &spec).await {
                     Ok(placement) => {
                         refresh_ports(service, &offering, placement.named_host_ports);
                         clear_failure(service, &offering.offering_id);
+                        service.audit_healed(&name);
                         results.push((name, Outcome::Healed));
                     }
                     Err(e) => fail(service, &offering.offering_id, &name, e, &mut results),

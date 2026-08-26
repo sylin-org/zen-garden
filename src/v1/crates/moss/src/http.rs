@@ -288,6 +288,9 @@ mod tests {
             "null".into(),
             Arc::new(crate::offerings::manifest::Catalog::default()),
             factsheet,
+            crate::offerings::directory::OfferingsRoot::new(
+                std::env::temp_dir().join(format!("moss-test-offer-{}", Uuid::now_v7())),
+            ),
         ));
         Arc::new(AppState {
             garden: service,

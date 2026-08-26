@@ -4,11 +4,13 @@
 //! loop will call these same commands.
 
 use super::compile;
+use super::events::EventLog;
 use super::facts::Factsheet;
-use super::model::{Location, ManagedData, ModeData, Offering, Status, WorkloadSpec};
 use super::manifest::Catalog;
+use super::model::{Location, ManagedData, ModeData, Offering, Status, WorkloadSpec};
 use super::registry::Registry;
 use super::runtime::{RuntimeRegistry, RuntimeError};
+use super::directory::OfferingsRoot;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -52,6 +54,8 @@ pub struct OfferingService {
     pub catalog: Arc<Catalog>,
     /// The stone's facts census — compile reads a generation snapshot.
     pub facts: Arc<Factsheet>,
+    /// Where offering directories live (rehydration contract, OFFERINGS.md).
+    dirs_root: OfferingsRoot,
     /// Per-offering convergence failure counters (converge.rs drives them).
     failures: Arc<parking_lot::Mutex<HashMap<String, u32>>>,
 }
@@ -64,6 +68,7 @@ impl OfferingService {
         default_world: String,
         catalog: Arc<Catalog>,
         facts: Arc<Factsheet>,
+        dirs_root: OfferingsRoot,
     ) -> Self {
         Self {
             registry,
@@ -71,17 +76,19 @@ impl OfferingService {
             default_world,
             catalog,
             facts,
+            dirs_root,
             failures: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }
     }
 
-    fn volumes_root(&self) -> Result<std::path::PathBuf, CommandError> {
-        let dir = std::env::var_os("USERPROFILE")
-            .or_else(|| std::env::var_os("HOME"))
-            .map(|h| std::path::PathBuf::from(h).join(".zen-garden").join("volumes"))
-            .ok_or_else(|| CommandError::Conflict("no home directory known".into()))?;
-        Ok(dir)
+    /// Append to an offering's audit ledger; failures warn but never block.
+    fn audit(&self, name: &str, kind: &str, details: serde_json::Value) {
+        let log = EventLog::for_dir(&self.dirs_root.base, name);
+        if let Err(e) = log.append(kind, details) {
+            tracing::warn!(offering = %name, error = %e, "audit append failed");
+        }
     }
+
 
     pub fn registry(&self) -> &Registry {
         &self.registry
@@ -98,7 +105,11 @@ impl OfferingService {
         self.failures.lock().remove(offering_id);
     }
 
-    pub(crate) fn mark_degraded(&self, offering_id: &str) {
+    pub(crate) fn audit_healed(&self, name: &str) {
+        self.audit(name, "Healed", serde_json::json!({}));
+    }
+
+        pub(crate) fn mark_degraded(&self, offering_id: &str) {
         self.registry.mark_status(offering_id, Status::Degraded);
     }
 
@@ -140,8 +151,9 @@ impl OfferingService {
                 )));
             }
             let facts_gen = self.facts.snapshot();
-            let volumes_root = self.volumes_root()?;
-            let plan = compile::compile(m, &facts_gen, inputs, &volumes_root).map_err(|e| match e {
+            let dir = self.dirs_root.dir_for(name);
+            let plan =
+                compile::compile(m, &facts_gen, inputs, &dir).map_err(|e| match e {
                 super::compile::CompileError::Denied { because, suggest } => {
                     CommandError::Conflict(format!(
                         "compatibility denied: {because}{}",
@@ -167,7 +179,7 @@ impl OfferingService {
                     protocol: "http".into(),
                 },
                 mode_data: ModeData::Managed(ManagedData {
-                    runtime_kind: kind,
+                    runtime_kind: kind.clone(),
                     spec: plan.workload.clone(),
                     port_map: placement.named_host_ports,
                     plan: Some(plan_value),
@@ -176,6 +188,7 @@ impl OfferingService {
                 updated_at: now,
             };
             self.registry.register(offering.clone());
+            self.audit(name, "Placed", serde_json::json!({ "world": kind, "catalog": true }));
             return Ok(offering);
         }
 
@@ -204,7 +217,7 @@ impl OfferingService {
                 protocol: "http".into(),
             },
             mode_data: ModeData::Managed(ManagedData {
-                runtime_kind: kind,
+                runtime_kind: kind.clone(),
                 spec,
                 port_map: placement.named_host_ports,
                 plan: None,
@@ -213,7 +226,13 @@ impl OfferingService {
             updated_at: now,
         };
         self.registry.register(offering.clone());
+        self.audit(name, "Placed", serde_json::json!({ "world": kind, "catalog": false }));
         Ok(offering)
+    }
+
+    /// How many catalog offerings this stone could place today.
+    pub fn catalog_size(&self) -> usize {
+        self.catalog.len()
     }
 
     /// The full placed record — plan attached (§5.3).
@@ -221,9 +240,8 @@ impl OfferingService {
         self.registry.get_by_name(name)
     }
 
-    /// How many catalog offerings this stone could place today.
-    pub fn catalog_size(&self) -> usize {
-        self.catalog.len()
+    fn m_port_map(m: &ManagedData) -> std::collections::HashMap<String, u16> {
+        m.port_map.clone()
     }
 
     /// Rest: stopped, and reconcile will keep it so (§3.2).
@@ -232,6 +250,7 @@ impl OfferingService {
         let rt = self.world_for(&offering)?;
         rt.stop(name).await.map_err(CommandError::Runtime)?;
         self.registry.mark_status(&offering.offering_id, Status::Stopped);
+        self.audit(name, "Stopped", serde_json::json!({ "reason": "rest" }));
         self.registry.get_by_name(name).ok_or_else(|| CommandError::NotFound(name.into()))
     }
 
@@ -247,7 +266,12 @@ impl OfferingService {
         match rt.observe(name).await {
             None => {
                 tracing::warn!(offering = %name, "workload missing - resurrecting from stored spec");
-                rt.place(name, &managed.spec).await.map_err(CommandError::Runtime)?;
+                // Port preservation: remembered bindings ride along as
+                // placement constraints (PORT-0001 as input, §6.4).
+                let mut spec = managed.spec.clone();
+                spec.preferred_ports = Self::m_port_map(managed);
+                rt.place(name, &spec).await.map_err(CommandError::Runtime)?;
+                self.audit(name, "Resurrected", serde_json::json!({}));
             }
             Some(observed) if !observed.running => {
                 rt.start(name).await.map_err(CommandError::Runtime)?;
@@ -256,6 +280,7 @@ impl OfferingService {
         }
 
         self.registry.mark_status(&offering.offering_id, Status::Running);
+        self.audit(name, "Started", serde_json::json!({}));
 
         // Port honesty: ephemeral reassignment without a ledger yet (O2) —
         // observe and refresh rather than lie about stale mappings.
@@ -282,6 +307,7 @@ impl OfferingService {
         let rt = self.world_for(&offering)?;
         rt.remove(name).await.map_err(CommandError::Runtime)?;
         self.registry.remove(&offering.offering_id);
+        self.audit(name, "Uprooted", serde_json::json!({}));
         Ok(())
     }
 

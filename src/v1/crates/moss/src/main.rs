@@ -20,6 +20,7 @@ use garden_kernel::dispatch::Dispatcher;
 use garden_kernel::ingress::Ingress;
 use garden_kernel::pipeline;
 use garden_kernel::topology::Topology;
+use offerings::directory::OfferingsRoot;
 use garden_kernel::responder;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -116,14 +117,23 @@ async fn main() {
     >("offerings-load", {
         let identity_name = identity.stone_name.clone();
         async move {
-            let dir = std::env::var_os("USERPROFILE")
-                .or_else(|| std::env::var_os("HOME"))
-                .map(|h| std::path::PathBuf::from(h).join(".zen-garden"))
+            // Offering directories live under MOSS_OFFERINGS_DIR (default
+            // ~/.zen-garden/offerings) — the rehydration contract's unit.
+            let root = std::env::var_os("MOSS_OFFERINGS_DIR")
+                .map(std::path::PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("USERPROFILE")
+                        .or_else(|| std::env::var_os("HOME"))
+                        .map(|h| {
+                            std::path::PathBuf::from(h)
+                                .join(".zen-garden")
+                                .join("offerings")
+                        })
+                })
                 .ok_or_else(|| "no home directory known".to_string())?;
-            std::fs::create_dir_all(&dir)
-                .map_err(|e| format!("create {}: {e}", dir.display()))?;
-            let path = dir.join("offerings.json");
-            let store = Arc::new(offerings::registry::FileSnapshotStore::new(path));
+            let store = Arc::new(offerings::directory::DirectoryStore::new(
+                OfferingsRoot::new(root).base,
+            ));
             let registry = Arc::new(offerings::registry::Registry::new(
                 store as Arc<dyn offerings::registry::SnapshotStore>,
             ));
@@ -262,6 +272,26 @@ async fn main() {
     })
     .await;
 
+    // Offering directories: the rehydration contract's physical unit
+    // (record + plan + configs + volumes in one place).
+    let dirs_root = match std::env::var_os("MOSS_OFFERINGS_DIR").map(std::path::PathBuf::from) {
+        Some(p) => Some(p),
+        None => std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(|h| std::path::PathBuf::from(h).join(".zen-garden").join("offerings")),
+    };
+    let dirs_root = match dirs_root {
+        Some(p) => p,
+        None => {
+            tracing::error!("no home directory known; cannot host offering directories");
+            pipeline::step::<(), String, _>("offerings-root", async {
+                Err::<(), _>("no home directory".to_string())
+            })
+            .await;
+            unreachable!()
+        }
+    };
+
     // The offering application service: registry + worlds + catalog + facts,
     // coordinated (OFFERINGS.md §5/§4).
     let garden = Arc::new(offerings::service::OfferingService::new(
@@ -270,10 +300,24 @@ async fn main() {
         default_runtime.clone(),
         catalog,
         Arc::clone(&factsheet),
+        OfferingsRoot::new(dirs_root),
     ));
 
     // The Converger: reality chases the stored plans until cancelled.
     tokio::spawn(offerings::converge::run(Arc::clone(&garden), token.clone()));
+
+    // Rehydration moment (OFFERINGS.md): one immediate convergence sweep —
+    // if Docker lost everything, this brings offerings back before HTTP.
+    pipeline::step::<(), String, _>("rehydrate", {
+        let garden = Arc::clone(&garden);
+        async move {
+            let results = offerings::converge::converge_once(&garden).await;
+            let healed = results.iter().filter(|(_, o)| *o == offerings::converge::Outcome::Healed).count();
+            tracing::info!(checked = results.len(), healed, "boot convergence complete");
+            Ok(())
+        }
+    })
+    .await;
 
     // HTTP surface, last: the garden answers once it can hear.
     let state = Arc::new(http::AppState {

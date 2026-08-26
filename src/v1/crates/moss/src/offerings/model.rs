@@ -99,6 +99,15 @@ pub struct WorkloadSpec {
     /// consumed by adapters that understand them. Opaque to the domain.
     #[serde(default)]
     pub advanced: serde_json::Value,
+    /// Remembered host-port bindings — converge/wake inject these from the
+    /// record's port_map so re-placement PRESERVES ports (PORT-0001 as
+    /// placement constraint). Fresh placements leave this empty.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub preferred_ports: HashMap<String, u16>,
+    /// Materialized config files staged inside the offering directory and
+    /// mounted into the workload. Written by the adapter pre-start.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configs: Vec<ConfigMount>,
 }
 
 /// Where a volume mount sits on both sides of the boundary.
@@ -106,6 +115,16 @@ pub struct WorkloadSpec {
 pub struct VolumeMount {
     pub host_path: String,
     pub container_path: String,
+}
+
+/// A materialized config file: content staged at `host_path` (inside the
+/// offering directory), read by the workload at `container_path`. The
+/// adapter writes the file and mounts it before start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigMount {
+    pub host_path: String,
+    pub container_path: String,
+    pub content: String,
 }
 
 fn default_restart() -> String {

@@ -1,4 +1,4 @@
-//! The Docker adapter (OFFERINGS.md §4): the first real world beneath the
+﻿//! The Docker adapter (OFFERINGS.md §4): the first real world beneath the
 //! seam. Speaks bollard; keeps PoC-compatible `zen-offering-*` naming.
 //! Everything Docker-specific in v1 lives in this file.
 
@@ -90,15 +90,22 @@ impl Runtime for DockerRuntime {
         if observed.is_none() {
             self.pull(&spec.image).await?;
 
-            let exposed: HashMap<String, HashMap<(), ()>> =
-                spec.named_ports.values().map(|p| (format!("{p}/tcp"), HashMap::new())).collect();
+            let exposed: HashMap<String, HashMap<(), ()>> = spec
+                .named_ports
+                .iter()
+                .map(|(_, &cp)| (format!("{cp}/tcp"), HashMap::new()))
+                .collect();
             let bindings: HashMap<String, Option<Vec<PortBinding>>> = spec
                 .named_ports
-                .values()
-                .map(|p| {
+                .iter()
+                .map(|(role, &cp)| {
+                    // Port ledger as placement constraint: bind the
+                    // REMEMBERED host port for this role when one exists
+                    // (§6.4); fall back to ephemeral assignment otherwise.
+                    let host = spec.preferred_ports.get(role).map(|hp| hp.to_string());
                     (
-                        format!("{p}/tcp"),
-                        Some(vec![PortBinding { host_ip: None, host_port: None }]),
+                        format!("{cp}/tcp"),
+                        Some(vec![PortBinding { host_ip: None, host_port: host }]),
                     )
                 })
                 .collect();
@@ -109,12 +116,29 @@ impl Runtime for DockerRuntime {
                 labels.insert(format!("zg.port.{role}"), container_port.to_string());
             }
 
-            let mut binds = Vec::with_capacity(spec.volumes.len());
+            let mut binds = Vec::with_capacity(spec.volumes.len() + spec.configs.len());
             for v in &spec.volumes {
                 std::fs::create_dir_all(&v.host_path).map_err(|e| {
                     RuntimeError::Failed(format!("volume {}: {e}", v.host_path))
                 })?;
                 binds.push(format!("{}:{}", v.host_path, v.container_path));
+            }
+            // Materialized configs: write content, mount read-only.
+            for cfg in &spec.configs {
+                if let Some(parent) = std::path::Path::new(&cfg.host_path).parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        RuntimeError::Failed(format!("config dir {}: {e}", parent.display()))
+                    })?;
+                }
+                // If a previous failed run left a directory here (Docker's
+                // placeholder habit), clear it so the real file can land.
+                if std::path::Path::new(&cfg.host_path).is_dir() {
+                    let _ = std::fs::remove_dir_all(&cfg.host_path);
+                }
+                std::fs::write(&cfg.host_path, &cfg.content).map_err(|e| {
+                    RuntimeError::Failed(format!("config {}: {e}", cfg.host_path))
+                })?;
+                binds.push(format!("{}:{}:ro", cfg.host_path, cfg.container_path));
             }
 
             let config = Config {

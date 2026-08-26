@@ -41,6 +41,27 @@ proved it.
     console ctrl_c harness), expiry, cross-machine delivery in the v1 room.
     (PoC interop is not on the bar: v1 owns its topology by design.)
 
+- **W3 — wipe recovery: the offering directory survives Docker's death**
+  (2026-08-26, Windows workstation, release build). mongodb planted from the
+  catalog manifest via the compile path; then **total destruction** —
+  `docker rm -f`, `docker rmi mongo:7`, moss killed. Only
+  `~/.zen-garden/offerings/mongodb/` remained: record.json, plan.json,
+  events.jsonl, configs/, volumes/.
+  - Moss restarted → registry index rebuilt from directories → boot
+    convergence detected missing+Running → re-placed from stored spec →
+    image pulled fresh → **same host port bound (51279)** via preferred-
+    ports-as-placement-constraint → config file materialized and mounted →
+    status Running.
+  - The events ledger narrates the entire life: `1 Placed, 2 Healed,
+    3 Healed` — hash-chained, tamper-evident.
+  - En route, three real bugs caught and fixed: wake/converge registered
+    stale clones undoing their own marks; preferred-port lookup compared
+    host-ports against container-ports (namespace confusion); Docker's
+    bind-placeholder habit left directory-shaped corpses where config files
+    belonged — now defensively cleared.
+  - The rehydration contract held: **everything needed to resurrect the
+    offering lived outside Docker.**
+
 - **W2 — the room crosses the LAN** (2026-08-25, v1 room `239.255.42.199:7284`,
   three physical Debian stones + the Windows workstation; release binaries
   from `installer/v1` perennial builder, deployed to `~/zen-v1/`, PoC fleet

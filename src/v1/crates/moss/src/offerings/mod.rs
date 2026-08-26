@@ -6,7 +6,9 @@
 
 pub mod compile;
 pub mod converge;
+pub mod directory;
 pub mod docker;
+pub mod events;
 pub mod evaluate;
 pub mod facts;
 pub mod manifest;

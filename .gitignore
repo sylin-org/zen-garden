@@ -41,3 +41,6 @@ src/pavilion/
 
 # Rust build artifacts (v1 workspace)
 src/v1/target/
+
+# Session-local working memory (durable content belongs in tracked docs - see local/README.md)
+local/NOTES.md

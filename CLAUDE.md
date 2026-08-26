@@ -19,3 +19,8 @@ This file contains tool-agnostic rules shared across all AI assistants.
 - Utilities & constants: @.agentic/reference/utilities.md
 - API endpoints: @.agentic/reference/api-endpoints.md
 - Code standards: @docs/poc/code-standards.md
+
+## Memory
+
+- Project memory index (durable, model-agnostic): @docs/MEMORY.md
+- Session-local handoff notes: `local/NOTES.md` (gitignored; see `local/README.md`)

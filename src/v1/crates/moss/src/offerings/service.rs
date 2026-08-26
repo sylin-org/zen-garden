@@ -1,8 +1,10 @@
-//! The application service: sequences domain commands against runtime
+﻿//! The application service: sequences domain commands against runtime
 //! worlds (OFFERINGS.md §4). This is the ONLY place that knows both the
 //! registry and the runtimes; HTTP handlers delegate here, O2's reconcile
 //! loop will call these same commands.
 
+use super::compile;
+use super::facts::Factsheet;
 use super::model::{Location, ManagedData, ModeData, Offering, Status, WorkloadSpec};
 use super::manifest::Catalog;
 use super::registry::Registry;
@@ -48,24 +50,37 @@ pub struct OfferingService {
     default_world: String,
     /// The embedded catalog this stone can place from.
     pub catalog: Arc<Catalog>,
+    /// The stone's facts census — compile reads a generation snapshot.
+    pub facts: Arc<Factsheet>,
     /// Per-offering convergence failure counters (converge.rs drives them).
     failures: Arc<parking_lot::Mutex<HashMap<String, u32>>>,
 }
 
 impl OfferingService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         registry: Arc<Registry>,
         worlds: Arc<RuntimeRegistry>,
         default_world: String,
         catalog: Arc<Catalog>,
+        facts: Arc<Factsheet>,
     ) -> Self {
         Self {
             registry,
             worlds,
             default_world,
             catalog,
+            facts,
             failures: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }
+    }
+
+    fn volumes_root(&self) -> Result<std::path::PathBuf, CommandError> {
+        let dir = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(|h| std::path::PathBuf::from(h).join(".zen-garden").join("volumes"))
+            .ok_or_else(|| CommandError::Conflict("no home directory known".into()))?;
+        Ok(dir)
     }
 
     pub fn registry(&self) -> &Registry {
@@ -98,38 +113,84 @@ impl OfferingService {
         self.worlds.kinds()
     }
 
-    /// How many catalog offerings this stone could place today.
-    pub fn catalog_size(&self) -> usize {
-        self.catalog.len()
-    }
-
-    /// Plant a managed offering: bind a world, place the workload,
-    /// remember everything needed to resurrect it later.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn plant(
+    /// Plant an offering by name (OFFERINGS.md §5). Catalog manifests
+    /// compile against current facts — compatibility decides, decisions are
+    /// logged into the stored plan. Ad-hoc images place directly when no
+    /// catalog entry exists.
+    pub async fn offer(
         &self,
         name: &str,
-        image: String,
+        image: Option<String>,
         named_ports: std::collections::HashMap<String, u16>,
         category: Option<String>,
         requested_world: Option<&str>,
+        inputs: &std::collections::BTreeMap<String, String>,
     ) -> Result<Offering, CommandError> {
         if self.registry.get_by_name(name).is_some() {
             return Err(CommandError::Conflict(format!("'{name}' is already planted")));
         }
         let kind = requested_world.unwrap_or(&self.default_world).to_string();
-        let rt = self
-            .worlds
-            .by_kind(&kind)
-            .map_err(CommandError::WorldUnavailable)?;
+        let rt = self.worlds.by_kind(&kind).map_err(CommandError::WorldUnavailable)?;
 
+        // Catalog path: manifest is truth; compile decides.
+        if let Some(m) = self.catalog.get(name) {
+            if m.managed.is_none() {
+                return Err(CommandError::Conflict(format!(
+                    "'{name}' declares no managed placement"
+                )));
+            }
+            let facts_gen = self.facts.snapshot();
+            let volumes_root = self.volumes_root()?;
+            let plan = compile::compile(m, &facts_gen, inputs, &volumes_root).map_err(|e| match e {
+                super::compile::CompileError::Denied { because, suggest } => {
+                    CommandError::Conflict(format!(
+                        "compatibility denied: {because}{}",
+                        suggest.as_deref().map(|s| format!(" — {s}")).unwrap_or_default()
+                    ))
+                }
+                other => CommandError::Runtime(RuntimeError::Failed(other.to_string())),
+            })?;
+            let placement =
+                rt.place(name, &plan.workload).await.map_err(CommandError::Runtime)?;
+            let now = chrono::Utc::now();
+            let plan_value = serde_json::to_value(&plan)
+                .map_err(|e| CommandError::Conflict(format!("plan encode: {e}")))?;
+            let offering = Offering {
+                offering_id: uuid::Uuid::now_v7().to_string(),
+                name: m.name.clone(),
+                offering: m.name.clone(),
+                category: category.unwrap_or_else(|| m.category.clone()),
+                status: Status::Running,
+                location: Location {
+                    host: "localhost".into(),
+                    port: placement.named_host_ports.values().copied().next().unwrap_or(0),
+                    protocol: "http".into(),
+                },
+                mode_data: ModeData::Managed(ManagedData {
+                    runtime_kind: kind,
+                    spec: plan.workload.clone(),
+                    port_map: placement.named_host_ports,
+                    plan: Some(plan_value),
+                }),
+                registered_at: now,
+                updated_at: now,
+            };
+            self.registry.register(offering.clone());
+            return Ok(offering);
+        }
+
+        // Ad-hoc path: a raw image with no catalog behind it.
+        let Some(image) = image else {
+            return Err(CommandError::NotFound(format!(
+                "no catalog entry for '{name}' and no image given"
+            )));
+        };
         let spec = WorkloadSpec {
             image: image.clone(),
             named_ports: named_ports.clone(),
             ..Default::default()
         };
         let placement = rt.place(name, &spec).await.map_err(CommandError::Runtime)?;
-
         let now = chrono::Utc::now();
         let offering = Offering {
             offering_id: uuid::Uuid::now_v7().to_string(),
@@ -153,6 +214,16 @@ impl OfferingService {
         };
         self.registry.register(offering.clone());
         Ok(offering)
+    }
+
+    /// The full placed record — plan attached (§5.3).
+    pub fn placed(&self, name: &str) -> Option<Offering> {
+        self.registry.get_by_name(name)
+    }
+
+    /// How many catalog offerings this stone could place today.
+    pub fn catalog_size(&self) -> usize {
+        self.catalog.len()
     }
 
     /// Rest: stopped, and reconcile will keep it so (§3.2).

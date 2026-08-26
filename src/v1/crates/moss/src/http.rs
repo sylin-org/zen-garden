@@ -36,7 +36,7 @@ struct ManifestRoute {
     summary: &'static str,
 }
 
-const MANIFEST: [ManifestRoute; 8] = [
+const MANIFEST: [ManifestRoute; 9] = [
     ManifestRoute {
         method: "GET",
         path: "/health",
@@ -63,6 +63,11 @@ const MANIFEST: [ManifestRoute; 8] = [
         path: "/api/v1/stone/offerings/{name}",
         summary:
             "Stone ops (L22): plant a managed offering {image, ports:{name:container}, runtime?}.",
+    },
+    ManifestRoute {
+        method: "GET",
+        path: "/api/v1/stone/offerings/{name}",
+        summary: "Stone ops: the placed record - plan, decisions, ports (§5.3).",
     },
     ManifestRoute {
         method: "POST",
@@ -181,7 +186,8 @@ impl axum::response::IntoResponse for ApiError {
 
 #[derive(Debug, Deserialize)]
 struct PlantRequest {
-    image: String,
+    /// Required for ad-hoc placement; absent when planting from catalog.
+    image: Option<String>,
     /// Named ports: name → container port. Host mapping is the world's.
     #[serde(default)]
     ports: HashMap<String, u16>,
@@ -190,6 +196,9 @@ struct PlantRequest {
     /// Which world to place into; absent = this host's default.
     #[serde(default)]
     runtime: Option<String>,
+    /// Declared install form values (OFFERINGS.md §5.1 `inputs`).
+    #[serde(default)]
+    inputs: std::collections::BTreeMap<String, String>,
 }
 
 fn default_category() -> String {
@@ -203,11 +212,20 @@ async fn plant_offering(
 ) -> ApiResult {
     let offering = state
         .garden
-        .plant(&name, req.image, req.ports, Some(req.category), req.runtime.as_deref())
+        .offer(&name, req.image, req.ports, Some(req.category), req.runtime.as_deref(), &req.inputs)
         .await?;
-    Ok(Json(
-        serde_json::json!({ "data": { "offering": offering } }),
-    ))
+    Ok(Json(serde_json::json!({ "data": { "offering": offering } })))
+}
+
+/// §5.3: the placed record with its plan attached.
+async fn show_offering(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    match state.garden.placed(&name) {
+        Some(o) => Ok(Json(serde_json::json!({ "data": { "offering": o } }))),
+        None => Err(CommandError::NotFound(name).into()),
+    }
 }
 
 async fn rest_offering(State(state): State<Arc<AppState>>, Path(name): Path<String>) -> ApiResult {
@@ -243,7 +261,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/manifest", get(manifest))
         .route(
             "/api/v1/stone/offerings/{name}",
-            post(plant_offering).delete(uproot_offering),
+            post(plant_offering).delete(uproot_offering).get(show_offering),
         )
         .route("/api/v1/stone/offerings/{name}/rest", post(rest_offering))
         .route("/api/v1/stone/offerings/{name}/wake", post(wake_offering))
@@ -263,7 +281,14 @@ mod tests {
     fn test_state() -> Arc<AppState> {
         let registry = Arc::new(Registry::new(Arc::new(MemorySnapshotStore::default())));
         let worlds = Arc::new(RuntimeRegistry::build(vec![Arc::new(NullRuntime)]));
-        let service = Arc::new(OfferingService::new(registry, worlds, "null".into(), Arc::new(crate::offerings::manifest::Catalog::default())));
+        let factsheet = Arc::new(crate::offerings::facts::Factsheet::empty());
+        let service = Arc::new(OfferingService::new(
+            registry,
+            worlds,
+            "null".into(),
+            Arc::new(crate::offerings::manifest::Catalog::default()),
+            factsheet,
+        ));
         Arc::new(AppState {
             garden: service,
             topology: Arc::new(garden_kernel::topology::Topology::new()),

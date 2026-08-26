@@ -9,6 +9,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// One host↔container volume mount. Both paths are explicit — adapters
+/// translate as their world requires (Docker Desktop rewrites drive paths).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VolumeMount {
+    pub host_path: String,
+    pub container_path: String,
+}
+
 /// A desired unit of execution, runtime-agnostic — v1's generalization of
 /// the PoC's ContainerSpec (poc docker/spec.rs:18-42).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,9 +27,8 @@ pub struct WorkloadSpec {
     /// job (remap + ledger, PORT-0001).
     #[serde(default)]
     pub named_ports: HashMap<String, u16>,
-    /// volume name → host path.
     #[serde(default)]
-    pub volumes: HashMap<String, String>,
+    pub volumes: Vec<VolumeMount>,
     #[serde(default)]
     pub env: HashMap<String, String>,
     /// Files injected into the workload (path → content).
@@ -47,6 +54,9 @@ pub struct RunningWorkload {
     /// Offering status wire string ("running"/"stopped"/...) — the adapter
     /// maps its native states into glossary vocabulary.
     pub status: String,
+    /// Actual host ports by name, as placed (PORT-0001 map).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub port_map: HashMap<String, u16>,
 }
 
 /// Outcome of a deploy.
@@ -95,6 +105,12 @@ pub trait Runtime: Send + Sync {
     async fn inspect(&self, name: &str) -> Option<RunningWorkload>;
 
     async fn list(&self) -> Vec<RunningWorkload>;
+
+    /// Actual host ports after placement, keyed by adapter-native key
+    /// (Docker: "80/tcp"). Default: none (the null world places nothing).
+    async fn host_ports(&self, _name: &str) -> HashMap<String, u16> {
+        HashMap::new()
+    }
 }
 
 /// A registry of runtimes by kind, built at startup (P1: one registry).

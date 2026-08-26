@@ -136,6 +136,14 @@ pub struct ManagedData {
     /// Actual host ports by name — remembered across redeploys (PORT-0001).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub port_map: HashMap<String, u16>,
+    /// Container-side ports by name — lets wake re-derive the host mapping
+    /// when the runtime reassigns ephemeral ports.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub container_ports: HashMap<String, u16>,
+    /// The image this offering was placed from — enough for wake to
+    /// resurrect a vanished workload without the original request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
     /// Volumes root for this offering's data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume_root: Option<String>,

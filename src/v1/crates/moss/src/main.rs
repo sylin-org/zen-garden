@@ -134,12 +134,23 @@ async fn main() {
         }
     })
     .await;
-    let _runtime_registry = offerings::runtime::RuntimeRegistry::build(
-        "null",
-        vec![Arc::new(offerings::runtime::NullRuntime)],
-    );
-    // The configured runtime is resolved lazily on first managed deploy;
-    // O1 replaces this build call with configuration-driven selection.
+    // The execution world beneath managed offerings — selected by config,
+    // connected loudly (L17): an unreachable Docker aborts, never shrugs.
+    let runtime_kind = std::env::var("MOSS_RUNTIME").unwrap_or_else(|_| "null".into());
+    let runtime = pipeline::step("runtime-select", {
+        async move {
+            match runtime_kind.as_str() {
+                "docker" => Ok(Arc::new(
+                    offerings::docker::DockerRuntime::connect()
+                        .map_err(|e| e.to_string())?,
+                ) as Arc<dyn offerings::runtime::Runtime>),
+                "null" => Ok(Arc::new(offerings::runtime::NullRuntime)
+                    as Arc<dyn offerings::runtime::Runtime>),
+                other => Err(format!("unknown MOSS_RUNTIME '{other}' (null | docker)")),
+            }
+        }
+    })
+    .await;
 
     let ingress = pipeline::step("ingress-bind", {
         let discovery = discovery.clone();
@@ -194,6 +205,7 @@ async fn main() {
         dispatcher: dispatcher.clone(),
         ingest_counters,
         offerings: Arc::clone(&offerings),
+        runtime,
         stone_name: identity.stone_name.clone(),
         boot_id,
         started_at: chrono::Utc::now(),

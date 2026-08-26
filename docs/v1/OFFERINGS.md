@@ -118,7 +118,7 @@ Rules:
 | Slice | Delivers |
 |---|---|
 | **O0** (this commit) | Vocabulary (glossary), model + registry + store + ghost-prevention + tests, Runtime trait + null adapter, wire `ports` parity |
-| O1 | Docker adapter (bollard), deploy/rest/wake of a real offering end-to-end |
+| **O1** ✅ (2026-08-26) Docker adapter + stone-category routes (plant/rest/wake/uproot) — nginx planted, served, rested, woken, resurrected after behind-the-back destruction, uprooted. Runtime events stream deferred (see D10 note) |
 | O2 | Manifest catalog + install jobs + reconcile loop w/ backoff + port ledger |
 | O3 | Adoption detectors + borrow registration; stone-category API surface |
 

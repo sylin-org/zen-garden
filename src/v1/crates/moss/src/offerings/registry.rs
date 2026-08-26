@@ -77,6 +77,33 @@ impl Registry {
         self.inner.read().active.get(offering_id).cloned()
     }
 
+    pub fn get_by_name(&self, name: &str) -> Option<Offering> {
+        self.inner.read().active.values().find(|o| o.name == name).cloned()
+    }
+
+    /// Move an active offering to a new status (rest/wake/degrade...).
+    pub fn set_status(&self, offering_id: &str, status: super::model::Status) -> bool {
+        let event = {
+            let mut inner = self.inner.write();
+            let Some(o) = inner.active.get_mut(offering_id) else { return false };
+            if o.status == status {
+                return true;
+            }
+            o.status = status;
+            o.updated_at = chrono::Utc::now();
+            Some(OfferingChanged {
+                offering_id: o.offering_id.clone(),
+                name: o.name.clone(),
+                offering: Some(o.clone()),
+            })
+        };
+        if let Some(event) = &event {
+            self.persist();
+            let _ = self.events_tx.send(event.clone());
+        }
+        event.is_some()
+    }
+
     /// Snapshot of the active pool, sorted by name.
     pub fn snapshot(&self) -> Vec<Offering> {
         let mut all: Vec<Offering> = self.inner.read().active.values().cloned().collect();

@@ -3,15 +3,17 @@
 //! One JSON envelope (`{"data": ...}`) everywhere — B1 makes envelope drift
 //! unrepresentable. The manifest is a generated table, not prose (L7).
 
-use axum::extract::State;
-use axum::routing::get;
+use axum::extract::{Path, State};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use garden_contract::chirp::ChirpBody;
 use garden_contract::consts::PROTO_V1;
 use garden_kernel::dispatch::Dispatcher;
 use garden_kernel::ingress::IngestCounters;
 use garden_kernel::topology::StoneView;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use crate::offerings::model::ModeData;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -21,6 +23,7 @@ pub struct AppState {
     pub dispatcher: Dispatcher,
     pub ingest_counters: Arc<IngestCounters>,
     pub offerings: Arc<crate::offerings::registry::Registry>,
+    pub runtime: Arc<dyn crate::offerings::runtime::Runtime>,
     pub stone_name: String,
     pub boot_id: Uuid,
     pub started_at: chrono::DateTime<chrono::Utc>,
@@ -52,7 +55,7 @@ struct ManifestRoute {
     summary: &'static str,
 }
 
-const MANIFEST: [ManifestRoute; 4] = [
+const MANIFEST: [ManifestRoute; 8] = [
     ManifestRoute {
         method: "GET",
         path: "/health",
@@ -72,6 +75,27 @@ const MANIFEST: [ManifestRoute; 4] = [
         method: "GET",
         path: "/api/v1/manifest",
         summary: "This route table - every surface, described in place.",
+    },
+    ManifestRoute {
+        method: "POST",
+        path: "/api/v1/stone/offerings/{name}",
+        summary:
+            "Stone ops (L22): plant a managed offering {image, ports:{name:container}} via the runtime.",
+    },
+    ManifestRoute {
+        method: "POST",
+        path: "/api/v1/stone/offerings/{name}/rest",
+        summary: "Stone ops: rest a managed offering - stopped, and reconcile will keep it so.",
+    },
+    ManifestRoute {
+        method: "POST",
+        path: "/api/v1/stone/offerings/{name}/wake",
+        summary: "Stone ops: wake a rested offering back to running.",
+    },
+    ManifestRoute {
+        method: "DELETE",
+        path: "/api/v1/stone/offerings/{name}",
+        summary: "Stone ops: uproot - remove the workload and forget the offering.",
     },
 ];
 
@@ -138,7 +162,193 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/local/posture", get(posture))
         .route("/api/v1/garden/observe", get(garden_observe))
         .route("/api/v1/manifest", get(manifest))
+        .route(
+            "/api/v1/stone/offerings/{name}",
+            post(plant_offering).delete(uproot_offering),
+        )
+        .route(
+            "/api/v1/stone/offerings/{name}/rest",
+            post(rest_offering),
+        )
+        .route(
+            "/api/v1/stone/offerings/{name}/wake",
+            post(wake_offering),
+        )
         .with_state(state)
+}
+
+// ---- stone ops (L22) -------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct PlantRequest {
+    image: String,
+    /// Named ports: name → container port. Host mapping is the runtime's.
+    #[serde(default)]
+    ports: HashMap<String, u16>,
+    #[serde(default = "default_category")]
+    category: String,
+}
+
+fn default_category() -> String {
+    "misc".into()
+}
+
+type ApiResult = Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<serde_json::Value>)>;
+
+fn api_error(status: axum::http::StatusCode, message: impl Into<String>) -> ApiErrorShape {
+    (status, Json(serde_json::json!({ "error": { "message": message.into() } })))
+}
+type ApiErrorShape = (axum::http::StatusCode, Json<serde_json::Value>);
+
+async fn plant_offering(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(req): Json<PlantRequest>,
+) -> ApiResult {
+    if state.offerings.get_by_name(&name).is_some() {
+        return Err(api_error(axum::http::StatusCode::CONFLICT, format!("'{name}' already planted")));
+    }
+    let spec = crate::offerings::runtime::WorkloadSpec {
+        image: req.image.clone(),
+        named_ports: req.ports.clone(),
+        ..Default::default()
+    };
+    let outcome = state
+        .runtime
+        .deploy(&name, &spec)
+        .await
+        .map_err(|e| api_error(axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
+    let raw_ports = state.runtime.host_ports(&name).await;
+    let port_map: HashMap<String, u16> = req
+        .ports
+        .iter()
+        .filter_map(|(n, &cp)| raw_ports.get(&format!("{cp}/tcp")).map(|&h| (n.clone(), h)))
+        .collect();
+    let now = chrono::Utc::now();
+    let offering = crate::offerings::model::Offering {
+        offering_id: Uuid::now_v7().to_string(),
+        name: name.clone(),
+        offering: name.clone(),
+        category: req.category,
+        status: crate::offerings::model::Status::Running,
+        location: crate::offerings::model::Location {
+            host: "localhost".into(),
+            port: port_map.values().copied().next().unwrap_or(0),
+            protocol: "http".into(),
+        },
+        mode_data: ModeData::Managed(crate::offerings::model::ManagedData {
+            port_map,
+            container_ports: req.ports.clone(),
+            image: Some(req.image.clone()),
+            volume_root: None,
+        }),
+        registered_at: now,
+        updated_at: now,
+    };
+    state.offerings.upsert(offering.clone());
+    let planted = matches!(outcome, crate::offerings::runtime::DeployOutcome::Created);
+    Ok(Json(serde_json::json!({
+        "data": { "offering": offering, "planted": planted }
+    })))
+}
+
+async fn rest_offering(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    let Some(offering) = state.offerings.get_by_name(&name) else {
+        return Err(api_error(axum::http::StatusCode::NOT_FOUND, format!("'{name}' is not planted here")));
+    };
+    state
+        .runtime
+        .stop(&name)
+        .await
+        .map_err(|e| api_error(axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
+    state.offerings.set_status(&offering.offering_id, crate::offerings::model::Status::Stopped);
+    Ok(Json(serde_json::json!({ "data": { "name": name, "status": "stopped" } })))
+}
+
+async fn wake_offering(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    let Some(offering) = state.offerings.get_by_name(&name) else {
+        return Err(api_error(axum::http::StatusCode::NOT_FOUND, format!("'{name}' is not planted here")));
+    };
+
+    // Self-heal (PoC wake parity): if the workload vanished behind our back,
+    // resurrect it from stored knowledge before starting.
+    if state.runtime.inspect(&name).await.is_none() {
+        let ModeData::Managed(m) = &offering.mode_data else {
+            return Err(api_error(axum::http::StatusCode::CONFLICT, "'{name}' is not managed"));
+        };
+        let Some(image) = &m.image else {
+            return Err(api_error(axum::http::StatusCode::CONFLICT, "managed offering lacks stored image"));
+        };
+        tracing::warn!(offering = %name, "workload missing - resurrecting");
+        let spec = crate::offerings::runtime::WorkloadSpec {
+            image: image.clone(),
+            named_ports: m.container_ports.clone(),
+            ..Default::default()
+        };
+        state
+            .runtime
+            .deploy(&name, &spec)
+            .await
+            .map_err(|e| api_error(axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
+    } else {
+        state
+            .runtime
+            .start(&name)
+            .await
+            .map_err(|e| api_error(axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
+    }
+    state.offerings.set_status(&offering.offering_id, crate::offerings::model::Status::Running);
+
+    // Auto-assigned host ports may differ after a restart — there is no
+    // ledger yet (O2), so detect the remap and keep the registry honest.
+    let mut remapped = false;
+    let mut updated = offering.clone();
+    if let ModeData::Managed(m) = &mut updated.mode_data {
+        let raw = state.runtime.host_ports(&name).await;
+        let new_map: HashMap<String, u16> = m
+            .container_ports
+            .iter()
+            .filter_map(|(n, &cp)| raw.get(&format!("{cp}/tcp")).map(|&h| (n.clone(), h)))
+            .collect();
+        if !new_map.is_empty() && new_map != m.port_map {
+            m.port_map = new_map.clone();
+            updated.location.port = new_map.values().copied().next().unwrap_or(0);
+            state.offerings.upsert(updated);
+            remapped = true;
+        }
+    }
+    Ok(Json(
+        serde_json::json!({ "data": { "name": name, "status": "running", "ports_remapped": remapped } }),
+    ))
+}
+
+async fn uproot_offering(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    let Some(offering) = state.offerings.get_by_name(&name) else {
+        return Err(api_error(axum::http::StatusCode::NOT_FOUND, format!("'{name}' is not planted here")));
+    };
+    // Managed only for now; adopted release / borrowed return come with O3.
+    if !matches!(offering.mode_data, crate::offerings::model::ModeData::Managed(_)) {
+        return Err(api_error(
+            axum::http::StatusCode::CONFLICT,
+            format!("'{name}' is not managed; uproot applies to managed offerings"),
+        ));
+    }
+    state
+        .runtime
+        .remove(&name)
+        .await
+        .map_err(|e| api_error(axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
+    state.offerings.remove(&offering.offering_id);
+    Ok(Json(serde_json::json!({ "data": { "name": name, "uprooted": true } })))
 }
 
 #[cfg(test)]
@@ -160,6 +370,7 @@ mod tests {
             offerings: Arc::new(crate::offerings::registry::Registry::load(
                 std::env::temp_dir().join(format!("moss-test-offerings-{}.json", Uuid::now_v7())),
             )),
+            runtime: Arc::new(crate::offerings::runtime::NullRuntime),
             stone_name: "stone-test".into(),
             boot_id: Uuid::now_v7(),
             started_at: chrono::Utc::now(),

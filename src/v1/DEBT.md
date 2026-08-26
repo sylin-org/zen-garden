@@ -10,7 +10,7 @@
 | D7 | ~~Ingest/dispatch counters exist but no HTTP surface reads them yet~~ | — | **Closed 2026-08-25**: `/api/v1/local/posture` serves live ingest/dispatch/topology counters (B3) |
 | D8 | Same-host stones rely on `SO_REUSEADDR` sharing one discovery port | Cross-platform verification | Witnessed on Windows only; Unix needs SO_REUSEPORT or per-host single-stone discipline; verify in Linux CI/container |
 | D9 | Appliance host renames unimplemented (L23): identity records modality, nothing mutates hostnames yet | Dedicated-hardware installer (NewStone v1) | PoC parity lives in poc/moss/src/bootstrap/first_boot.rs: set hostname + hosts file at first boot, appliance stones only |
-| D10 | Runtime adapters: only `null` exists; docker/podman/systemd pending | O1 (docker end-to-end) then onward | Seam defined in OFFERINGS.md §4; PoC touchpoint list is the porting checklist |
+| D10 | Runtime adapters: docker DONE (O1, no events-stream yet); podman/systemd pending | Podman on demand; events with O2 reconcile | Seam in OFFERINGS.md §4; PoC touchpoint list is the porting checklist |
 | D11 | Ceremonies (nourish/vacate/replant/store journals + rollback) deferred | Post-O2 | PoC reference poc/moss/src/domain/ceremony/ |
 | D12 | Orchestration roles/elections (primary/replica/joining) deferred | Post-O2 | ORCH-0001/0006 in PoC; wire `role` field already carried |
 | D13 | Borrow credentials vaulting (Koi vault keys) deferred | With borrow feature (O3) | PoC stored `borrowed:{name}:credentials` keys; v1 has no vault yet |

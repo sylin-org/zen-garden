@@ -7,4 +7,5 @@
 pub mod docker;
 pub mod model;
 pub mod registry;
+pub mod service;
 pub mod runtime;

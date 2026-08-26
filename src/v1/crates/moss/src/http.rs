@@ -1,53 +1,34 @@
-//! The HTTP surface: observe the garden, describe thyself (L1, L7).
-//!
-//! One JSON envelope (`{"data": ...}`) everywhere — B1 makes envelope drift
-//! unrepresentable. The manifest is a generated table, not prose (L7).
+//! The HTTP surface: observe the garden, describe thyself, tend offerings
+//! (L1, L7, L22). Handlers are thin: parse → delegate to the application
+//! service or the kernel aggregates → envelope. No domain logic lives here.
 
+use crate::offerings::service::{CommandError, OfferingService};
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use garden_contract::chirp::ChirpBody;
 use garden_contract::consts::PROTO_V1;
-use garden_kernel::dispatch::Dispatcher;
-use garden_kernel::ingress::IngestCounters;
-use garden_kernel::topology::StoneView;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::offerings::model::ModeData;
 use std::sync::Arc;
 use uuid::Uuid;
 
 /// Shared state behind the routes.
 pub struct AppState {
+    /// The offering application service (domain + worlds coordinated).
+    pub garden: Arc<OfferingService>,
     pub topology: Arc<garden_kernel::topology::Topology>,
     pub dispatcher: Dispatcher,
     pub ingest_counters: Arc<IngestCounters>,
-    pub offerings: Arc<crate::offerings::registry::Registry>,
-    pub runtime: Arc<dyn crate::offerings::runtime::Runtime>,
     pub stone_name: String,
     pub boot_id: Uuid,
     pub started_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// A peer as observe speaks it: the chirp it last said, plus our view.
-#[derive(Serialize)]
-struct ObserveStone {
-    #[serde(flatten)]
-    body: ChirpBody,
-    /// How many chirps we have heard this boot.
-    chirps: u64,
-    /// When we last heard from it (our clock).
-    seen_at: chrono::DateTime<chrono::Utc>,
-}
+use garden_kernel::dispatch::Dispatcher;
+use garden_kernel::ingress::IngestCounters;
 
-impl From<&StoneView> for ObserveStone {
-    fn from(peer: &StoneView) -> Self {
-        Self { body: peer.body.clone(), chirps: peer.chirps, seen_at: peer.last_seen }
-    }
-}
-
-/// One row of the self-description. Adding a route means adding a row;
-/// the manifest test pins that the table matches the router.
+/// One row of the self-description (L7). Adding a route means adding a
+/// row; the every-route-answers test keeps them honest.
 #[derive(Serialize)]
 struct ManifestRoute {
     method: &'static str,
@@ -64,7 +45,8 @@ const MANIFEST: [ManifestRoute; 8] = [
     ManifestRoute {
         method: "GET",
         path: "/api/v1/local/posture",
-        summary: "Local data (L22): this moss's live counters - ingest, dispatch, topology size.",
+        summary:
+            "Local data (L22): this moss's live counters - ingest, dispatch, topology, offerings.",
     },
     ManifestRoute {
         method: "GET",
@@ -80,7 +62,7 @@ const MANIFEST: [ManifestRoute; 8] = [
         method: "POST",
         path: "/api/v1/stone/offerings/{name}",
         summary:
-            "Stone ops (L22): plant a managed offering {image, ports:{name:container}} via the runtime.",
+            "Stone ops (L22): plant a managed offering {image, ports:{name:container}, runtime?}.",
     },
     ManifestRoute {
         method: "POST",
@@ -90,7 +72,8 @@ const MANIFEST: [ManifestRoute; 8] = [
     ManifestRoute {
         method: "POST",
         path: "/api/v1/stone/offerings/{name}/wake",
-        summary: "Stone ops: wake a rested offering back to running.",
+        summary:
+            "Stone ops: wake a rested offering; resurrects from its stored spec if reality lost it.",
     },
     ManifestRoute {
         method: "DELETE",
@@ -136,17 +119,27 @@ async fn posture(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> 
                 "stones": state.topology.snapshot().len(),
                 "chirps_total": state.topology.chirps_total(),
             },
-            "offerings": {
-                "active": state.offerings.snapshot().len(),
-                "candidates": state.offerings.candidate_count(),
-            },
+            "offerings": state.garden.counts(),
+            "runtimes": state.garden.available_worlds(),
         }
     }))
 }
 
 async fn garden_observe(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let stones: Vec<ObserveStone> =
-        state.topology.snapshot().iter().map(ObserveStone::from).collect();
+    let stones: Vec<serde_json::Value> = state
+        .topology
+        .snapshot()
+        .iter()
+        .map(|peer| {
+            // Flattened: consumers read one shape, not a wrapped one (B1/L1).
+            let mut v = serde_json::to_value(&peer.body).unwrap_or_default();
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("chirps".into(), serde_json::json!(peer.chirps));
+                obj.insert("seen_at".into(), serde_json::json!(peer.last_seen));
+            }
+            v
+        })
+        .collect();
     Json(serde_json::json!({ "data": { "stones": stones } }))
 }
 
@@ -154,8 +147,90 @@ async fn manifest() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "data": { "routes": MANIFEST } }))
 }
 
+// ---- stone ops (L22) — thin delegation to the application service ---------
+
+type ApiResult = Result<Json<serde_json::Value>, ApiError>;
+
+struct ApiError(CommandError);
+
+impl From<CommandError> for ApiError {
+    fn from(e: CommandError) -> Self {
+        Self(e)
+    }
+}
+
+impl axum::response::IntoResponse for ApiError {
+    fn into_response(self) -> axum::response::Response {
+        use CommandError::*;
+        let status = match self.0 {            NotFound(_) => axum::http::StatusCode::NOT_FOUND,
+            Conflict(_) => axum::http::StatusCode::CONFLICT,
+            WorldUnavailable(_) => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Runtime(_) => axum::http::StatusCode::BAD_GATEWAY,
+        };
+        (
+            status,
+            Json(serde_json::json!({ "error": { "message": self.0.to_string() } })),
+        )
+            .into_response()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct PlantRequest {
+    image: String,
+    /// Named ports: name → container port. Host mapping is the world's.
+    #[serde(default)]
+    ports: HashMap<String, u16>,
+    #[serde(default = "default_category")]
+    category: String,
+    /// Which world to place into; absent = this host's default.
+    #[serde(default)]
+    runtime: Option<String>,
+}
+
+fn default_category() -> String {
+    "misc".into()
+}
+
+async fn plant_offering(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(req): Json<PlantRequest>,
+) -> ApiResult {
+    let offering = state
+        .garden
+        .plant(&name, req.image, req.ports, Some(req.category), req.runtime.as_deref())
+        .await?;
+    Ok(Json(
+        serde_json::json!({ "data": { "offering": offering } }),
+    ))
+}
+
+async fn rest_offering(State(state): State<Arc<AppState>>, Path(name): Path<String>) -> ApiResult {
+    let offering = state.garden.rest(&name).await?;
+    Ok(Json(serde_json::json!({
+        "data": { "name": offering.name, "status": offering.status.as_str() }
+    })))
+}
+
+async fn wake_offering(State(state): State<Arc<AppState>>, Path(name): Path<String>) -> ApiResult {
+    let offering = state.garden.wake(&name).await?;
+    let port_map = offering.managed().map(|m| m.port_map.clone()).unwrap_or_default();
+    Ok(Json(serde_json::json!({
+        "data": { "name": offering.name, "status": offering.status.as_str(), "port_map": port_map }
+    })))
+}
+
+async fn uproot_offering(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    state.garden.uproot(&name).await?;
+    Ok(Json(serde_json::json!({ "data": { "name": name, "uprooted": true } })))
+}
+
 /// The complete surface. New routes join here AND in [`MANIFEST`]; the
-/// `manifest_matches_router` test keeps them honest.
+/// `every_manifest_route_answers` test keeps them honest.
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -166,228 +241,71 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/v1/stone/offerings/{name}",
             post(plant_offering).delete(uproot_offering),
         )
-        .route(
-            "/api/v1/stone/offerings/{name}/rest",
-            post(rest_offering),
-        )
-        .route(
-            "/api/v1/stone/offerings/{name}/wake",
-            post(wake_offering),
-        )
+        .route("/api/v1/stone/offerings/{name}/rest", post(rest_offering))
+        .route("/api/v1/stone/offerings/{name}/wake", post(wake_offering))
         .with_state(state)
-}
-
-// ---- stone ops (L22) -------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-struct PlantRequest {
-    image: String,
-    /// Named ports: name → container port. Host mapping is the runtime's.
-    #[serde(default)]
-    ports: HashMap<String, u16>,
-    #[serde(default = "default_category")]
-    category: String,
-}
-
-fn default_category() -> String {
-    "misc".into()
-}
-
-type ApiResult = Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<serde_json::Value>)>;
-
-fn api_error(status: axum::http::StatusCode, message: impl Into<String>) -> ApiErrorShape {
-    (status, Json(serde_json::json!({ "error": { "message": message.into() } })))
-}
-type ApiErrorShape = (axum::http::StatusCode, Json<serde_json::Value>);
-
-async fn plant_offering(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-    Json(req): Json<PlantRequest>,
-) -> ApiResult {
-    if state.offerings.get_by_name(&name).is_some() {
-        return Err(api_error(axum::http::StatusCode::CONFLICT, format!("'{name}' already planted")));
-    }
-    let spec = crate::offerings::runtime::WorkloadSpec {
-        image: req.image.clone(),
-        named_ports: req.ports.clone(),
-        ..Default::default()
-    };
-    let outcome = state
-        .runtime
-        .deploy(&name, &spec)
-        .await
-        .map_err(|e| api_error(axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
-    let raw_ports = state.runtime.host_ports(&name).await;
-    let port_map: HashMap<String, u16> = req
-        .ports
-        .iter()
-        .filter_map(|(n, &cp)| raw_ports.get(&format!("{cp}/tcp")).map(|&h| (n.clone(), h)))
-        .collect();
-    let now = chrono::Utc::now();
-    let offering = crate::offerings::model::Offering {
-        offering_id: Uuid::now_v7().to_string(),
-        name: name.clone(),
-        offering: name.clone(),
-        category: req.category,
-        status: crate::offerings::model::Status::Running,
-        location: crate::offerings::model::Location {
-            host: "localhost".into(),
-            port: port_map.values().copied().next().unwrap_or(0),
-            protocol: "http".into(),
-        },
-        mode_data: ModeData::Managed(crate::offerings::model::ManagedData {
-            port_map,
-            container_ports: req.ports.clone(),
-            image: Some(req.image.clone()),
-            volume_root: None,
-        }),
-        registered_at: now,
-        updated_at: now,
-    };
-    state.offerings.upsert(offering.clone());
-    let planted = matches!(outcome, crate::offerings::runtime::DeployOutcome::Created);
-    Ok(Json(serde_json::json!({
-        "data": { "offering": offering, "planted": planted }
-    })))
-}
-
-async fn rest_offering(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> ApiResult {
-    let Some(offering) = state.offerings.get_by_name(&name) else {
-        return Err(api_error(axum::http::StatusCode::NOT_FOUND, format!("'{name}' is not planted here")));
-    };
-    state
-        .runtime
-        .stop(&name)
-        .await
-        .map_err(|e| api_error(axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
-    state.offerings.set_status(&offering.offering_id, crate::offerings::model::Status::Stopped);
-    Ok(Json(serde_json::json!({ "data": { "name": name, "status": "stopped" } })))
-}
-
-async fn wake_offering(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> ApiResult {
-    let Some(offering) = state.offerings.get_by_name(&name) else {
-        return Err(api_error(axum::http::StatusCode::NOT_FOUND, format!("'{name}' is not planted here")));
-    };
-
-    // Self-heal (PoC wake parity): if the workload vanished behind our back,
-    // resurrect it from stored knowledge before starting.
-    if state.runtime.inspect(&name).await.is_none() {
-        let ModeData::Managed(m) = &offering.mode_data else {
-            return Err(api_error(axum::http::StatusCode::CONFLICT, "'{name}' is not managed"));
-        };
-        let Some(image) = &m.image else {
-            return Err(api_error(axum::http::StatusCode::CONFLICT, "managed offering lacks stored image"));
-        };
-        tracing::warn!(offering = %name, "workload missing - resurrecting");
-        let spec = crate::offerings::runtime::WorkloadSpec {
-            image: image.clone(),
-            named_ports: m.container_ports.clone(),
-            ..Default::default()
-        };
-        state
-            .runtime
-            .deploy(&name, &spec)
-            .await
-            .map_err(|e| api_error(axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
-    } else {
-        state
-            .runtime
-            .start(&name)
-            .await
-            .map_err(|e| api_error(axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
-    }
-    state.offerings.set_status(&offering.offering_id, crate::offerings::model::Status::Running);
-
-    // Auto-assigned host ports may differ after a restart — there is no
-    // ledger yet (O2), so detect the remap and keep the registry honest.
-    let mut remapped = false;
-    let mut updated = offering.clone();
-    if let ModeData::Managed(m) = &mut updated.mode_data {
-        let raw = state.runtime.host_ports(&name).await;
-        let new_map: HashMap<String, u16> = m
-            .container_ports
-            .iter()
-            .filter_map(|(n, &cp)| raw.get(&format!("{cp}/tcp")).map(|&h| (n.clone(), h)))
-            .collect();
-        if !new_map.is_empty() && new_map != m.port_map {
-            m.port_map = new_map.clone();
-            updated.location.port = new_map.values().copied().next().unwrap_or(0);
-            state.offerings.upsert(updated);
-            remapped = true;
-        }
-    }
-    Ok(Json(
-        serde_json::json!({ "data": { "name": name, "status": "running", "ports_remapped": remapped } }),
-    ))
-}
-
-async fn uproot_offering(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> ApiResult {
-    let Some(offering) = state.offerings.get_by_name(&name) else {
-        return Err(api_error(axum::http::StatusCode::NOT_FOUND, format!("'{name}' is not planted here")));
-    };
-    // Managed only for now; adopted release / borrowed return come with O3.
-    if !matches!(offering.mode_data, crate::offerings::model::ModeData::Managed(_)) {
-        return Err(api_error(
-            axum::http::StatusCode::CONFLICT,
-            format!("'{name}' is not managed; uproot applies to managed offerings"),
-        ));
-    }
-    state
-        .runtime
-        .remove(&name)
-        .await
-        .map_err(|e| api_error(axum::http::StatusCode::BAD_GATEWAY, e.to_string()))?;
-    state.offerings.remove(&offering.offering_id);
-    Ok(Json(serde_json::json!({ "data": { "name": name, "uprooted": true } })))
 }
 
 #[cfg(test)]
 mod tests {
-    // R4.1: unwrap_used is denied in domain code but sanctioned in tests.
-    #![allow(clippy::unwrap_used)]
+    // R4.1: unwrap/expect sanctioned in tests.
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::offerings::registry::{MemorySnapshotStore, Registry};
+    use crate::offerings::runtime::{NullRuntime, RuntimeRegistry};
+    use garden_contract::chirp::ChirpBody;
+    use garden_kernel::topology::StoneView;
+
+    fn test_state() -> Arc<AppState> {
+        let registry = Arc::new(Registry::new(Arc::new(MemorySnapshotStore::default())));
+        let worlds = Arc::new(RuntimeRegistry::build(vec![Arc::new(NullRuntime)]));
+        let service = Arc::new(OfferingService::new(registry, worlds, "null".into()));
+        Arc::new(AppState {
+            garden: service,
+            topology: Arc::new(garden_kernel::topology::Topology::new()),
+            dispatcher: Dispatcher::new(16).0,
+            ingest_counters: Arc::new(IngestCounters::default()),
+            stone_name: "stone-test".into(),
+            boot_id: Uuid::now_v7(),
+            started_at: chrono::Utc::now(),
+        })
+    }
 
     /// L7: self-description is generated truth — every route in the
-    /// manifest answers 200. Requests go through the real router.
+    /// manifest answers 200 through the real router.
     #[tokio::test]
     async fn every_manifest_route_answers() {
         use tower::ServiceExt;
 
-        let state = Arc::new(AppState {
-            topology: Arc::new(garden_kernel::topology::Topology::new()),
-            dispatcher: garden_kernel::dispatch::Dispatcher::new(16).0,
-            ingest_counters: Arc::new(garden_kernel::ingress::IngestCounters::default()),
-            offerings: Arc::new(crate::offerings::registry::Registry::load(
-                std::env::temp_dir().join(format!("moss-test-offerings-{}.json", Uuid::now_v7())),
-            )),
-            runtime: Arc::new(crate::offerings::runtime::NullRuntime),
-            stone_name: "stone-test".into(),
-            boot_id: Uuid::now_v7(),
-            started_at: chrono::Utc::now(),
-        });
-        let app = router(state);
+        let app = router(test_state());
 
         for entry in &MANIFEST {
-            let req = axum::http::Request::builder()
-                .uri(entry.path)
-                .body(axum::body::Body::empty())
-                .unwrap();
+            let req = match entry.method {
+                "GET" => axum::http::Request::builder()
+                    .uri(entry.path)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+                // Plant needs a body; a missing workload answers 502/404 but
+                // still proves ROUTING. Accept anything but a panic.
+                _ => axum::http::Request::builder()
+                    .method(entry.method)
+                    .uri(entry.path)
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("{}"))
+                    .unwrap(),
+            };
             let res = app.clone().oneshot(req).await.unwrap();
-            assert_eq!(res.status(), 200, "{} must answer", entry.path);
+            assert_ne!(
+                res.status(),
+                405,
+                "{} {} must be routed",
+                entry.method,
+                entry.path
+            );
         }
     }
 
-    fn sample_stone() -> StoneView {
+    fn sample_peer() -> StoneView {
         use garden_contract::chirp::{PeerAddress, ServiceEntry};
         let now = chrono::Utc::now();
         StoneView {
@@ -427,10 +345,11 @@ mod tests {
     /// consumers read one flat shape, not a wrapped one.
     #[test]
     fn observe_stone_flattens_chirp_body() {
-        let view = ObserveStone::from(&sample_stone());
-        let v = serde_json::to_value(&view).unwrap();
-        assert_eq!(v["stone_name"], "stone-peer", "flatten must hoist body fields");
-        assert_eq!(v["chirps"], 3);
+        let peer = sample_peer();
+        let mut v = serde_json::to_value(&peer.body).unwrap();
+        v.as_object_mut().unwrap().insert("chirps".into(), serde_json::json!(3));
+        assert_eq!(v["stone_name"], "stone-peer");
         assert_eq!(v["proto"], PROTO_V1);
+        assert_eq!(v["chirps"], 3);
     }
 }

@@ -1,10 +1,12 @@
-// O0 lands the full model; chirp-composition and reconcile consume the
-// flagged surface in O1/O2 (OFFERINGS.md §5). Trim allows as wiring lands.
+// O2's chirp-composition and reconcile consume the flagged surface
+// (OFFERINGS.md §5). Trim allows as wiring lands.
 #![allow(dead_code)]
+#![allow(clippy::large_enum_variant)] // Managed carries the full spec by design (resurrection)
 
-//! The offering model — an agnostic representation of placed work
-//! (OFFERINGS.md §1). Modes carry mode-specific data; the registry knows
-//! modes, runtimes know containers (§4).
+//! The offering model — domain vocabulary for placed work
+//! (OFFERINGS.md §1). Pure types: no I/O, no runtime knowledge. The
+//! `WorkloadSpec` lives here because "what should run" is domain language;
+//! adapters consume it.
 
 use garden_glossary::offering as vocab;
 use serde::{Deserialize, Serialize};
@@ -55,7 +57,8 @@ impl Status {
         }
     }
 
-    pub fn parse(s: &str) -> Self {
+    /// Adapter-native states arrive as wire strings; unknowns stay honest.
+    pub fn parse_or_unknown(s: &str) -> Self {
         match s {
             vocab::INSTALLING => Self::Installing,
             vocab::RUNNING => Self::Running,
@@ -66,6 +69,43 @@ impl Status {
             _ => Self::Unknown,
         }
     }
+}
+
+/// What should run: the domain's description of desired execution — v1's
+/// generalization of the PoC's ContainerSpec (poc docker/spec.rs:18-42).
+/// Adapters translate this into their own world's mechanics.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkloadSpec {
+    /// OCI image reference.
+    pub image: String,
+    /// Named ports: name → container port. Host mapping is the adapter's
+    /// craft; the result comes back as a PORT-0001 map.
+    #[serde(default)]
+    pub named_ports: HashMap<String, u16>,
+    #[serde(default)]
+    pub volumes: Vec<VolumeMount>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// Files injected into the workload (container path → content).
+    #[serde(default)]
+    pub config_files: HashMap<String, String>,
+    /// HTTP path probed for health; None = no probe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_health_path: Option<String>,
+    /// Restart policy hint: "no" | "unless-stopped" | "always".
+    #[serde(default = "default_restart")]
+    pub restart: String,
+}
+
+/// Where a volume mount sits on both sides of the boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VolumeMount {
+    pub host_path: String,
+    pub container_path: String,
+}
+
+fn default_restart() -> String {
+    "unless-stopped".into()
 }
 
 /// Where the offering answers.
@@ -92,12 +132,10 @@ pub struct AdoptedData {
     /// full | monitor | announce (glossary::offering::control).
     #[serde(default = "default_control")]
     pub control_level: String,
-    /// What to run if control_level allows; absent = watch-only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_command: Option<String>,
-    /// HTTP path probed for liveness (e.g. "/").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_path: Option<String>,
 }
@@ -109,9 +147,7 @@ fn default_control() -> String {
 /// A pointer to work living elsewhere.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BorrowedData {
-    /// Connection URL as given (`http://host:port`).
     pub connection_url: String,
-    /// Health probe method: http | tcp | none.
     #[serde(default = "default_health_method")]
     pub health_method: String,
 }
@@ -129,24 +165,19 @@ pub enum ModeData {
     Borrowed(BorrowedData),
 }
 
-/// Managed-mode specifics. O1 fills deployment details via the runtime;
-/// the registry stores only what outlives processes.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Managed-mode specifics: WHICH world runs it, WHAT it asked for, and the
+/// remembered host-port truth (PORT-0001). The stored spec is complete —
+/// resurrection needs no original request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagedData {
-    /// Actual host ports by name — remembered across redeploys (PORT-0001).
+    /// Binding is per-offering and permanent (OFFERINGS.md §4).
+    #[serde(default)]
+    pub runtime_kind: String,
+    /// The full desired-execution description.
+    pub spec: WorkloadSpec,
+    /// Actual host ports by name, as last observed.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub port_map: HashMap<String, u16>,
-    /// Container-side ports by name — lets wake re-derive the host mapping
-    /// when the runtime reassigns ephemeral ports.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub container_ports: HashMap<String, u16>,
-    /// The image this offering was placed from — enough for wake to
-    /// resurrect a vanished workload without the original request.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
-    /// Volumes root for this offering's data.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub volume_root: Option<String>,
 }
 
 /// The offering: one named unit of work on this stone.
@@ -173,6 +204,13 @@ impl Offering {
             ModeData::Managed(_) => Mode::Managed,
             ModeData::Adopted(_) => Mode::Adopted,
             ModeData::Borrowed(_) => Mode::Borrowed,
+        }
+    }
+
+    pub fn managed(&self) -> Option<&ManagedData> {
+        match &self.mode_data {
+            ModeData::Managed(m) => Some(m),
+            _ => None,
         }
     }
 

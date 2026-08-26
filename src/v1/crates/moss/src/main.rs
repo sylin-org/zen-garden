@@ -107,8 +107,8 @@ async fn main() {
     );
     let chirp_source = source::StaticChirpSource::new(chirp_body.clone());
 
-    // The stone's offerings: loaded from disk, adopted split to candidates
-    // (ghost prevention, OFFERINGS.md §2).
+    // The stone's offerings: loaded from disk via the store port, adopted
+    // split to candidates (ghost prevention, OFFERINGS.md §2).
     let offerings = pipeline::step::<
         Arc<offerings::registry::Registry>,
         String,
@@ -123,7 +123,10 @@ async fn main() {
             std::fs::create_dir_all(&dir)
                 .map_err(|e| format!("create {}: {e}", dir.display()))?;
             let path = dir.join("offerings.json");
-            let registry = Arc::new(offerings::registry::Registry::load(path));
+            let store = Arc::new(offerings::registry::FileSnapshotStore::new(path));
+            let registry = Arc::new(offerings::registry::Registry::new(
+                store as Arc<dyn offerings::registry::SnapshotStore>,
+            ));
             tracing::info!(
                 stone = %identity_name,
                 active = registry.snapshot().len(),
@@ -134,20 +137,33 @@ async fn main() {
         }
     })
     .await;
-    // The execution world beneath managed offerings — selected by config,
-    // connected loudly (L17): an unreachable Docker aborts, never shrugs.
-    let runtime_kind = std::env::var("MOSS_RUNTIME").unwrap_or_else(|_| "null".into());
-    let runtime = pipeline::step("runtime-select", {
+    // The host's worlds, probed at boot (OFFERINGS.md §4): null always
+    // exists; docker registers when its socket answers. MOSS_RUNTIME names
+    // the DEFAULT world; naming an absent one aborts loudly (L17).
+    let requested = std::env::var("MOSS_RUNTIME").ok();
+    let (runtime_registry, default_runtime) = pipeline::step::<
+        (Arc<offerings::runtime::RuntimeRegistry>, String),
+        String,
+        _,
+    >("runtime-select", {
         async move {
-            match runtime_kind.as_str() {
-                "docker" => Ok(Arc::new(
-                    offerings::docker::DockerRuntime::connect()
-                        .map_err(|e| e.to_string())?,
-                ) as Arc<dyn offerings::runtime::Runtime>),
-                "null" => Ok(Arc::new(offerings::runtime::NullRuntime)
-                    as Arc<dyn offerings::runtime::Runtime>),
-                other => Err(format!("unknown MOSS_RUNTIME '{other}' (null | docker)")),
+            // Adopt the worlds that answer (L25): null always exists.
+            let mut worlds: Vec<Arc<dyn offerings::runtime::Runtime>> =
+                vec![Arc::new(offerings::runtime::NullRuntime)];
+            match offerings::docker::DockerRuntime::connect() {
+                Ok(d) => worlds.push(Arc::new(d)),
+                Err(e) => tracing::info!(error = %e, "docker world not present"),
             }
+            let registry = offerings::runtime::RuntimeRegistry::build(worlds);
+
+            // Explicit intent must exist among adopted worlds (L17);
+            // otherwise the host default is companion-grade "null".
+            let default_kind = requested.clone().unwrap_or_else(|| "null".into());
+            registry
+                .by_kind(&default_kind)
+                .map_err(|e| format!("MOSS_RUNTIME={default_kind}: {e}"))?;
+            tracing::info!(default = %default_kind, available = ?registry.kinds(), "runtimes adopted");
+            Ok((Arc::new(registry), default_kind))
         }
     })
     .await;
@@ -199,13 +215,20 @@ async fn main() {
     tokio::spawn(async move { ingress.run(ingest_token, dispatch_tx).await });
     tokio::spawn(dispatcher_handle.run(token.clone()));
 
+    // The offering application service: registry + worlds + default world,
+    // coordinated (OFFERINGS.md §5/§4). Facts census joins in O2.
+    let garden = Arc::new(offerings::service::OfferingService::new(
+        Arc::clone(&offerings),
+        runtime_registry,
+        default_runtime,
+    ));
+
     // HTTP surface, last: the garden answers once it can hear.
     let state = Arc::new(http::AppState {
         topology: Arc::clone(&topology),
         dispatcher: dispatcher.clone(),
         ingest_counters,
-        offerings: Arc::clone(&offerings),
-        runtime,
+        garden,
         stone_name: identity.stone_name.clone(),
         boot_id,
         started_at: chrono::Utc::now(),

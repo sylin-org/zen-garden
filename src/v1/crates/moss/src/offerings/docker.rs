@@ -1,10 +1,9 @@
-//! The Docker adapter (OFFERINGS.md §4, D10): the first real world beneath
-//! the seam. Speaks bollard; keeps PoC-compatible `zen-offering-*` naming.
+//! The Docker adapter (OFFERINGS.md §4): the first real world beneath the
+//! seam. Speaks bollard; keeps PoC-compatible `zen-offering-*` naming.
 //! Everything Docker-specific in v1 lives in this file.
 
-use super::runtime::{
-    DeployOutcome, Runtime, RuntimeError, RunningWorkload, VolumeMount, WorkloadSpec,
-};
+use super::model::WorkloadSpec;
+use super::runtime::{Observed, Placement, Runtime, RuntimeError};
 use bollard::container::{
     Config, CreateContainerOptions, ListContainersOptions, RemoveContainerOptions,
     StopContainerOptions,
@@ -28,8 +27,8 @@ impl DockerRuntime {
     /// DOCKER_HOST). Connection failures surface as a named startup step
     /// (L17), not a silent fallback.
     pub fn connect() -> Result<Self, RuntimeError> {
-        let docker = Docker::connect_with_local_defaults()
-            .map_err(|e| RuntimeError::Unavailable(e.to_string()))?;
+        let docker =
+            Docker::connect_with_local_defaults().map_err(|e| RuntimeError::Unavailable(e.to_string()))?;
         Ok(Self { docker })
     }
 
@@ -38,10 +37,7 @@ impl DockerRuntime {
     }
 
     async fn pull(&self, image: &str) -> Result<(), RuntimeError> {
-        let opts = CreateImageOptions {
-            from_image: image.to_string(),
-            ..Default::default()
-        };
+        let opts = CreateImageOptions { from_image: image.to_string(), ..Default::default() };
         let mut stream = self.docker.create_image(Some(opts), None, None);
         while let Some(info) = stream.next().await {
             match info {
@@ -56,13 +52,21 @@ impl DockerRuntime {
         Ok(())
     }
 
-    /// Translate a Docker container state into offering status vocabulary.
     fn map_state(running: Option<bool>, restarting: Option<bool>) -> String {
         match (running, restarting) {
             (Some(true), _) => garden_glossary::offering::RUNNING.into(),
             (_, Some(true)) => garden_glossary::offering::DEGRADED.into(),
             _ => garden_glossary::offering::STOPPED.into(),
         }
+    }
+
+    fn restart_policy(spec: &WorkloadSpec) -> Option<bollard::models::RestartPolicy> {
+        let name = match spec.restart.as_str() {
+            "always" => RestartPolicyNameEnum::ALWAYS,
+            "unless-stopped" => RestartPolicyNameEnum::UNLESS_STOPPED,
+            _ => return None,
+        };
+        Some(bollard::models::RestartPolicy { name: Some(name), maximum_retry_count: None })
     }
 }
 
@@ -72,38 +76,18 @@ impl Runtime for DockerRuntime {
         "docker"
     }
 
-    async fn host_ports(&self, name: &str) -> HashMap<String, u16> {
-        let mut out = HashMap::new();
-        if let Ok(inspect) =
-            self.docker.inspect_container(&Self::container_name(name), None).await
-            && let Some(ports) = inspect.network_settings.and_then(|n| n.ports)
-        {
-            for (key, bindings) in ports {
-                for b in bindings.into_iter().flatten() {
-                    if let Some(host) =
-                        b.host_port.as_deref().and_then(|h| h.parse::<u16>().ok())
-                    {
-                        out.insert(key.clone(), host);
-                    }
-                }
-            }
-        }
-        out
-    }
-
-    async fn deploy(
+    /// Ensure reality matches spec: pull when absent, create when missing,
+    /// start when stopped. Port NAMES travel as labels so [`observe`] can
+    /// translate Docker's "80/tcp" keys back into PORT-0001 vocabulary.
+    async fn place(
         &self,
         name: &str,
         spec: &WorkloadSpec,
-    ) -> Result<DeployOutcome, RuntimeError> {
+    ) -> Result<Placement, RuntimeError> {
         let full = Self::container_name(name);
 
-        // Idempotence: already placed and running → say so.
-        if let Some(existing) = self.inspect(name).await {
-            if existing.status == garden_glossary::offering::RUNNING {
-                return Ok(DeployOutcome::AlreadyRunning);
-            }
-        } else {
+        let observed = self.observe(name).await;
+        if observed.is_none() {
             self.pull(&spec.image).await?;
 
             let exposed: HashMap<String, HashMap<(), ()>> =
@@ -119,23 +103,31 @@ impl Runtime for DockerRuntime {
                 })
                 .collect();
 
-            let mounts = ensure_volume_dirs(spec.volumes.as_slice())?;
-            let host_config = HostConfig {
-                binds: Some(mounts),
-                port_bindings: Some(bindings),
-                restart_policy: Some(bollard::models::RestartPolicy {
-                    name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
-                    maximum_retry_count: None,
-                }),
-                ..Default::default()
-            };
+            let mut labels: HashMap<String, String> =
+                HashMap::from([("zg.offering".into(), name.into())]);
+            for (role, &container_port) in &spec.named_ports {
+                labels.insert(format!("zg.port.{role}"), container_port.to_string());
+            }
+
+            let mut binds = Vec::with_capacity(spec.volumes.len());
+            for v in &spec.volumes {
+                std::fs::create_dir_all(&v.host_path).map_err(|e| {
+                    RuntimeError::Failed(format!("volume {}: {e}", v.host_path))
+                })?;
+                binds.push(format!("{}:{}", v.host_path, v.container_path));
+            }
 
             let config = Config {
                 image: Some(spec.image.clone()),
-                labels: Some(HashMap::from([("zg.offering".into(), name.into())])),
+                labels: Some(labels),
                 exposed_ports: Some(exposed),
                 env: Some(spec.env.iter().map(|(k, v)| format!("{k}={v}")).collect()),
-                host_config: Some(host_config),
+                host_config: Some(HostConfig {
+                    binds: Some(binds),
+                    port_bindings: Some(bindings),
+                    restart_policy: Self::restart_policy(spec),
+                    ..Default::default()
+                }),
                 ..Default::default()
             };
 
@@ -148,8 +140,15 @@ impl Runtime for DockerRuntime {
                 .map_err(|e| RuntimeError::Failed(format!("create {full}: {e}")))?;
         }
 
-        self.start(name).await?;
-        Ok(DeployOutcome::Created)
+        // Ensure running (create above implies a fresh stopped container).
+        if !self.observe(name).await.map(|o| o.running).unwrap_or(false) {
+            self.start(name).await?;
+        }
+
+        let placed = self.observe(name).await.ok_or_else(|| {
+            RuntimeError::Failed(format!("{full} placed but unobservable"))
+        })?;
+        Ok(Placement { named_host_ports: placed.named_host_ports })
     }
 
     async fn start(&self, name: &str) -> Result<(), RuntimeError> {
@@ -176,16 +175,42 @@ impl Runtime for DockerRuntime {
             .map_err(|e| RuntimeError::Failed(e.to_string()))
     }
 
-    async fn inspect(&self, name: &str) -> Option<RunningWorkload> {
+    async fn observe(&self, name: &str) -> Option<Observed> {
         let inspect = self.docker.inspect_container(&Self::container_name(name), None).await.ok()?;
         let state = inspect.state.clone().unwrap_or_default();
-        let status = Self::map_state(state.running, state.restarting);
-        let image =
-            inspect.config.as_ref().and_then(|c| c.image.clone()).unwrap_or_default();
-        Some(RunningWorkload { name: name.to_string(), image, status, port_map: Default::default() })
+        let running = state.running.unwrap_or(false);
+        let restarting = state.restarting.unwrap_or(false);
+
+        // Named translation via labels: zg.port.<role> = <container_port>.
+        let labels = inspect.config.as_ref().and_then(|c| c.labels.clone()).unwrap_or_default();
+        let raw = inspect.network_settings.and_then(|n| n.ports).unwrap_or_default();
+        let mut named_host_ports = HashMap::new();
+        for (key, bindings) in raw {
+            let Some(container_port) = key.split('/').next().and_then(|p| p.parse::<u16>().ok())
+            else {
+                continue;
+            };
+            let role = labels
+                .iter()
+                .find(|(k, v)| {
+                    k.starts_with("zg.port.")
+                        && v.parse::<u16>().map(|v| v == container_port).unwrap_or(false)
+                })
+                .map(|(k, _)| k.trim_start_matches("zg.port.").to_string());
+            for b in bindings.into_iter().flatten() {
+                if let Some(host) = b.host_port.as_deref().and_then(|h| h.parse::<u16>().ok()) {
+                    let name = role.clone().unwrap_or_else(|| container_port.to_string());
+                    named_host_ports.insert(name, host);
+                }
+            }
+        }
+
+        let status = Self::map_state(state.running, Some(restarting));
+        let _ = status;
+        Some(Observed { running, named_host_ports })
     }
 
-    async fn list(&self) -> Vec<RunningWorkload> {
+    async fn list(&self) -> Vec<super::runtime::PlacedRef> {
         let opts: ListContainersOptions<String> = ListContainersOptions {
             all: true,
             filters: HashMap::from([("name".into(), vec![CONTAINER_PREFIX.into()])]),
@@ -200,11 +225,12 @@ impl Runtime for DockerRuntime {
                         c.state.as_deref().map(|s| s == "running"),
                         c.status.as_deref().map(|s| s == "restarting"),
                     );
-                    Some(RunningWorkload {
-                        name: full_name.trim_start_matches('/').trim_start_matches(CONTAINER_PREFIX).to_string(),
-                        image: c.image.clone().unwrap_or_default(),
-                        status,
-                        port_map: Default::default(),
+                    Some(super::runtime::PlacedRef {
+                        name: full_name
+                            .trim_start_matches('/')
+                            .trim_start_matches(CONTAINER_PREFIX)
+                            .to_string(),
+                        status: crate::offerings::model::Status::parse_or_unknown(&status),
                     })
                 })
                 .collect(),
@@ -214,15 +240,4 @@ impl Runtime for DockerRuntime {
             }
         }
     }
-}
-
-/// Volume hosts must exist before Docker can bind-mount them.
-fn ensure_volume_dirs(volumes: &[VolumeMount]) -> Result<Vec<String>, RuntimeError> {
-    let mut binds = Vec::with_capacity(volumes.len());
-    for v in volumes {
-        std::fs::create_dir_all(&v.host_path)
-            .map_err(|e| RuntimeError::Failed(format!("volume {}: {e}", v.host_path)))?;
-        binds.push(format!("{}:{}", v.host_path, v.container_path));
-    }
-    Ok(binds)
 }

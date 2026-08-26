@@ -183,3 +183,17 @@ querier cycle (roughly 60-125s) before declaring discovery broken. A
 silent first minute is convergence, not failure. Witnesses budget for it;
 tests asserting instant cross-host delivery measure the switch, not the
 garden.
+
+## L25 - Adoption is the house style
+The Windows poc adopted hand-installed ollama: detect first, claim only
+what answers, remember who owns what and how much control they have. v1's
+runtime probe repeats the identical motion one level down - boot-time
+discovery of container engines registering as available worlds. The
+pattern generalizes: any time the garden meets pre-existing reality
+(services, runtimes, storage banks, companions, bridges), the mechanism
+is detection -> candidacy -> remembered binding -> capability-scoped
+control.
+**Rule:** never configure into existence what you can detect. New layers
+of the garden adopt reality before they schedule it; availability is
+probed, bindings are recorded, and control levels scope what claiming
+means.

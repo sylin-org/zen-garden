@@ -307,7 +307,16 @@ async fn main() {
     };
 
     // The offering application service: registry + worlds + catalog + facts,
-    // coordinated (OFFERINGS.md §5/§4).
+    // coordinated (OFFERINGS.md §5/§4). The service pool resolves here so a
+    // malformed MOSS_SERVICE_PORT_POOL aborts loudly at startup (L17).
+    let pool = pipeline::step::<offerings::ports::Pool, String, _>("port-pool", async {
+        match std::env::var("MOSS_SERVICE_PORT_POOL") {
+            Ok(v) => offerings::ports::Pool::parse(&v)
+                .map_err(|e| format!("MOSS_SERVICE_PORT_POOL={v}: {e}")),
+            Err(_) => Ok(offerings::ports::Pool::default()),
+        }
+    })
+    .await;
     let garden = Arc::new(offerings::service::OfferingService::new(
         Arc::clone(&offerings),
         runtime_registry,
@@ -315,6 +324,7 @@ async fn main() {
         catalog,
         Arc::clone(&factsheet),
         OfferingsRoot::new(dirs_root),
+        pool,
     ));
 
     // The Converger: reality chases the stored plans until cancelled.

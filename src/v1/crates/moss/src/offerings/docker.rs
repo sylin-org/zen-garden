@@ -102,7 +102,13 @@ impl Runtime for DockerRuntime {
                     // Port ledger as placement constraint: bind the
                     // REMEMBERED host port for this role when one exists
                     // (§6.4); fall back to ephemeral assignment otherwise.
-                    let host = spec.preferred_ports.get(role).map(|hp| hp.to_string());
+                    let host = spec.allocations.get(role).map(|a| a.home.to_string());
+                    if host.is_none() {
+                        // Transitional only: pre-migration specs carry no
+                        // allocations. Post-migration every role is bound
+                        // explicitly (D14's real fix).
+                        tracing::warn!(offering = %name, role = %role, "no allocation recorded - dynamic bind");
+                    }
                     (
                         format!("{cp}/tcp"),
                         Some(vec![PortBinding { host_ip: None, host_port: host }]),

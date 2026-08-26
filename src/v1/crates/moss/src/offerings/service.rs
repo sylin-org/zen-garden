@@ -7,7 +7,8 @@ use super::compile;
 use super::events::EventLog;
 use super::facts::Factsheet;
 use super::manifest::Catalog;
-use super::model::{Location, ManagedData, ModeData, Offering, Status, WorkloadSpec};
+use super::model::{Location, ManagedData, ModeData, Offering, PortAllocation, Status, WorkloadSpec};
+use super::ports::{self, Claim, Pool};
 use super::registry::Registry;
 use super::runtime::{RuntimeRegistry, RuntimeError};
 use super::directory::OfferingsRoot;
@@ -56,6 +57,8 @@ pub struct OfferingService {
     pub facts: Arc<Factsheet>,
     /// Where offering directories live (rehydration contract, OFFERINGS.md).
     dirs_root: OfferingsRoot,
+    /// The stone's service pool for address allocation (ADR-0002 ruling 1).
+    pool: Pool,
     /// Per-offering convergence failure counters (converge.rs drives them).
     failures: Arc<parking_lot::Mutex<HashMap<String, u32>>>,
 }
@@ -69,6 +72,7 @@ impl OfferingService {
         catalog: Arc<Catalog>,
         facts: Arc<Factsheet>,
         dirs_root: OfferingsRoot,
+        pool: Pool,
     ) -> Self {
         Self {
             registry,
@@ -77,8 +81,42 @@ impl OfferingService {
             catalog,
             facts,
             dirs_root,
+            pool,
             failures: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// The address ledger (ADR-0002): every managed offering's held port,
+    /// from its allocations — or, transitionally before directory migration,
+    /// from whatever residence it last recorded. Rest counts; offline is
+    /// not free.
+    fn ledger(&self) -> Vec<Claim> {
+        self.registry
+            .snapshot()
+            .iter()
+            .filter_map(|o| {
+                let m = o.managed()?;
+                let homes = if m.spec.allocations.is_empty() {
+                    // Transitional: derive claims from recorded residences.
+                    m.port_map
+                        .values()
+                        .map(|port| (*port, super::ports::Tier::Flexible))
+                        .collect::<Vec<_>>()
+                } else {
+                    m.spec
+                        .allocations
+                        .values()
+                        .map(|a| (a.home, a.tier))
+                        .collect::<Vec<_>>()
+                };
+                Some(
+                    homes
+                        .into_iter()
+                        .map(|(port, _tier)| Claim::new(&o.name, port)),
+                )
+            })
+            .flatten()
+            .collect()
     }
 
     /// Append to an offering's audit ledger; failures warn but never block.
@@ -160,8 +198,8 @@ impl OfferingService {
             }
             let facts_gen = self.facts.snapshot();
             let dir = self.dirs_root.dir_for(name);
-            let plan =
-                compile::compile(m, &facts_gen, inputs, &dir).map_err(|e| match e {
+            let claims = self.ledger();
+            let plan = compile::compile(m, &facts_gen, inputs, &dir, &claims, self.pool).map_err(|e| match e {
                 super::compile::CompileError::Denied { because, suggest } => {
                     CommandError::Conflict(format!(
                         "compatibility denied: {because}{}",
@@ -208,9 +246,40 @@ impl OfferingService {
                 "no catalog entry for '{name}' and no image given"
             )));
         };
+        // ADR-0002: ad-hoc offerings are citizens too — their roles draw
+        // stable homes from the same ledger the catalog path uses.
+        let mut intents = std::collections::BTreeMap::new();
+        for role in named_ports.keys() {
+            intents.insert(
+                role.clone(),
+                ports::Intent {
+                    tier: ports::Tier::Flexible,
+                    home: None,
+                },
+            );
+        }
+        let claims = self.ledger();
+        let homes = ports::allocate(&intents, &claims, self.pool).map_err(|e| match e {
+            ports::AllocError::ClaimConflict { port, holder } => CommandError::Conflict(format!(
+                "host port {port} is held by garden member '{holder}'"
+            )),
+            other => CommandError::Conflict(format!("address allocation refused: {other}")),
+        })?;
         let spec = WorkloadSpec {
             image: image.clone(),
             named_ports: named_ports.clone(),
+            allocations: homes
+                .iter()
+                .map(|(role, home)| {
+                    (
+                        role.clone(),
+                        PortAllocation {
+                            home: *home,
+                            tier: ports::Tier::Flexible,
+                        },
+                    )
+                })
+                .collect(),
             ..Default::default()
         };
         let placement = rt.place(name, &spec).await.map_err(CommandError::Runtime)?;
@@ -250,10 +319,6 @@ impl OfferingService {
         self.registry.get_by_name(name)
     }
 
-    fn m_port_map(m: &ManagedData) -> std::collections::HashMap<String, u16> {
-        m.port_map.clone()
-    }
-
     /// Rest: stopped, and reconcile will keep it so (§3.2).
     pub async fn rest(&self, name: &str) -> Result<Offering, CommandError> {
         let offering = self.managed(name)?;
@@ -276,10 +341,10 @@ impl OfferingService {
         match rt.observe(name).await {
             None => {
                 tracing::warn!(offering = %name, "workload missing - resurrecting from stored spec");
-                // Port preservation: remembered bindings ride along as
-                // placement constraints (PORT-0001 as input, §6.4).
-                let mut spec = managed.spec.clone();
-                spec.preferred_ports = Self::m_port_map(managed);
+                // The stored spec already carries the ledgered allocations
+                // (ADR-0002): identity rides along; residence is chosen at
+                // the create edge (squatters relocate, homes remembered).
+                let spec = managed.spec.clone();
                 rt.place(name, &spec).await.map_err(CommandError::Runtime)?;
                 self.audit(name, "Resurrected", serde_json::json!({}));
             }
@@ -371,6 +436,7 @@ managed:
             Arc::new(catalog),
             Arc::new(Factsheet::empty()),
             OfferingsRoot::new(root.clone()),
+            super::ports::Pool::default(),
         );
         (service, root)
     }

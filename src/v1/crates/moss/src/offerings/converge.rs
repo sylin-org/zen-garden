@@ -53,9 +53,10 @@ pub async fn converge_once(service: &OfferingService) -> Vec<(String, Outcome)> 
                 }
             }
             // Missing while desired running: heal by re-placing the plan.
+            // The stored spec carries the ledgered allocations (ADR-0002) —
+            // identity rides along; residence is chosen at the create edge.
             (None, Status::Running | Status::Degraded) => {
-                let mut spec = m.spec.clone();
-                spec.preferred_ports = m.port_map.clone();
+                let spec = m.spec.clone();
                 match world.place(name.as_str(), &spec).await {
                     Ok(placement) => {
                         refresh_ports(service, &offering, placement.named_host_ports);

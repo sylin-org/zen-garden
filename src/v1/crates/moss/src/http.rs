@@ -291,6 +291,7 @@ mod tests {
             crate::offerings::directory::OfferingsRoot::new(
                 std::env::temp_dir().join(format!("moss-test-offer-{}", Uuid::now_v7())),
             ),
+            crate::offerings::ports::Pool::default(),
         ));
         Arc::new(AppState {
             garden: service,

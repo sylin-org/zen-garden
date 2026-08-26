@@ -9,6 +9,7 @@
 //! adapters consume it.
 
 use garden_glossary::offering as vocab;
+use crate::offerings::ports::Tier;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -99,11 +100,13 @@ pub struct WorkloadSpec {
     /// consumed by adapters that understand them. Opaque to the domain.
     #[serde(default)]
     pub advanced: serde_json::Value,
-    /// Remembered host-port bindings — converge/wake inject these from the
-    /// record's port_map so re-placement PRESERVES ports (PORT-0001 as
-    /// placement constraint). Fresh placements leave this empty.
+    /// The offering's address allocations riding to the world (ADR-0002):
+    /// identity side of the address law. Adapters bind these homes
+    /// explicitly at every create — never dynamic `""` bindings — and may
+    /// relocate under protest (squatters) per [`Tier`]; the ledger truth
+    /// stays fixed regardless of where reality answers today.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub preferred_ports: HashMap<String, u16>,
+    pub allocations: HashMap<String, PortAllocation>,
     /// Materialized config files staged inside the offering directory and
     /// mounted into the workload. Written by the adapter pre-start.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -125,6 +128,16 @@ pub struct ConfigMount {
     pub host_path: String,
     pub container_path: String,
     pub content: String,
+}
+
+/// An offering's ledgered address for one named port role (ADR-0002).
+/// `home` is claimed for the offering's lifetime — rest and rehydration
+/// keep it; only uproot releases it. `tier` records WHY that address is
+/// its (manifest-declared requiredness).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortAllocation {
+    pub home: u16,
+    pub tier: Tier,
 }
 
 fn default_restart() -> String {

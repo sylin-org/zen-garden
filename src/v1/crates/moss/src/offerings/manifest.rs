@@ -53,6 +53,12 @@ pub struct ManagedIntent {
     /// name → container port. Host mapping is the world's craft (PORT-0001).
     #[serde(default)]
     pub ports: BTreeMap<String, u16>,
+    /// Host-side allocation intent per named role (ADR-0002 §5.1). Absent
+    /// roles are flexible pool members; a declared role's `port` is its
+    /// preferred home, and `strict: true` marks the address identity-
+    /// critical (occupied ⇒ refuse plant).
+    #[serde(default)]
+    pub host_ports: BTreeMap<String, HostPortDecl>,
     #[serde(default)]
     pub volumes: Vec<VolumeDecl>,
     #[serde(default)]
@@ -72,6 +78,16 @@ pub struct ManagedIntent {
     /// Cron maintenance commands.
     #[serde(default)]
     pub tasks: Option<serde_yaml::Value>,
+}
+
+/// One role's host allocation declaration. Every declared role carries its
+/// port; strictness is the only escalation (ADR-0002 ruling 2).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostPortDecl {
+    pub port: u16,
+    #[serde(default)]
+    pub strict: bool,
 }
 
 fn default_world() -> String {
@@ -139,7 +155,43 @@ managed:
     fn parses_and_enforces_stem_identity() {
         let m = Catalog::parse("redis", GOOD).unwrap();
         assert_eq!(m.name, "redis");
-        assert!(Catalog::parse("not-redis", GOOD).is_err(), "stem must match name");
+        assert!(
+            Catalog::parse("not-redis", GOOD).is_err(),
+            "stem must match name"
+        );
+    }
+
+    /// ADR-0002 §5.1 grammar: declared host roles must map onto real
+    /// container roles; strict is just an escalation of a plain pin.
+    #[test]
+    fn host_ports_must_reference_known_roles() {
+        let bad = GOOD.replace(
+            "  ports: { default: 6379 }\n",
+            "  ports: { default: 6379 }\n  host_ports: { dns: { port: 53, strict: true } }\n",
+        );
+        let err = Catalog::parse("redis", &bad).unwrap_err();
+        assert!(err.contains("'dns'"), "{err}");
+
+        let good = GOOD.replace(
+            "  ports: { default: 6379 }\n",
+            "  ports: { default: 6379 }\n  host_ports: { default: { port: 16379 } }\n",
+        );
+        let m = Catalog::parse("redis", &good).unwrap();
+        let managed = m.managed.as_ref().unwrap();
+        assert_eq!(managed.host_ports["default"].port, 16379);
+        assert!(!managed.host_ports["default"].strict);
+    }
+
+    #[test]
+    fn unknown_fields_in_host_port_decls_are_rejected() {
+        let bad = GOOD.replace(
+            "  ports: { default: 6379 }\n",
+            "  ports: { default: 6379 }\n  host_ports: { default: { por: 1 } }\n",
+        );
+        assert!(
+            Catalog::parse("redis", &bad).is_err(),
+            "typo'd decl keys must fail loudly, not silently degrade"
+        );
     }
 
     /// The catalog derives from the directory: good manifests load, bad
@@ -252,7 +304,26 @@ impl Catalog {
                 m.name
             ));
         }
+        Self::validate(&m)?;
         Ok(m)
+    }
+
+    /// Cross-section rules that serde can't express (ADR-0002 §5.1):
+    /// a host-port declaration must name an EXISTING container port role —
+    /// there is nothing to expose otherwise.
+    fn validate(m: &Manifest) -> Result<(), String> {
+        let Some(managed) = &m.managed else {
+            return Ok(());
+        };
+        for role in managed.host_ports.keys() {
+            if !managed.ports.contains_key(role) {
+                return Err(format!(
+                    "manifest '{}': host_ports declares role '{role}' with no matching ports entry",
+                    m.name
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// A catalog seeded from documents — test convenience over `load_dir`.

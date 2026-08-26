@@ -6,7 +6,6 @@
 | D3 | No directed-broadcast fallback (multicast + unicast only) | Windows multi-homed support | COMM-0001..3 rationale; PoC p2p.rs is the reference |
 | D4 | `STONE_DETAIL` capability beacon designed, not implemented | Placement features | v1-only type; harmless by construction |
 | D5 | MCP surface deferred | Charter RC0 | HTTP observe/find first; contract crate is the generation source |
-| D6 | `stone_id` generated per boot, not persisted | First on-media/identity milestone | PoC persisted GUIDv7 at Phase 0; v1 proto regenerates — peers see a new stone per restart until persisted |
 | D7 | ~~Ingest/dispatch counters exist but no HTTP surface reads them yet~~ | — | **Closed 2026-08-25**: `/api/v1/local/posture` serves live ingest/dispatch/topology counters (B3) |
 | D8 | Same-host stones rely on `SO_REUSEADDR` sharing one discovery port | Cross-platform verification | Witnessed on Windows only; Unix needs SO_REUSEPORT or per-host single-stone discipline; verify in Linux CI/container |
 | D9 | Appliance host renames unimplemented (L23): identity records modality, nothing mutates hostnames yet | Dedicated-hardware installer (NewStone v1) | PoC parity lives in poc/moss/src/bootstrap/first_boot.rs: set hostname + hosts file at first boot, appliance stones only |
@@ -14,6 +13,7 @@
 | D11 | Ceremonies (nourish/vacate/replant/store journals + rollback) deferred | Post-O2 | PoC reference poc/moss/src/domain/ceremony/ |
 | D12 | Orchestration roles/elections (primary/replica/joining) deferred | Post-O2 | ORCH-0001/0006 in PoC; wire `role` field already carried |
 | D13 | Borrow credentials vaulting (Koi vault keys) deferred | With borrow feature (O3) | PoC stored `borrowed:{name}:credentials` keys; v1 has no vault yet |
+| D14 | `start()` cannot hold ledged host ports on containers created with dynamic bindings — Docker reassigns an empty `HostPort` binding on every `docker start` | Converge/wake port-ledger polish (O2.5) | Witnessed in W4: fresh placements bind dynamically (by design), so a rest→wake cycle publishes a new random host port; moss records the remap honestly. Fix candidate: create-with-preferred-ports after first observation (recreate), or pin the ledger into `create_container` config |
 
 ## Closed
 

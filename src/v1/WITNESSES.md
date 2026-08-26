@@ -62,8 +62,30 @@ proved it.
   - The rehydration contract held: **everything needed to resurrect the
     offering lived outside Docker.**
 
-- **W2 — the room crosses the LAN** (2026-08-25, v1 room `239.255.42.199:7284`,
-  three physical Debian stones + the Windows workstation; release binaries
+- **W4 — rake speaks stone ops: one ceremony, whole lifecycle** (2026-08-26,
+  Windows workstation, debug builds at `4e4d483b`, Docker Desktop world,
+  50-manifest corpus via `MOSS_CATALOG_DIR`, offered against
+  `127.0.0.1:7285`).
+  - Full verb cycle witnessed in one sitting: `offer memcached` → planted,
+    running, manifest image bound, port ledger filled; `explain` rendered
+    the placed record with its decision log; `rest` → stopped-stays-stopped;
+    `wake` → running again, remap recorded honestly (`D14`); `uproot` →
+    container removed, directory unregistered, volumes preserved.
+  - Refusals bind to their stone: a pinned `--stone` that answered HTTP 409
+    (`'memcached' is a catalog offering; its manifest defines the image…`)
+    aborted loudly instead of redirecting; a pinned unreachable endpoint
+    refused to guess; a mid-pull plant that outlived a stale 3s client
+    timeout surfaced as `read timed out` + honest local abort (mutations now
+    carry their own 120s budget).
+  - §5.2/§6.4 fidelity fix landed from this witness: plans record EVERY
+    compatibility outcome (a healthy memcached logs its `low-memory-warning`
+    rule as `no_match`), and catalog category is manifest truth, not the
+    client's default.
+  - Corpus recovery en route: `ollama-cpu.offering.yaml` carried a
+    PoC-shaped `op: present`; migrated to the v1 grammar
+    (`gpu.present … eq true`) — catalog back to 50/50 loaded.
+
+- **W2 — the room crosses the LAN** (2026-08-25, v1 room `239.255.42.199:7284`,  three physical Debian stones + the Windows workstation; release binaries
   from `installer/v1` perennial builder, deployed to `~/zen-v1/`, PoC fleet
   untouched by construction).
   - Field identities minted on first boot, one per stone, each drawn from

@@ -1,0 +1,38 @@
+kind: software
+name: searxng
+category: search
+description: Privacy-respecting metasearch engine aggregating 70+ sources (AGPL-3.0)
+tags: [search, metasearch, privacy, web]
+# connection template from PoC frontmatter (not consumed yet): http://{host}:{port}
+
+managed:
+  world: oci
+  image: searxng/searxng:latest
+  ports: { default: 8080 }
+  volumes:
+    - { name: searxng-data, mount: /etc/searxng }
+  env:
+    SEARXNG_BASE_URL: "http://localhost:8080"
+    INSTANCE_NAME: "Zen Garden Search"
+  healthcheck:
+    exec: [CMD, wget, --no-verbose, --tries=1, --spider, "http://localhost:8080/"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 128 }
+    decide: deny
+    because: SearXNG requires at least 128MB RAM
+    suggest: Increase stone memory allocation
+  # PoC warn_only rule -> decide: place
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 256 }
+    decide: place
+    because: SearXNG with many search engines benefits from 256MB+ RAM
+    suggest: Consider increasing RAM for better performance with concurrent queries

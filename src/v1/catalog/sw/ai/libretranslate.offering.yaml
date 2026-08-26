@@ -1,0 +1,51 @@
+kind: software
+name: libretranslate
+category: ai
+description: LibreTranslate — self-hosted machine translation (AGPL-3.0)
+tags: [ai, translation, nlp, language, machine-translation, argos-translate]
+
+managed:
+  world: oci
+  image: libretranslate/libretranslate:latest
+  ports: { default: 5000 }
+  volumes:
+    - { name: libretranslate-models, mount: /home/libretranslate/.local }
+    - { name: libretranslate-db, mount: /app/db }
+  env:
+    LT_LOAD_ONLY: "en,fr,de,es,pt,it,ja,zh,ko,ru"
+    LT_UPDATE_MODELS: "false"
+    LT_THREADS: "4"
+    LT_CHAR_LIMIT: "5000"
+    LT_DISABLE_WEB_UI: "false"
+  healthcheck:
+    exec: [CMD, curl, -sf, "http://localhost:5000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 4
+    start_period: 120s
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: deny
+    because: >-
+      LibreTranslate requires 2GB+ RAM; more languages need more memory
+    suggest: Reduce languages with LT_LOAD_ONLY or increase memory to 4GB+
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 4096 }
+    decide: place
+    because: Loading all languages requires 4-8GB RAM
+    suggest: Use LT_LOAD_ONLY to limit languages (e.g., 'en,fr,de,es')
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: slow-startup-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 8192 }
+    decide: place
+    because: First startup downloads language models (~100-200MB per language pair)
+    suggest: >-
+      Initial startup may take 5-15 minutes depending on selected languages and
+      network speed

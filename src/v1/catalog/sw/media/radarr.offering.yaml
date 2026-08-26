@@ -1,0 +1,27 @@
+kind: software
+name: radarr
+category: media
+description: Movie PVR — automated search, download, and organization of films (GPL-3.0)
+tags: [arr, movies, pvr, automation]
+
+managed:
+  world: oci
+  image: lscr.io/linuxserver/radarr:latest
+  ports: { default: 7878 }
+  volumes:
+    - { name: radarr-config, mount: /config }
+  env: { PUID: "1000", PGID: "1000", TZ: Etc/UTC }
+  healthcheck:
+    exec: [CMD, curl, -fsS, "http://localhost:7878/ping"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
+  restart: unless-stopped
+
+compatibility:
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 256 }]
+    decide: place
+    because: Radarr is light but benefits from 256MB+ free
+    suggest: Fine on most stones; add RAM for large libraries

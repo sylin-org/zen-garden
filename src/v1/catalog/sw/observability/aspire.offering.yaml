@@ -1,0 +1,26 @@
+kind: software
+name: aspire
+category: observability
+description: Aspire dashboard observability
+tags: [observability, dashboard, metrics, tracing]
+
+managed:
+  world: oci
+  image: mcr.microsoft.com/dotnet/aspire-dashboard:latest
+  # otlp container port is 18889 (host 4317 remapped in the PoC snippet)
+  ports: { default: 18888, otlp: 18889 }
+  env:
+    DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:18888/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when: [{ path: ram.total.mb, op: lt, value: 512 }]
+    decide: deny
+    because: "Aspire Dashboard requires at least 512MB RAM (practical minimum)"
+    suggest: Increase stone memory or disable observability components

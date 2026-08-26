@@ -1,0 +1,55 @@
+kind: software
+name: n8n
+category: automation
+description: Workflow automation platform with 400+ integrations (Sustainable Use License)
+tags: [workflow, automation, integration, zapier-alternative, low-code]
+
+managed:
+  world: oci
+  image: n8nio/n8n:1.72.1
+  ports: { default: 5678 }
+  volumes:
+    - { name: n8n-data, mount: /home/node/.n8n }
+  env:
+    N8N_HOST: "0.0.0.0"
+    N8N_PORT: "5678"
+    N8N_PROTOCOL: "http"
+    WEBHOOK_URL: "http://localhost:5678/"
+    N8N_METRICS: "true"
+    N8N_RUNNERS_ENABLED: "true"
+    GENERIC_TIMEZONE: "UTC"
+  healthcheck:
+    exec: [CMD, wget, --no-verbose, --tries=1, --spider, "http://localhost:5678/healthz"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: n8n does not officially support ARM32 architectures
+    suggest: Use ARM64 device (Pi 4+, Pi Zero 2 W) or x86_64
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 512 }
+    decide: deny
+    because: n8n requires at least 512MB RAM for basic operation
+    suggest: Increase stone memory allocation
+  # PoC warn_only rule -> decide: place
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 1024 }
+    decide: place
+    because: n8n recommends 1GB+ RAM to avoid memory errors during workflow execution
+    suggest: Consider increasing RAM for reliable workflow execution
+  # PoC warn_only rule -> decide: place
+  - name: recommended-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: place
+    because: n8n performs best with 2GB+ RAM for complex workflows
+    suggest: For production use with complex workflows, consider 2GB+ RAM

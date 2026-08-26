@@ -1,0 +1,33 @@
+kind: software
+name: couchbase
+category: data
+description: Couchbase NoSQL database
+tags: [database, document, nosql, cache]
+# connection template from PoC frontmatter (not consumed yet): couchbase://{host}:{port}
+
+managed:
+  world: oci
+  image: couchbase:community
+  ports: { default: 8091, views: 8092, query: 8093, search: 8094, analytics: 8095, eventing: 8096, data: 11210 }
+  volumes:
+    - { name: couchbase-data, mount: /opt/couchbase/var }
+  healthcheck:
+    exec: [CMD, curl, -f, http://localhost:8091/ui/index.html]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+  restart: unless-stopped
+
+compatibility:
+  - name: armv6-unsupported
+    when:
+      - { path: machine.architecture, op: eq, value: armv6l }
+    decide: deny
+    because: "Couchbase container images generally require 64-bit CPUs; ARMv6 is unsupported"
+    suggest: "Upgrade to ARMv8 (aarch64) or x86_64"
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: deny
+    because: "Couchbase Server requires substantial RAM; <2GB is typically unstable"
+    suggest: "Increase stone memory or choose PostgreSQL/Redis instead"

@@ -1,0 +1,43 @@
+kind: software
+name: kokoro
+category: ai
+description: >-
+  Kokoro TTS — high-quality text-to-speech with 67 voices across 10 languages
+tags: [ai, tts, text-to-speech, voice, kokoro, openai-compatible]
+
+managed:
+  world: oci
+  image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.2.4
+  ports: { default: 8880 }
+  env:
+    USE_GPU: "true"
+    DEFAULT_VOICE: "af_heart"
+    API_LOG_LEVEL: "info"
+    ENABLE_WEB_PLAYER: "true"
+    SAMPLE_RATE: "24000"
+  resources:
+    # NVIDIA passthrough; ignored when the CPU fallback image is selected
+    gpu: true
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:8880/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 60s
+  restart: unless-stopped
+
+compatibility:
+  - name: no-nvidia-gpu
+    when:
+      - { path: ai.runtime, op: lacks, value: cuda }
+    decide: fallback
+    into: { image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.2.4 }
+    because: >-
+      No NVIDIA GPU detected. Kokoro TTS will run on CPU via ONNX (5x realtime
+      — still fast).
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: Kokoro-FastAPI Docker images require amd64 or arm64
+    suggest: Use amd64 or arm64 hardware

@@ -1,0 +1,70 @@
+kind: software
+name: openedai-speech
+category: ai
+description: >-
+  OpenedAI Speech — OpenAI-compatible text-to-speech with XTTS v2 and Piper
+  (AGPL-3.0)
+tags: [ai, tts, text-to-speech, voice, xtts, piper, openai-compatible, gpu]
+
+managed:
+  world: oci
+  image: ghcr.io/matatonic/openedai-speech:latest
+  ports: { default: 8000 }
+  volumes:
+    - { name: openedai-speech-voices, mount: /app/voices }
+    - { name: openedai-speech-config, mount: /app/config }
+  env:
+    TTS_HOME: "voices"
+    HF_HOME: "voices"
+  resources:
+    # NVIDIA passthrough; ignored when the ROCm/CPU fallback images are selected
+    gpu: true
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
+  restart: unless-stopped
+
+compatibility:
+  # Three-tier: NVIDIA → ROCm → CPU
+  - name: no-nvidia-use-rocm
+    when:
+      - { path: ai.runtime, op: lacks, value: cuda }
+      - { path: ai.runtime, op: in, value: [rocm] }
+    decide: fallback
+    into: { image: ghcr.io/matatonic/openedai-speech-rocm:latest }
+    because: >-
+      No NVIDIA GPU detected. Using AMD ROCm image for XTTS v2 voice synthesis.
+  - name: no-gpu-use-cpu
+    when:
+      - { path: ai.runtime, op: lacks, value: cuda }
+      - { path: ai.runtime, op: lacks, value: rocm }
+    decide: fallback
+    into: { image: ghcr.io/matatonic/openedai-speech-min:latest }
+    because: >-
+      No GPU runtime available. Using CPU-only minimal image (Piper voices
+      only, no XTTS v2).
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-vram-warning
+    when:
+      - { path: host.gpu.vram.total.mb, op: lt, value: 4096 }
+    decide: place
+    because: >-
+      XTTS v2 requires ~4GB VRAM for voice synthesis
+    suggest: >-
+      Use the Piper backend (CPU-only, minimal image) or a GPU with 4GB+ VRAM
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 4096 }
+    decide: deny
+    because: >-
+      XTTS v2 requires at least 4GB RAM (8GB recommended)
+    suggest: Use the minimal image with Piper backend (~1GB RAM) or increase memory
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: OpenedAI Speech Docker images require amd64
+    suggest: Use amd64 hardware

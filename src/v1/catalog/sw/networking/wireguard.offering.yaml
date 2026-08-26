@@ -1,0 +1,56 @@
+kind: software
+name: wireguard
+category: networking
+description: Fast, modern VPN for secure remote access (GPL v2)
+tags: [vpn, tunnel, security, remote-access, network]
+
+managed:
+  world: oci
+  image: lscr.io/linuxserver/wireguard:1.0.20210914
+  ports: { default: 51820 }
+  volumes:
+    - { name: wireguard-config, mount: /config }
+  env:
+    PUID: "1000"
+    PGID: "1000"
+    TZ: "UTC"
+    SERVERURL: "auto"
+    SERVERPORT: "51820"
+    PEERS: "3"
+    PEERDNS: "auto"
+    INTERNAL_SUBNET: "10.13.13.0"
+    ALLOWEDIPS: "0.0.0.0/0"
+  advanced:
+    cap_add: [NET_ADMIN, SYS_MODULE]
+    sysctls: ["net.ipv4.conf.all.src_valid_mark=1"]
+    # Host kernel-modules bind (read-only) from the PoC compose — needed when
+    # the host kernel lacks a built-in wireguard module (< 5.6)
+    binds: ["/lib/modules:/lib/modules:ro"]
+  healthcheck:
+    exec: ['CMD-SHELL', "wg show | grep -q 'interface' || exit 1"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 15s
+  restart: unless-stopped
+
+compatibility:
+  - name: arm32v6-not-supported
+    when:
+      - { path: machine.architecture, op: eq, value: armv6l }
+    decide: deny
+    because: WireGuard Docker image requires ARMv7 or newer
+    suggest: Use Raspberry Pi 2 or newer (ARM32v7+) or ARM64 device
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 64 }
+    decide: deny
+    because: WireGuard requires at least 64MB RAM
+    suggest: Increase stone memory allocation
+  # PoC warn_only rule -> decide: place
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 128 }
+    decide: place
+    because: WireGuard with multiple peers benefits from 128MB+ RAM
+    suggest: Consider increasing RAM for many concurrent connections

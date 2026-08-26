@@ -1,0 +1,54 @@
+kind: software
+name: influxdb
+category: timeseries
+description: Time series database for metrics and IoT (MIT)
+tags: [timeseries, metrics, iot, monitoring, database]
+
+managed:
+  world: oci
+  image: influxdb:2.7-alpine
+  ports: { default: 8086 }
+  env:
+    DOCKER_INFLUXDB_INIT_MODE: setup
+    DOCKER_INFLUXDB_INIT_USERNAME: admin
+    DOCKER_INFLUXDB_INIT_PASSWORD: adminpassword
+    DOCKER_INFLUXDB_INIT_ORG: zen-garden
+    DOCKER_INFLUXDB_INIT_BUCKET: default
+    DOCKER_INFLUXDB_INIT_RETENTION: 7d
+  volumes:
+    - { name: influxdb-data, mount: /var/lib/influxdb2 }
+    - { name: influxdb-config, mount: /etc/influxdb2 }
+  healthcheck:
+    exec: [CMD, influx, ping]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: "InfluxDB does not officially support ARM32 architectures"
+    suggest: "Use ARM64 device (Pi 4+, Pi Zero 2 W) or x86_64"
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 256 }
+    decide: deny
+    because: "InfluxDB requires at least 256MB RAM for basic operation"
+    suggest: "Increase stone memory allocation"
+  # PoC warn_only rules -> decide: place (warn semantics preserved in the names)
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 512 }
+    decide: place
+    because: "InfluxDB benefits from 512MB+ RAM for reliable operation"
+    suggest: "Consider increasing RAM for time series workloads"
+  - name: production-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: place
+    because: "InfluxDB production deployments typically need 2GB+ RAM"
+    suggest: "For high-cardinality workloads, consider 2GB+ RAM"

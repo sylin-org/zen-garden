@@ -1,0 +1,42 @@
+kind: software
+name: grafana
+category: observability
+description: Grafana visualization and dashboards (AGPL v3)
+tags: [monitoring, visualization, dashboards, metrics, logs, observability]
+
+managed:
+  world: oci
+  image: grafana/grafana-oss:11.4.0
+  ports: { default: 3000 }
+  volumes:
+    - { name: grafana-data, mount: /var/lib/grafana }
+  env:
+    GF_SECURITY_ADMIN_USER: admin
+    GF_SECURITY_ADMIN_PASSWORD: admin
+    GF_USERS_ALLOW_SIGN_UP: "false"
+  healthcheck:
+    exec: [CMD, wget, --no-verbose, --tries=1, --spider, "http://localhost:3000/api/health"]
+    interval: 15s
+    timeout: 10s
+    retries: 5
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  - name: arm32v6-not-supported
+    when:
+      - { path: machine.architecture, op: eq, value: armv6l }
+    decide: deny
+    because: "Grafana does not provide ARM32v6 Docker images"
+    suggest: Use armv7 or arm64 hardware (Pi 2 or newer)
+  - name: insufficient-memory
+    when: [{ path: ram.total.mb, op: lt, value: 256 }]
+    decide: deny
+    because: "Grafana requires at least 256MB RAM for stable operation"
+    suggest: Increase stone memory
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 512 }]
+    decide: place
+    because: "Grafana with multiple dashboards benefits from 512MB+ RAM"
+    suggest: Consider increasing RAM for heavy dashboard usage

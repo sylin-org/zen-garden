@@ -1,0 +1,51 @@
+kind: software
+name: whispercpp
+category: ai
+description: >-
+  whisper.cpp — fast C++ speech-to-text inference server (MIT)
+tags: [ai, stt, whisper, speech-to-text, transcription, cpp, ggml]
+
+managed:
+  world: oci
+  image: ghcr.io/ggml-org/whisper.cpp:main
+  ports: { default: 8080 }
+  volumes:
+    - { name: whispercpp-models, mount: /models }
+  advanced:
+    command:
+      ["whisper-server", "--host", "0.0.0.0", "--port", "8080", "-m",
+       "/models/ggml-base.en.bin", "--convert"]
+  healthcheck:
+    exec: [CMD, curl, -sf, "http://localhost:8080/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 1024 }
+    decide: deny
+    because: >-
+      whisper.cpp with base model requires at least 1GB RAM
+    suggest: Use the tiny model (~75MB) or increase memory
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: large-model-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 4096 }
+    decide: place
+    because: whisper large-v3 model requires ~3GB RAM
+    suggest: Use base or small models, or increase memory to 4GB+
+  # PoC warn_only rule -> decide: place
+  - name: gpu-acceleration-note
+    when:
+      - { path: ai.runtime, op: lacks, value: cuda }
+    decide: place
+    because: >-
+      Pre-built whisper.cpp binaries are CPU-only (AVX2/FMA optimized). GPU
+      builds require compiling from source with CUDA/ROCm.
+    suggest: >-
+      CPU inference is fast for most models. For large-v3 with real-time
+      performance, build from source with GPU support.

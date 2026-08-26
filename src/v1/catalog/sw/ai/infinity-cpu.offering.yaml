@@ -1,0 +1,27 @@
+kind: software
+name: infinity-cpu
+category: ai
+description: >-
+  Infinity — embedding and reranking server (CPU-only, no GPU required)
+tags: [ai, embeddings, reranking, vector, semantic-search, openai-compatible, cpu]
+
+managed:
+  world: oci
+  image: michaelf34/infinity:latest-cpu
+  ports: { default: 7997 }
+  volumes:
+    - { name: infinity-models, mount: /app/.cache }
+  env:
+    HF_HOME: "/app/.cache"
+    INFINITY_ANONYMOUS_USAGE_STATS: "0"
+  advanced:
+    command:
+      ["v2", "--model-id", "BAAI/bge-small-en-v1.5", "--port", "7997",
+       "--engine", "optimum"]
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:7997/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 120s
+  restart: unless-stopped

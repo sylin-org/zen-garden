@@ -1,0 +1,57 @@
+kind: software
+name: infinity
+category: ai
+description: Infinity — high-throughput embedding and reranking server (MIT)
+tags:
+  [ai, embeddings, reranking, vector, semantic-search, openai-compatible, clip,
+  sentence-transformers]
+
+managed:
+  world: oci
+  image: michaelf34/infinity:latest
+  ports: { default: 7997 }
+  volumes:
+    - { name: infinity-models, mount: /app/.cache }
+  env:
+    HF_HOME: "/app/.cache"
+    INFINITY_ANONYMOUS_USAGE_STATS: "0"
+  advanced:
+    command: ["v2", "--model-id", "BAAI/bge-small-en-v1.5", "--port", "7997"]
+  resources:
+    gpu: true
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:7997/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 120s
+  restart: unless-stopped
+
+compatibility:
+  # Two-tier: NVIDIA → CPU
+  - name: no-nvidia-use-cpu
+    when:
+      - { path: ai.runtime, op: lacks, value: cuda }
+    decide: fallback
+    into: { image: michaelf34/infinity:latest-cpu }
+    because: >-
+      No NVIDIA GPU detected. Using CPU image for embedding inference.
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-vram-warning
+    when:
+      - { path: host.gpu.vram.total.mb, op: lt, value: 1024 }
+    decide: place
+    because: Most embedding models require 512MB-2GB VRAM
+    suggest: >-
+      Use smaller models (BAAI/bge-small-en-v1.5 ~130MB) or CPU mode
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: deny
+    because: Infinity with loaded models requires at least 2GB RAM
+    suggest: Increase stone memory or use a single small model
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: Infinity Docker images require amd64 or arm64

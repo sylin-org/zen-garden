@@ -1,0 +1,82 @@
+kind: software
+name: ollama-cpu
+category: ai
+description: Ollama CPU-only inference for thin clients (MIT licensed)
+tags: [ai, llm, inference, embedding, cpu, thin-client, local-ai]
+
+managed:
+  world: oci
+  image: ollama/ollama:0.5
+  ports: { default: 11434 }
+  volumes:
+    - { name: ollama-cpu-data, mount: /root/.ollama }
+  env:
+    OLLAMA_HOST: "0.0.0.0:11434"
+    # Force CPU-only: no GPU layers offloaded
+    CUDA_VISIBLE_DEVICES: ""
+    HIP_VISIBLE_DEVICES: ""
+    ROCR_VISIBLE_DEVICES: ""
+    # Limit to 1 loaded model (thin clients have limited RAM)
+    OLLAMA_MAX_LOADED_MODELS: "1"
+    # Keep model loaded for 10 minutes (reduce reload churn)
+    OLLAMA_KEEP_ALIVE: "10m"
+    # Enable flash attention for CPU path
+    OLLAMA_FLASH_ATTENTION: "1"
+    # Single parallel slot (thin client cannot handle concurrent model inference)
+    OLLAMA_NUM_PARALLEL: "1"
+  advanced:
+    # No GPU reservation — CPU-only container; default 2 GiB memory limit,
+    # operator should adjust via workspace_budget_mb
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:11434/api/tags"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  # For thin client stones without GPU; same binary as 'ollama', GPU disabled via env
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: Ollama does not provide ARM32 Docker images
+    suggest: Use amd64 or arm64 hardware for Ollama
+  - name: gpu-present-use-ollama
+    when:
+      - { path: gpu, op: present }
+    decide: deny
+    because: >-
+      This stone has a GPU — use the 'ollama' (GPU) offering instead of
+      'ollama-cpu'
+    suggest: >-
+      Install 'ollama' rather than 'ollama-cpu'. GPU-equipped stones should run
+      the GPU offering for generation models.
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: deny
+    because: >-
+      Ollama CPU mode with embedding models requires at least 2 GB RAM
+    suggest: Increase stone memory to at least 2 GB or choose a different role for this machine
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: marginal-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 4096 }
+    decide: place
+    because: 4 GB+ RAM recommended for comfortable CPU inference headroom
+    suggest: Models will load but system may swap under concurrent requests.
+  # PoC warn_only rule -> decide: place
+  - name: celeron-avx-info
+    when:
+      - { path: cpu.pattern, op: in, value: [j4105, j3455, j3160, j4005, n4100, n5000] }
+    decide: place
+    because: >-
+      Celeron J/N-series CPUs lack AVX; inference will be slower but functional
+      for embedding
+    suggest: Embedding models work fine without AVX. Avoid generation models on this hardware.

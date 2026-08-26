@@ -1,0 +1,29 @@
+kind: software
+name: postgresql
+category: data
+description: PostgreSQL relational database with pgvector extension
+tags: [database, relational, sql, vector, embeddings]
+# connection template from PoC frontmatter (not consumed yet): postgresql://{host}:{port}
+
+managed:
+  world: oci
+  image: pgvector/pgvector:pg16
+  ports: { default: 5432 }
+  volumes:
+    - { name: postgres-data, mount: /var/lib/postgresql/data }
+  env:
+    POSTGRES_PASSWORD: postgres
+  healthcheck:
+    exec: [CMD-SHELL, "pg_isready -U postgres"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 512 }
+    decide: deny
+    because: "PostgreSQL requires at least 512MB of RAM (practical minimum for stable operation)"
+    suggest: "Increase stone memory or run fewer services"

@@ -1,0 +1,49 @@
+kind: software
+name: qdrant
+category: vector
+description: Qdrant high-performance vector search engine (Rust, Apache 2.0)
+tags: [vector, database, embeddings, semantic-search, rag, ai, rust]
+# connection template from PoC frontmatter (not consumed yet): http://{host}:{port}
+
+managed:
+  world: oci
+  image: qdrant/qdrant:v1.18.0
+  ports: { default: 6333, grpc: 6334 }
+  env:
+    # gRPC is null/disabled in the bundled config; enable it on the documented port.
+    QDRANT__SERVICE__GRPC_PORT: "6334"
+    QDRANT__LOG_LEVEL: INFO
+    QDRANT__TELEMETRY_DISABLED: "true"
+  volumes:
+    - { name: qdrant-data, mount: /qdrant/storage }
+    - { name: qdrant-snapshots, mount: /qdrant/snapshots }
+  healthcheck:
+    # The qdrant image is debian-slim with no curl/wget/nc by design; bash's
+    # /dev/tcp pseudo-device probes the REST port at TCP level.
+    exec: [CMD-SHELL, "bash -c '</dev/tcp/localhost/6333' || exit 1"]
+    interval: 15s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: "Qdrant does not publish armv7/armv6 Docker images"
+    suggest: "Use pgvector for 32-bit ARM hosts, or run Qdrant on an arm64 stone (Pi 4/5, M-series)"
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 1024 }
+    decide: deny
+    because: "Qdrant requires at least 1 GB of RAM to start (per project maintainers)"
+    suggest: "Increase stone memory or use pgvector for very small deployments"
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: marginal-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: place
+    because: "Qdrant runs with <2 GB RAM but vector workloads will rely heavily on swap"
+    suggest: "Allocate 2 GB+ or enable on-disk segments per collection (on_disk: true)"

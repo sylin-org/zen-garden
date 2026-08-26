@@ -1,0 +1,63 @@
+kind: software
+name: speaches
+category: ai
+description: >-
+  Speaches — OpenAI-compatible speech-to-text and text-to-speech server (MIT)
+tags:
+  [ai, stt, tts, whisper, speech-to-text, text-to-speech, transcription,
+  openai-compatible]
+
+managed:
+  world: oci
+  image: ghcr.io/speaches-ai/speaches:latest-cuda
+  ports: { default: 8000 }
+  volumes:
+    - { name: speaches-models, mount: /home/ubuntu/.cache/huggingface/hub }
+  env:
+    UVICORN_HOST: "0.0.0.0"
+    UVICORN_PORT: "8000"
+    WHISPER__MODEL: "Systran/faster-distil-whisper-small.en"
+    WHISPER__INFERENCE_DEVICE: "auto"
+    WHISPER__COMPUTE_TYPE: "default"
+    LOG_LEVEL: "info"
+    ENABLE_UI: "true"
+  resources:
+    # NVIDIA passthrough; ignored on the CPU fallback image
+    gpu: true
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 120s
+  restart: unless-stopped
+
+compatibility:
+  # Pre-install compatibility checks (evaluated in order, first match wins)
+  - name: no-nvidia-gpu
+    when:
+      - { path: ai.runtime, op: lacks, value: cuda }
+    decide: fallback
+    into: { image: ghcr.io/speaches-ai/speaches:latest-cpu }
+    because: >-
+      No NVIDIA GPU detected. Speaches STT/TTS will run on CPU (slower for
+      large models).
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-vram-warning
+    when:
+      - { path: host.gpu.vram.total.mb, op: lt, value: 2048 }
+    decide: place
+    because: Whisper large-v3 requires ~3GB VRAM; medium requires ~2.6GB
+    suggest: Use smaller models tiny (~400MB), base (~500MB), small (~1GB)
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: deny
+    because: Speaches with whisper models requires at least 2GB RAM
+    suggest: Increase stone memory or use the tiny model
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: Speaches Docker images require amd64 or arm64
+    suggest: Use amd64 or arm64 hardware

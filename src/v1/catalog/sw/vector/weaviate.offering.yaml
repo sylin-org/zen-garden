@@ -1,0 +1,46 @@
+kind: software
+name: weaviate
+category: vector
+description: Weaviate open-source vector database for AI applications
+tags: [vector, database, embeddings, ai, search, semantic]
+
+managed:
+  world: oci
+  image: cr.weaviate.io/semitechnologies/weaviate:1.29.0
+  ports: { default: 8080, grpc: 50051 }
+  env:
+    AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+    PERSISTENCE_DATA_PATH: /var/lib/weaviate
+    QUERY_DEFAULTS_LIMIT: "25"
+    DEFAULT_VECTORIZER_MODULE: none
+    CLUSTER_HOSTNAME: weaviate
+    RAFT_BOOTSTRAP_EXPECT: "1"
+  volumes:
+    - { name: weaviate-data, mount: /var/lib/weaviate }
+  healthcheck:
+    exec: [CMD, wget, --no-verbose, --tries=1, --spider, "http://localhost:8080/v1/.well-known/ready"]
+    interval: 15s
+    timeout: 5s
+    retries: 5
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: deny
+    because: "Weaviate requires >= 2GB RAM for stable operation with vector workloads"
+    suggest: "Increase system memory or use PostgreSQL with pgvector for smaller deployments"
+  # PoC warn_only rules -> decide: place (warn semantics preserved in the names)
+  - name: celeron-j-series-avx-warning
+    when:
+      - { path: cpu.pattern, op: in, value: [j4105, j3455, j3160, j4005, j5005, n4100, n5000] }
+    decide: place
+    because: "Celeron J/N-series CPUs lack AVX; Weaviate SIMD optimizations may cause issues"
+    suggest: "Monitor for SIGILL errors; consider Milvus Lite or pgvector as alternatives"
+  - name: missing-sse42
+    when:
+      - { path: cpu.features, op: lacks, value: sse4_2 }
+    decide: place
+    because: "Weaviate requires at least SSE4.2 for basic operations"
+    suggest: "Upgrade to a CPU with SSE4.2 support (Intel Nehalem+ or AMD Bulldozer+)"

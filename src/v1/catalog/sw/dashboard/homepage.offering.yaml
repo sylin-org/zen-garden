@@ -1,0 +1,32 @@
+kind: software
+name: homepage
+category: dashboard
+description: Modern application dashboard with service integrations (GPL-3.0)
+tags: [dashboard, startpage, homepage, docker, monitoring]
+
+managed:
+  world: oci
+  image: ghcr.io/gethomepage/homepage:v0.9.13
+  ports: { default: 3000 }
+  volumes:
+    - { name: homepage-config, mount: /app/config }
+  env: { PUID: "1000", PGID: "1000" }
+  healthcheck:
+    exec: [CMD, wget, --no-verbose, --tries=1, --spider, "http://localhost:3000"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 15s
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when: [{ path: ram.total.mb, op: lt, value: 64 }]
+    decide: deny
+    because: Homepage requires at least 64MB RAM
+    suggest: Increase stone memory allocation
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 128 }]
+    decide: place
+    because: Homepage with many widgets benefits from 128MB+ RAM
+    suggest: Consider increasing RAM for complex dashboards with many service integrations

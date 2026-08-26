@@ -1,0 +1,27 @@
+kind: software
+name: sonarr
+category: media
+description: TV series PVR — automated search, download, and organization of TV shows (GPL-3.0)
+tags: [arr, tv, pvr, automation]
+
+managed:
+  world: oci
+  image: lscr.io/linuxserver/sonarr:latest
+  ports: { default: 8989 }
+  volumes:
+    - { name: sonarr-config, mount: /config }
+  env: { PUID: "1000", PGID: "1000", TZ: Etc/UTC }
+  healthcheck:
+    exec: [CMD, curl, -fsS, "http://localhost:8989/ping"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
+  restart: unless-stopped
+
+compatibility:
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 256 }]
+    decide: place
+    because: Sonarr is light but benefits from 256MB+ free
+    suggest: Fine on most stones; add RAM for large libraries

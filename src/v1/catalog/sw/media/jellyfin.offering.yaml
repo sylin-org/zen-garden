@@ -1,0 +1,28 @@
+kind: software
+name: jellyfin
+category: media
+description: Free software media server — stream your movies, TV, and music with transcoding (GPL-2.0)
+tags: [media, streaming, video, music, dlna]
+
+managed:
+  world: oci
+  image: lscr.io/linuxserver/jellyfin:latest
+  ports: { default: 8096 }
+  volumes:
+    - { name: jellyfin-config, mount: /config }
+    - { name: jellyfin-cache, mount: /cache }
+  env: { PUID: "1000", PGID: "1000", TZ: Etc/UTC }
+  healthcheck:
+    exec: [CMD, curl, -fsS, "http://localhost:8096/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
+  restart: unless-stopped
+
+compatibility:
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 512 }]
+    decide: place
+    because: Jellyfin is light at idle but software transcoding spikes CPU and RAM
+    suggest: 512MB+ recommended; direct-play (no transcode) is the lightest path

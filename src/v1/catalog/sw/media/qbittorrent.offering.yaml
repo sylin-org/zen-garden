@@ -1,0 +1,33 @@
+kind: software
+name: qbittorrent
+category: media
+description: BitTorrent download client with a Web UI — headless qbittorrent-nox (GPL-2.0)
+tags: [download, torrent, bittorrent]
+
+managed:
+  world: oci
+  image: lscr.io/linuxserver/qbittorrent:latest
+  ports: { default: 8080, torrent: 6881 }
+  volumes:
+    - { name: qbittorrent-config, mount: /config }
+    - { name: qbittorrent-downloads, mount: /downloads }
+  env: { PUID: "1000", PGID: "1000", TZ: Etc/UTC, WEBUI_PORT: "8080" }
+  advanced:
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+  healthcheck:
+    exec: [CMD, curl, -fsS, "http://localhost:8080"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 512 }]
+    decide: place
+    because: qBittorrent's libtorrent disk cache and active torrents can use significant memory
+    suggest: Prefer 512MB+ free; the 2g cap in the manifest bounds worst-case usage

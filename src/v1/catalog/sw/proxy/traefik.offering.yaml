@@ -1,0 +1,46 @@
+kind: software
+name: traefik
+category: proxy
+description: Cloud-native reverse proxy with auto-discovery (MIT)
+tags: [reverse-proxy, load-balancer, ssl, letsencrypt, ingress]
+
+managed:
+  world: oci
+  image: traefik:v3.2
+  ports: { default: 80, https: 443, dashboard: 8080 }
+  volumes:
+    - { name: traefik-certs, mount: /letsencrypt }
+  advanced:
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--ping=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+    # Docker socket bind (read-only) from the PoC compose — powers
+    # --providers.docker service discovery
+    binds: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+  healthcheck:
+    exec: [CMD, traefik, healthcheck, --ping]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 10s
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 64 }
+    decide: deny
+    because: Traefik requires at least 64MB RAM for basic operation
+    suggest: Increase stone memory allocation
+  # PoC warn_only rule -> decide: place
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 128 }
+    decide: place
+    because: Traefik with many routes benefits from 128MB+ RAM
+    suggest: Consider increasing RAM for complex routing configurations

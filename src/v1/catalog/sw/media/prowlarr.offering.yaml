@@ -1,0 +1,27 @@
+kind: software
+name: prowlarr
+category: media
+description: Indexer manager and proxy for the *arr stack — one place to manage Torrent/Usenet indexers (GPL-3.0)
+tags: [arr, indexer, proxy, torrent, usenet]
+
+managed:
+  world: oci
+  image: lscr.io/linuxserver/prowlarr:latest
+  ports: { default: 9696 }
+  volumes:
+    - { name: prowlarr-config, mount: /config }
+  env: { PUID: "1000", PGID: "1000", TZ: Etc/UTC }
+  healthcheck:
+    exec: [CMD, curl, -fsS, "http://localhost:9696/ping"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
+  restart: unless-stopped
+
+compatibility:
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 256 }]
+    decide: place
+    because: Prowlarr is light but benefits from 256MB+ free
+    suggest: Fine on most stones; add RAM if you run many indexers

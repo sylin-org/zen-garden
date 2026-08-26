@@ -1,0 +1,45 @@
+kind: software
+name: minio
+category: storage
+description: S3-compatible object storage (Apache 2.0)
+tags: [s3, object-storage, backup, artifacts, blob]
+
+managed:
+  world: oci
+  image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+  ports: { default: 9000, console: 9001 }
+  env:
+    MINIO_ROOT_USER: minioadmin
+    MINIO_ROOT_PASSWORD: minioadmin
+  volumes:
+    - { name: minio-data, mount: /data }
+  advanced:
+    command: [server, /data, --console-address, ":9001"]
+  healthcheck:
+    exec: [CMD, mc, ready, local]
+    interval: 30s
+    timeout: 20s
+    retries: 3
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: "MinIO does not officially support ARM32 architectures"
+    suggest: "Use ARM64 hardware (Pi 4+, Apple Silicon) or x86_64"
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 256 }
+    decide: deny
+    because: "MinIO requires at least 256MB RAM for basic operation"
+    suggest: "Increase stone memory allocation"
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 512 }
+    decide: place
+    because: "MinIO performs better with 512MB+ RAM for concurrent operations"
+    suggest: "Consider increasing RAM for better performance with multiple clients"

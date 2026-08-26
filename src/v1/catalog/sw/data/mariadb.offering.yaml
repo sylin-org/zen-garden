@@ -1,0 +1,38 @@
+kind: software
+name: mariadb
+category: data
+description: MariaDB relational database (MySQL-compatible, GPL licensed)
+tags: [database, relational, sql, mysql-compatible, acid]
+# connection template from PoC frontmatter (not consumed yet): mysql://{host}:{port}
+
+managed:
+  world: oci
+  image: mariadb:11
+  ports: { default: 3306 }
+  volumes:
+    - { name: mariadb-data, mount: /var/lib/mysql }
+  env:
+    MARIADB_ROOT_PASSWORD: mariadb
+    MARIADB_DATABASE: zendb
+  healthcheck:
+    exec: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 512 }
+    decide: deny
+    because: "MariaDB requires at least 512MB RAM for stable operation"
+    suggest: "Increase stone memory or use SQLite for minimal deployments"
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 1024 }
+    decide: place
+    because: "MariaDB performs best with 1GB+ RAM for InnoDB buffer pool"
+    suggest: "Consider increasing RAM for production workloads"

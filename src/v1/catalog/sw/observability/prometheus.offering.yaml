@@ -1,0 +1,39 @@
+kind: software
+name: prometheus
+category: observability
+description: Prometheus metrics collection and alerting (Apache 2.0, CNCF)
+tags: [monitoring, metrics, alerting, tsdb, observability]
+
+managed:
+  world: oci
+  image: prom/prometheus:v2.54.0
+  ports: { default: 9090 }
+  volumes:
+    - { name: prometheus-data, mount: /prometheus }
+  advanced:
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+      - "--storage.tsdb.retention.time=15d"
+  healthcheck:
+    exec: [CMD, wget, --no-verbose, --tries=1, --spider, "http://localhost:9090/-/healthy"]
+    interval: 15s
+    timeout: 10s
+    retries: 5
+    start_period: 30s
+  restart: unless-stopped
+
+compatibility:
+  # Go binary; excellent multi-arch support (amd64/arm64/armv7/armv6), no arch rules needed
+  - name: insufficient-memory
+    when: [{ path: ram.total.mb, op: lt, value: 256 }]
+    decide: deny
+    because: "Prometheus requires at least 256MB RAM for TSDB operations"
+    suggest: Increase stone memory or reduce retention period
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 512 }]
+    decide: place
+    because: "Prometheus memory usage grows with metric count and retention"
+    suggest: Consider increasing RAM for larger deployments

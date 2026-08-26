@@ -1,0 +1,34 @@
+kind: software
+name: rabbitmq
+category: messaging
+description: RabbitMQ message broker with management UI
+tags: [messaging, queue, broker, amqp, mqtt, stomp, streams]
+# connection template from PoC frontmatter (not consumed yet): amqp://{host}:{port}
+
+managed:
+  world: oci
+  image: rabbitmq:3-management-alpine
+  ports: { default: 5672, management: 15672 }
+  volumes:
+    - { name: rabbitmq-data, mount: /var/lib/rabbitmq }
+  healthcheck:
+    exec: [CMD, rabbitmq-diagnostics, ping]
+    interval: 15s
+    timeout: 10s
+    retries: 5
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 512 }
+    decide: deny
+    because: "RabbitMQ (Erlang VM) requires 128MB base plus ~100KB per connection; 512MB minimum for practical use"
+    suggest: "Increase stone memory or run fewer services"
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 1024 }
+    decide: place
+    because: "RabbitMQ performs best with 1GB+ RAM; memory watermark and GC overhead may cause issues"
+    suggest: "Consider increasing RAM for production workloads"

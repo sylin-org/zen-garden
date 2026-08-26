@@ -1,0 +1,68 @@
+kind: software
+name: flaresolverr
+category: proxy
+description: "Proxy server that bypasses Cloudflare/DDoS-Guard challenges for *arr indexers (MIT)"
+tags: [proxy, cloudflare, scraping, indexer, arr]
+# connection template from PoC frontmatter (not consumed yet): http://{host}:{port}
+
+inputs:
+  FLARESOLVERR_LOG_LEVEL:
+    ask: "FlareSolverr log level (trace/debug/info/warn/error)"
+    default: info
+  TZ:
+    ask: "Timezone"
+    default: UTC
+
+managed:
+  world: oci
+  image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+  ports: { default: 8191 }
+  env:
+    LOG_LEVEL: "${FLARESOLVERR_LOG_LEVEL}"
+    LOG_HTML: "false"
+    CAPTCHA_SOLVER: "none"
+    TZ: "${TZ}"
+  advanced:
+    # Chromium is memory-heavy and leaks over long runtimes; capped here,
+    # recycled nightly via the task below
+    deploy:
+      resources:
+        limits:
+          memory: "2g"
+  healthcheck:
+    # python is the image's runtime (python:3.11-slim has no curl/wget)
+    exec: ['CMD', python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8191/health')"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 30s
+  restart: unless-stopped
+  tasks:
+    nightly-recycle:
+      description: Restart nightly to reclaim leaked browser memory
+      schedule: "0 4 * * *"
+      action: recycle
+      category: maintenance
+
+compatibility:
+  - name: non-x86_64-unsupported
+    when:
+      - { path: machine.architecture, op: in, value: [aarch64, arm64, armv7l, armv6l] }
+    decide: deny
+    because: >-
+      FlareSolverr's headless Chromium is unreliable on ARM; this offering is
+      x86_64-only
+    suggest: Run FlareSolverr on an x86_64 stone (e.g. a Dell Wyse thin client)
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 512 }
+    decide: deny
+    because: FlareSolverr launches a headless Chromium per request and needs headroom
+    suggest: Use a stone with at least 2GB RAM
+  # PoC warn_only rule -> decide: place
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: place
+    because: Chromium is memory-heavy and grows toward ~1GB+ under load
+    suggest: Prefer 2GB+ RAM; the nightly recycle task reclaims leaked memory

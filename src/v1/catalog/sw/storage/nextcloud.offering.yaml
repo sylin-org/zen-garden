@@ -1,0 +1,52 @@
+kind: software
+name: nextcloud
+category: storage
+description: Self-hosted cloud platform for files, calendar, contacts (AGPL v3)
+tags: [cloud, files, sync, calendar, contacts, collaboration]
+
+managed:
+  world: oci
+  image: nextcloud:30-apache
+  ports: { default: 8080 }
+  env:
+    MYSQL_HOST: ""
+    MYSQL_DATABASE: nextcloud
+    MYSQL_USER: nextcloud
+    MYSQL_PASSWORD: nextcloud
+    NEXTCLOUD_ADMIN_USER: admin
+    NEXTCLOUD_ADMIN_PASSWORD: admin
+    NEXTCLOUD_TRUSTED_DOMAINS: localhost
+    PHP_MEMORY_LIMIT: 512M
+    PHP_UPLOAD_LIMIT: 10G
+  volumes:
+    - { name: nextcloud-data, mount: /var/www/html }
+    - { name: nextcloud-apps, mount: /var/www/html/custom_apps }
+    - { name: nextcloud-config, mount: /var/www/html/config }
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost/status.php"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 120s
+  restart: unless-stopped
+
+compatibility:
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 256 }
+    decide: deny
+    because: "Nextcloud requires at least 256MB RAM for basic operation"
+    suggest: "Increase stone memory allocation"
+  # PoC warn_only rules -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 512 }
+    decide: place
+    because: "Nextcloud recommends 512MB+ RAM per process for comfortable operation"
+    suggest: "Consider increasing RAM for multiple users and apps"
+  - name: recommended-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 1024 }
+    decide: place
+    because: "Nextcloud with apps and preview generation benefits from 1GB+ RAM"
+    suggest: "For production use with multiple users, consider 1GB+ RAM"

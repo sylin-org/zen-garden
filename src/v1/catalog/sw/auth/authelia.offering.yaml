@@ -1,0 +1,41 @@
+kind: software
+name: authelia
+category: auth
+description: Authentication and authorization server with 2FA/SSO (Apache 2.0)
+tags: [authentication, authorization, sso, 2fa, totp, security]
+
+managed:
+  world: oci
+  image: authelia/authelia:4.38
+  ports: { default: 9091 }
+  volumes:
+    - { name: authelia-config, mount: /config }
+  env: { TZ: "UTC" }
+  healthcheck:
+    exec: [CMD, wget, --no-verbose, --tries=1, --spider, "http://localhost:9091/api/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 15s
+  restart: unless-stopped
+
+compatibility:
+  - name: arm32v6-not-supported
+    when:
+      - { path: machine.architecture, op: eq, value: armv6l }
+    decide: deny
+    because: Authelia Docker image requires ARMv7 or newer
+    suggest: Use Raspberry Pi 2 or newer (ARM32v7+) or ARM64 device
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 64 }
+    decide: deny
+    because: Authelia requires at least 64MB RAM
+    suggest: Increase stone memory allocation
+  # PoC warn_only rule -> decide: place
+  - name: argon2-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 128 }
+    decide: place
+    because: Argon2id password hashing may require additional memory
+    suggest: Consider 128MB+ RAM if using file-based user provider with Argon2id

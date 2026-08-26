@@ -1,0 +1,27 @@
+kind: software
+name: uptime-kuma
+category: observability
+description: Self-hosted uptime and status monitor with notifications and public status pages (MIT)
+tags: [monitoring, uptime, status, alerting]
+
+managed:
+  world: oci
+  image: louislam/uptime-kuma:2
+  ports: { default: 3001 }
+  volumes:
+    # The image declares NO VOLUME; this mount is mandatory — without it every
+    # recreate wipes the SQLite database (state lives in /app/data).
+    - { name: uptime-kuma-data, mount: /app/data }
+  # No healthcheck on purpose: the image ships its own HEALTHCHECK
+  # (GET / expecting a 302 redirect with a 180s start period); a hand-written
+  # 200-probe would wrongly fail.
+  restart: unless-stopped
+
+compatibility:
+  # Multi-arch (amd64/arm64/armv7); no special CPU features
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 512 }]
+    decide: place
+    because: "The full image bundles Chromium for browser-based monitors; benefits from 512MB+"
+    suggest: Plenty for HTTP/TCP/ping monitors on smaller stones; browser monitors want more

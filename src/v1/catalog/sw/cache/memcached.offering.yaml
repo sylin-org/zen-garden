@@ -1,0 +1,23 @@
+kind: software
+name: memcached
+category: cache
+description: Memcached distributed memory caching system
+tags: [cache, inmemory, keyvalue, distributed]
+
+managed:
+  world: oci
+  image: memcached:1.6
+  ports: { default: 11211 }
+  healthcheck:
+    exec: [CMD, sh, -c, "echo stats | nc localhost 11211 | grep -q STAT"]
+    interval: 10s
+    timeout: 3s
+    retries: 5
+  restart: unless-stopped
+
+compatibility:
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 128 }]
+    decide: place
+    because: Systems with less than 128MB RAM may have insufficient space for effective caching
+    suggest: Consider using a larger instance or reducing memcached memory allocation with -m flag

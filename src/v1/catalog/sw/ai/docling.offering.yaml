@@ -1,0 +1,45 @@
+kind: software
+name: docling
+category: ai
+description: >-
+  Docling — document extraction from PDFs, images, DOCX, PPTX, XLSX with table
+  and layout detection
+tags: [ai, ocr, document, pdf, extraction, table, layout]
+
+managed:
+  world: oci
+  image: ghcr.io/docling-project/docling-serve:latest
+  ports: { default: 5001 }
+  env:
+    DOCLING_SERVE_ENABLE_UI: "true"
+    DOCLING_SERVE_HOST: "0.0.0.0"
+    DOCLING_SERVE_PORT: "5001"
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:5001/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 60s
+  restart: unless-stopped
+
+compatibility:
+  - name: no-nvidia-gpu
+    when:
+      - { path: ai.runtime, op: lacks, value: cuda }
+    decide: fallback
+    into: { image: ghcr.io/docling-project/docling-serve-cpu:latest }
+    because: >-
+      No NVIDIA GPU detected. Docling will run on CPU (~3 sec/page).
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: deny
+    because: >-
+      Docling requires at least 2 GB RAM for document processing
+    suggest: Increase stone memory
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: Docling Docker images require amd64 or arm64
+    suggest: Use amd64 or arm64 hardware

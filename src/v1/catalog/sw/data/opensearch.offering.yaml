@@ -1,0 +1,52 @@
+kind: software
+name: opensearch
+category: search
+description: OpenSearch search and analytics (Apache 2.0, Linux Foundation)
+tags: [search, database, document, analytics, full-text, vector, observability]
+# connection template from PoC frontmatter (not consumed yet): http://{host}:{port}
+# host kernel requirement (frontmatter requires_sysctl): vm.max_map_count=262144
+
+managed:
+  world: oci
+  image: opensearchproject/opensearch:2.18.0
+  ports: { default: 9200, transport: 9300 }
+  volumes:
+    - { name: opensearch-data, mount: /usr/share/opensearch/data }
+  env:
+    discovery.type: single-node
+    DISABLE_SECURITY_PLUGIN: "true"
+    OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    cluster.name: zen-garden-os
+    bootstrap.memory_lock: "true"
+  advanced:
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+  healthcheck:
+    exec: ['CMD-SHELL', 'curl -s http://localhost:9200/_cluster/health?local=true | grep -q ''"status":"green"\|"status":"yellow"'' || exit 1']
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
+  restart: unless-stopped
+
+compatibility:
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: "OpenSearch does not provide ARM32 Docker images"
+    suggest: "Use PostgreSQL with full-text search on ARM32 devices"
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: deny
+    because: "OpenSearch JVM requires at least 2GB RAM for stable operation"
+    suggest: "Increase stone memory or use PostgreSQL with full-text search"
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 4096 }
+    decide: place
+    because: "OpenSearch performs best with 4GB+ RAM (2GB heap + filesystem cache)"
+    suggest: "Consider increasing RAM for production workloads"

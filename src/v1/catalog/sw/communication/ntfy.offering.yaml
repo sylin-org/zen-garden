@@ -1,0 +1,43 @@
+kind: software
+name: ntfy
+category: communication
+description: Send push notifications to your phone or desktop over HTTP — simple pub/sub notification server (Apache-2.0)
+tags: [notifications, push, pubsub, alerts]
+# connection template from PoC frontmatter (not consumed yet): http://{host}:{port}
+
+inputs:
+  TZ:
+    ask: Timezone for notification timestamps (IANA name)
+    default: Etc/UTC
+
+managed:
+  world: oci
+  image: binwiederhier/ntfy:v2.23.0
+  ports: { default: 80 }
+  env:
+    NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+    NTFY_ATTACHMENT_CACHE_DIR: /var/cache/ntfy/attachments
+    NTFY_AUTH_FILE: /var/lib/ntfy/user.db
+    TZ: "${TZ}"
+  volumes:
+    - { name: ntfy-cache, mount: /var/cache/ntfy }
+    - { name: ntfy-data, mount: /var/lib/ntfy }
+  advanced:
+    command: [serve]
+  healthcheck:
+    # No curl in the image and no built-in HEALTHCHECK; BusyBox wget is present.
+    exec: [CMD, wget, -q, --tries=1, --spider, "http://localhost:80/v1/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 15s
+  restart: unless-stopped
+
+compatibility:
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 128 }
+    decide: place
+    because: "ntfy is tiny (~30MB) but needs a little headroom"
+    suggest: "Runs comfortably on the smallest stones"

@@ -1,0 +1,64 @@
+kind: software
+name: milvus
+category: vector
+description: Milvus vector database (standalone mode, resource-heavy)
+tags: [vector, database, embeddings, ai, similarity-search, hnsw, ivf]
+
+managed:
+  world: oci
+  image: milvusdb/milvus:v2.5.4
+  ports: { default: 19530, health: 9091 }
+  env:
+    ETCD_USE_EMBED: "true"
+    ETCD_DATA_DIR: /var/lib/milvus/etcd
+    ETCD_CONFIG_PATH: /milvus/configs/embedEtcd.yaml
+    COMMON_STORAGETYPE: local
+  volumes:
+    - { name: milvus-data, mount: /var/lib/milvus }
+  advanced:
+    command: [milvus, run, standalone]
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:9091/healthz"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 90s
+  restart: unless-stopped
+
+compatibility:
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: "Milvus does not provide ARM32 Docker images"
+    suggest: "Use Weaviate, Qdrant, or pgvector on ARM32 devices"
+  - name: x86_64-missing-simd
+    when:
+      - { path: machine.architecture, op: eq, value: x86_64 }
+      - { path: cpu.features, op: lacks, value: sse4_2 }
+      - { path: cpu.features, op: lacks, value: avx }
+      - { path: cpu.features, op: lacks, value: avx2 }
+      - { path: cpu.features, op: lacks, value: avx512 }
+    decide: deny
+    because: "Milvus requires at least one SIMD instruction set: SSE4.2, AVX, AVX2, or AVX512"
+    suggest: "Use a newer x86_64 CPU with SIMD support, or switch to pgvector"
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: celeron-warning
+    when:
+      - { path: cpu.pattern, op: in, value: [j4105, j3455, j3160, j4005, n4100, n5000] }
+    decide: place
+    because: "Celeron J/N-series CPUs may lack AVX; Milvus may have degraded performance with SSE4.2 only"
+    suggest: "Monitor for Illegal Instruction errors; consider Weaviate or pgvector"
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 8192 }
+    decide: deny
+    because: "Milvus standalone requires at least 8GB RAM for stable operation"
+    suggest: "Increase stone memory or use Weaviate/pgvector for lighter workloads"
+  # PoC warn_only rule -> decide: place
+  - name: marginal-memory-warning
+    when:
+      - { path: ram.total.mb, op: lt, value: 16384 }
+    decide: place
+    because: "Milvus performs best with 16GB+ RAM for production workloads"
+    suggest: "Consider increasing RAM for larger vector collections"

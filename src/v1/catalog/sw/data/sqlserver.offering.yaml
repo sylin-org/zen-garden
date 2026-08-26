@@ -1,0 +1,36 @@
+kind: software
+name: sqlserver
+category: data
+description: Microsoft SQL Server database
+tags: [database, relational, sql, microsoft]
+# connection template from PoC frontmatter (not consumed yet): sqlserver://{host}:{port}
+
+managed:
+  world: oci
+  image: mcr.microsoft.com/mssql/server:2022-latest
+  ports: { default: 1433 }
+  volumes:
+    - { name: sqlserver-data, mount: /var/opt/mssql }
+  env:
+    ACCEPT_EULA: "Y"
+    MSSQL_SA_PASSWORD: "YourStrong@Passw0rd"
+  healthcheck:
+    exec: ['CMD-SHELL', "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q 'SELECT 1'"]
+    interval: 15s
+    timeout: 10s
+    retries: 5
+  restart: unless-stopped
+
+compatibility:
+  - name: non-x86_64-unsupported
+    when:
+      - { path: machine.architecture, op: in, value: [aarch64, arm64, armv7l, armv6l] }
+    decide: deny
+    because: "SQL Server Linux container images are supported only on x86_64 (amd64)"
+    suggest: "Use PostgreSQL or MongoDB on ARM, or move to x86_64 hardware"
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 2048 }
+    decide: deny
+    because: "SQL Server containers require at least ~2GB RAM"
+    suggest: "Increase stone memory or choose PostgreSQL instead"

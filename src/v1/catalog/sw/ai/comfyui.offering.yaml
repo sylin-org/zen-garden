@@ -1,0 +1,91 @@
+kind: software
+name: comfyui
+category: ai
+description: >-
+  ComfyUI node-based image generation — Stable Diffusion, Flux, and more.
+  Auto-selects NVIDIA/AMD/CPU.
+tags: [ai, image-generation, stable-diffusion, flux, comfyui, gpu, cuda, rocm]
+
+managed:
+  world: oci
+  image: yanwk/comfyui-boot:cu130-slim-v2
+  ports: { default: 8188 }
+  volumes:
+    # Models — checkpoints, LoRAs, VAE, ControlNet, etc.
+    - { name: comfyui-models, mount: /root/ComfyUI/models }
+    - { name: comfyui-hf-cache, mount: /root/.cache/huggingface/hub }
+    # Custom nodes — persisted across container updates
+    - { name: comfyui-custom-nodes, mount: /root/ComfyUI/custom_nodes }
+    - { name: comfyui-pip-local, mount: /root/.local }
+    # User data — input images, generated output, saved workflows
+    - { name: comfyui-input, mount: /root/ComfyUI/input }
+    - { name: comfyui-output, mount: /root/ComfyUI/output }
+    - { name: comfyui-user, mount: /root/ComfyUI/user }
+    # Cache and config
+    - { name: comfyui-cache, mount: /root/.cache }
+    - { name: comfyui-config, mount: /root/.config }
+    - { name: comfyui-scripts, mount: /root/user-scripts }
+  env:
+    CLI_ARGS: "--enable-cors-header"
+  resources:
+    gpu: true
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:8188/system_stats"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 120s
+  restart: unless-stopped
+
+compatibility:
+  # Three-tier: NVIDIA → ROCm → CPU
+  - name: no-nvidia-use-rocm
+    when:
+      - { path: ai.runtime, op: lacks, value: cuda }
+      - { path: ai.runtime, op: in, value: [rocm] }
+    decide: fallback
+    into: { image: yanwk/comfyui-boot:rocm }
+    because: >-
+      No NVIDIA GPU detected. Using AMD ROCm image for GPU-accelerated inference.
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: windows-amd-rocm-hint
+    when:
+      - { path: ai.runtime, op: lacks, value: cuda }
+      - { path: ai.runtime, op: in, value: [directml] }
+    decide: place
+    because: >-
+      AMD GPU detected but ROCm is not available through Docker Desktop.
+    suggest: >-
+      Install Docker CE inside WSL2 with ROCDXG to enable GPU-accelerated
+      inference. See: https://github.com/ROCm/librocdxg
+  - name: no-gpu-use-cpu
+    when:
+      - { path: ai.runtime, op: lacks, value: cuda }
+      - { path: ai.runtime, op: lacks, value: rocm }
+    decide: fallback
+    into: { image: yanwk/comfyui-boot:cpu }
+    because: >-
+      No GPU runtime available. ComfyUI will run on CPU (very slow — expect
+      minutes per image).
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-vram-warning
+    when:
+      - { path: host.gpu.vram.total.mb, op: lt, value: 4096 }
+    decide: place
+    because: >-
+      Most Stable Diffusion models require 4GB+ VRAM; Flux requires 12GB+
+    suggest: >-
+      Use SD 1.5 models with 4GB VRAM. SDXL needs 8GB+, Flux needs 12GB+.
+  - name: insufficient-memory
+    when:
+      - { path: ram.total.mb, op: lt, value: 8192 }
+    decide: deny
+    because: >-
+      ComfyUI requires at least 8GB RAM for model loading and inference
+    suggest: Increase stone memory to 16GB+ for comfortable operation
+  - name: arm32-not-supported
+    when:
+      - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
+    decide: deny
+    because: ComfyUI Docker images require amd64
+    suggest: Use amd64 hardware with NVIDIA or AMD GPU

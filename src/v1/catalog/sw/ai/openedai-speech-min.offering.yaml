@@ -1,0 +1,23 @@
+kind: software
+name: openedai-speech-min
+category: ai
+description: >-
+  OpenedAI Speech — Piper TTS only (CPU, no GPU required, ~860MB image)
+tags: [ai, tts, text-to-speech, voice, piper, openai-compatible, cpu, lightweight]
+
+managed:
+  world: oci
+  image: ghcr.io/matatonic/openedai-speech-min:latest
+  ports: { default: 8000 }
+  volumes:
+    - { name: openedai-speech-voices, mount: /app/voices }
+    - { name: openedai-speech-config, mount: /app/config }
+  env:
+    TTS_HOME: "voices"
+  healthcheck:
+    exec: [CMD, curl, -f, "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 30s
+  restart: unless-stopped

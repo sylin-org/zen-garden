@@ -1,0 +1,37 @@
+kind: software
+name: registry
+category: devops
+description: Private Docker container registry - CNCF graduated OCI Distribution implementation (Apache 2.0)
+tags: [docker, container, registry, oci, images, container-registry, distribution, cncf]
+
+managed:
+  world: oci
+  image: registry:2.8
+  ports: { default: 5000 }
+  volumes:
+    - { name: registry-data, mount: /var/lib/registry }
+  env:
+    REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    REGISTRY_HTTP_ADDR: "0.0.0.0:5000"
+  healthcheck:
+    exec: [CMD, wget, --no-verbose, --tries=1, --spider, "http://localhost:5000/v2/"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 10s
+  restart: unless-stopped
+
+compatibility:
+  # registry:2.8 is a multi-arch manifest (amd64/arm32v6/arm32v7/arm64v8/ppc64le/riscv64/s390x);
+  # the PoC image_selection table mapped every architecture to this same tag, so it is a no-op here
+  - name: insufficient-memory
+    when: [{ path: ram.total.mb, op: lt, value: 64 }]
+    decide: deny
+    because: "Docker Registry requires at least 64MB RAM"
+    suggest: Increase stone memory allocation
+  # PoC warn_only rule -> decide: place (warn semantics preserved in the name)
+  - name: low-memory-warning
+    when: [{ path: ram.total.mb, op: lt, value: 128 }]
+    decide: place
+    because: "Docker Registry benefits from 128MB+ RAM for concurrent pulls"
+    suggest: Consider increasing RAM for multiple simultaneous image operations

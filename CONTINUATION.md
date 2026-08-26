@@ -164,7 +164,7 @@ Plus: `crates/glossary` (vocabulary/naming), `crates/contract` (wire types/fixtu
 | What | Where |
 |---|---|
 | Offerings design | docs/v1/OFFERINGS.md |
-| **ADR: offering directory** | docs/v1/ADR-0001-offering-directory.md |
+| **ADR: offering directory** | docs/v1/decisions/ADR-0001-offering-directory.md |
 | Lessons | docs/v1/lessons.md (L1–L25) |
 | Code rules | docs/v1/CODE-RULES.md |
 | Charter | docs/v1/CHARTER.md |

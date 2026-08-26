@@ -36,7 +36,7 @@ Wire strings lowercase, byte-compatible with poc constants.
 
 One aggregate per stone: **active** pool + **candidates** pool behind one
 lock; every mutation funnels facts → persist (via the store PORT) → broadcast.
-Persistence: **one directory per offering** (see ADR-0001) at
+Persistence: **one directory per offering** (see [ADR-0001](decisions/ADR-0001-offering-directory.md)) at
 `~/.zen-garden/offerings/{slug}/` — record.json, plan.json, events.jsonl,
 configs/, volumes/. Atomic temp+rename per file.
 
@@ -61,7 +61,7 @@ ledger lands (O2), wake re-derives and records remaps rather than lying.
 6. Borrow is registration only: excluded from reconcile, present in discovery.
 
 **The rehydration contract** — an offering is fully determined by three
-artifacts: its **registry entry**, its **directory on disk** (ADR-0001), and
+artifacts: its **registry entry**, its **directory on disk** ([ADR-0001](decisions/ADR-0001-offering-directory.md)), and
 its **catalog manifest**. If rehydration fails for any constituent, the
 placed record says which one and why — silent degradation is banned.
 

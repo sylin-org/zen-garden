@@ -145,6 +145,14 @@ impl OfferingService {
 
         // Catalog path: manifest is truth; compile decides.
         if let Some(m) = self.catalog.get(name) {
+            // One machine-truth parse (OFFERINGS.md §5.1): a catalog-named
+            // offering's image comes from its manifest. Explicit overrides
+            // would fork deployed reality from compiled decisions.
+            if image.is_some() {
+                return Err(CommandError::Conflict(format!(
+                    "'{name}' is a catalog offering; its manifest defines the image and no explicit image may be supplied"
+                )));
+            }
             if m.managed.is_none() {
                 return Err(CommandError::Conflict(format!(
                     "'{name}' declares no managed placement"
@@ -328,6 +336,80 @@ impl OfferingService {
             return self.worlds.by_kind(&self.default_world).map_err(CommandError::WorldUnavailable);
         }
         self.worlds.by_kind(kind).map_err(CommandError::WorldUnavailable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // R4.1: unwrap/expect sanctioned in tests.
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::offerings::manifest::Catalog;
+    use crate::offerings::registry::MemorySnapshotStore;
+    use crate::offerings::runtime::{NullRuntime, RuntimeRegistry};
+
+    const REDIS: &str = "\
+kind: software
+name: redis
+category: data
+description: In-memory cache
+managed:
+  world: oci
+  image: redis:7-alpine
+  ports: { default: 6379 }
+";
+
+    fn service_with(catalog: Catalog) -> (OfferingService, std::path::PathBuf) {
+        let root = std::env::temp_dir()
+            .join(format!("moss-service-{}-{}", std::process::id(), uuid::Uuid::now_v7()));
+        let service = OfferingService::new(
+            Arc::new(Registry::new(Arc::new(MemorySnapshotStore::default()))),
+            Arc::new(RuntimeRegistry::build(vec![Arc::new(NullRuntime)])),
+            "null".into(),
+            Arc::new(catalog),
+            Arc::new(Factsheet::empty()),
+            OfferingsRoot::new(root.clone()),
+        );
+        (service, root)
+    }
+
+    fn inputs() -> std::collections::BTreeMap<String, String> {
+        std::collections::BTreeMap::new()
+    }
+
+    /// §5.1 single machine-truth: a catalog-named offering's workload comes
+    /// from its manifest; an explicit image may not fork deployed reality
+    /// from compiled decisions.
+    #[tokio::test]
+    async fn catalog_named_plants_reject_explicit_image() {
+        let catalog = Catalog::embedded([("redis", REDIS)]).unwrap();
+        let (service, _root) = service_with(catalog);
+
+        let err = service
+            .offer("redis", Some("redis:9".into()), HashMap::new(), None, None, &inputs())
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("catalog") && msg.contains("manifest"),
+            "refusal should name the contract, got: {msg}"
+        );
+    }
+
+    /// The rejection is specific: WITHOUT an explicit image the same plant
+    /// proceeds past the surface into compile/world work (here: the null
+    /// world refusing placement — not the catalog contract firing).
+    #[tokio::test]
+    async fn catalog_plants_without_image_reach_the_world() {
+        let catalog = Catalog::embedded([("redis", REDIS)]).unwrap();
+        let (service, _root) = service_with(catalog);
+
+        let err = service
+            .offer("redis", None, HashMap::new(), None, None, &inputs())
+            .await
+            .unwrap_err();
+        // The null world's own refusal — proof the plant passed the surface.
+        assert_eq!(err.to_string(), "runtime unsupported here: the null world places nothing");
     }
 }
 

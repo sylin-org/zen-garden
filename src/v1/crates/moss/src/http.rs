@@ -119,7 +119,11 @@ async fn posture(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> 
                 "stones": state.topology.snapshot().len(),
                 "chirps_total": state.topology.chirps_total(),
             },
-            "offerings": state.garden.counts(),
+            "offerings": {
+                "active": state.garden.counts().active,
+                "candidates": state.garden.counts().candidates,
+                "catalog": state.garden.catalog_size(),
+            },
             "runtimes": state.garden.available_worlds(),
         }
     }))
@@ -259,7 +263,7 @@ mod tests {
     fn test_state() -> Arc<AppState> {
         let registry = Arc::new(Registry::new(Arc::new(MemorySnapshotStore::default())));
         let worlds = Arc::new(RuntimeRegistry::build(vec![Arc::new(NullRuntime)]));
-        let service = Arc::new(OfferingService::new(registry, worlds, "null".into()));
+        let service = Arc::new(OfferingService::new(registry, worlds, "null".into(), Arc::new(crate::offerings::manifest::Catalog::default())));
         Arc::new(AppState {
             garden: service,
             topology: Arc::new(garden_kernel::topology::Topology::new()),

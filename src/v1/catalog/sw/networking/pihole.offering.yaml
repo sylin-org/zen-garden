@@ -1,0 +1,29 @@
+kind: software
+name: pihole
+category: networking
+description: DNS sinkhole that blocks ads network-wide
+tags: [dns, adblocking, network]
+
+managed:
+  world: oci
+  image: pihole/pihole:2024.07.0
+  ports: { default: 53, admin: 8053 }
+  volumes:
+    - { name: pihole-data, mount: /etc/pihole }
+    - { name: pihole-dnsmasq, mount: /etc/dnsmasq.d }
+  env: { TZ: UTC }
+  advanced:
+    shm_size: 256m
+    cap_add: [NET_ADMIN]
+  healthcheck:
+    exec: [CMD, dig, +short, +norecurse, +retry=0, "@127.0.0.1", pi.hole]
+    interval: 30s
+    retries: 3
+  placement:
+    static_ip: preferred
+    static_ip_reason: >-
+      DNS servers need stable addresses; clients lose resolution if this IP moves.
+  tasks:
+    gravity:
+      schedule: "0 3 * * 0"
+      command: [pihole, -g]

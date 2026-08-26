@@ -4,8 +4,10 @@
 //! loop will call these same commands.
 
 use super::model::{Location, ManagedData, ModeData, Offering, Status, WorkloadSpec};
+use super::manifest::Catalog;
 use super::registry::Registry;
 use super::runtime::{RuntimeRegistry, RuntimeError};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Why an offering command refused.
@@ -44,11 +46,45 @@ pub struct OfferingService {
     registry: Arc<Registry>,
     worlds: Arc<RuntimeRegistry>,
     default_world: String,
+    /// The embedded catalog this stone can place from.
+    pub catalog: Arc<Catalog>,
+    /// Per-offering convergence failure counters (converge.rs drives them).
+    failures: Arc<parking_lot::Mutex<HashMap<String, u32>>>,
 }
 
 impl OfferingService {
-    pub fn new(registry: Arc<Registry>, worlds: Arc<RuntimeRegistry>, default_world: String) -> Self {
-        Self { registry, worlds, default_world }
+    pub fn new(
+        registry: Arc<Registry>,
+        worlds: Arc<RuntimeRegistry>,
+        default_world: String,
+        catalog: Arc<Catalog>,
+    ) -> Self {
+        Self {
+            registry,
+            worlds,
+            default_world,
+            catalog,
+            failures: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn registry(&self) -> &Registry {
+        &self.registry
+    }
+
+    pub(crate) fn bump_failure(&self, offering_id: &str) -> u32 {
+        let mut map = self.failures.lock();
+        let e = map.entry(offering_id.to_string()).or_insert(0);
+        *e += 1;
+        *e
+    }
+
+    pub(crate) fn clear_failure(&self, offering_id: &str) {
+        self.failures.lock().remove(offering_id);
+    }
+
+    pub(crate) fn mark_degraded(&self, offering_id: &str) {
+        self.registry.mark_status(offering_id, Status::Degraded);
     }
 
     pub fn counts(&self) -> Counts {
@@ -60,6 +96,11 @@ impl OfferingService {
 
     pub fn available_worlds(&self) -> Vec<&'static str> {
         self.worlds.kinds()
+    }
+
+    /// How many catalog offerings this stone could place today.
+    pub fn catalog_size(&self) -> usize {
+        self.catalog.len()
     }
 
     /// Plant a managed offering: bind a world, place the workload,
@@ -105,6 +146,7 @@ impl OfferingService {
                 runtime_kind: kind,
                 spec,
                 port_map: placement.named_host_ports,
+                plan: None,
             }),
             registered_at: now,
             updated_at: now,
@@ -180,7 +222,7 @@ impl OfferingService {
         Ok(o)
     }
 
-    fn world_for(&self, offering: &Offering) -> Result<Arc<dyn super::runtime::Runtime>, CommandError> {
+    pub(crate) fn world_for(&self, offering: &Offering) -> Result<Arc<dyn super::runtime::Runtime>, CommandError> {
         let kind = offering
             .managed()
             .map(|m| m.runtime_kind.as_str())

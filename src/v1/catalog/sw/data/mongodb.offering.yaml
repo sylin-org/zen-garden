@@ -1,0 +1,45 @@
+kind: software
+name: mongodb
+category: data
+description: MongoDB NoSQL database
+tags: [database, document, nosql]
+
+managed:
+  world: oci
+  image: mongo:7
+  ports: { default: 27017 }
+  volumes:
+    - { name: mongo-data, mount: /data/db }
+  config_files:
+    - mount: /etc/mongod.conf
+      format: yaml
+      flag: "--config /etc/mongod.conf"
+      reload: restart
+  healthcheck:
+    exec: [CMD, mongosh, --eval, "db.adminCommand('ping')"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+  restart: unless-stopped
+
+compatibility:
+  - name: missing-avx-feature
+    when:
+      - { path: machine.architecture, op: eq, value: x86_64 }
+      - { path: cpu.features, op: lacks, value: avx }
+    decide: fallback
+    into: { image: mongo:4.4 }
+    because: "MongoDB 5.0+ requires AVX CPU support (x86_64)"
+    source: "https://www.mongodb.com/docs/manual/administration/production-notes/"
+  - name: missing-sse42-feature
+    when:
+      - { path: machine.architecture, op: eq, value: x86_64 }
+      - { path: cpu.features, op: lacks, value: sse4_2 }
+    decide: fallback
+    into: { image: mongo:4.2 }
+    because: "MongoDB 4.4+ requires SSE4.2"
+  - name: insufficient-memory
+    when: [{ path: ram.total.mb, op: lt, value: 512 }]
+    decide: deny
+    because: "MongoDB requires at least 512MB of RAM"
+    suggest: redis

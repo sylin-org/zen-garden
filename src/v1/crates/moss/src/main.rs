@@ -174,6 +174,33 @@ async fn main() {
     })
     .await;
 
+    // The offering catalog, DERIVED from a directory tree (no hardcoded
+    // list): MOSS_CATALOG_DIR wins; default ~/.zen-garden/catalog.
+    let catalog_root = std::env::var_os("MOSS_CATALOG_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(|h| std::path::PathBuf::from(h).join(".zen-garden").join("catalog"))
+        })
+        .ok_or_else(|| "no home directory known".to_string());
+    let catalog = pipeline::step::<
+        Arc<offerings::manifest::Catalog>,
+        String,
+        _,
+    >("catalog-load", {
+        async move {
+            match catalog_root {
+                Ok(root) => Ok(Arc::new(offerings::manifest::Catalog::load_dir(&root))),
+                Err(e) => {
+                    tracing::warn!(error = %e, "catalog location unknown; empty catalog");
+                    Ok(Arc::new(offerings::manifest::Catalog::default()))
+                }
+            }
+        }
+    })
+    .await;
+
     let (dispatcher, dispatcher_handle) = Dispatcher::new(INGRESS_QUEUE);
     let topology = Arc::new(Topology::new());
 
@@ -215,13 +242,33 @@ async fn main() {
     tokio::spawn(async move { ingress.run(ingest_token, dispatch_tx).await });
     tokio::spawn(dispatcher_handle.run(token.clone()));
 
-    // The offering application service: registry + worlds + default world,
-    // coordinated (OFFERINGS.md §5/§4). Facts census joins in O2.
+    // The offering application service: registry + worlds + catalog,
+    // coordinated (OFFERINGS.md §5/§4).
     let garden = Arc::new(offerings::service::OfferingService::new(
         Arc::clone(&offerings),
         runtime_registry,
-        default_runtime,
+        default_runtime.clone(),
+        catalog,
     ));
+
+    // Facts census (OFFERINGS.md §6): contributors in parallel, one
+    // generation published; the Converger reads it from here on.
+    let factsheet = Arc::new(offerings::facts::Factsheet::empty());
+    pipeline::step::<(), String, _>("facts-census", {
+        let factsheet = Arc::clone(&factsheet);
+        let kinds: Vec<String> =
+            garden.available_worlds().iter().map(|s| s.to_string()).collect();
+        async move {
+            let contributors = offerings::facts::builtin_contributors(&kinds);
+            let snapshot = factsheet.collect(&contributors).await;
+            tracing::info!(generation = snapshot.id, facts = snapshot.facts.len(), "facts census complete");
+            Ok(())
+        }
+    })
+    .await;
+
+    // The Converger: reality chases the stored plans until cancelled.
+    tokio::spawn(offerings::converge::run(Arc::clone(&garden), token.clone()));
 
     // HTTP surface, last: the garden answers once it can hear.
     let state = Arc::new(http::AppState {

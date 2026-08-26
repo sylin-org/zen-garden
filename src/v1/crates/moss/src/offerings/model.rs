@@ -95,6 +95,10 @@ pub struct WorkloadSpec {
     /// Restart policy hint: "no" | "unless-stopped" | "always".
     #[serde(default = "default_restart")]
     pub restart: String,
+    /// Rare-but-real passthroughs (cap_add, shm_size, sysctls, ulimits...)
+    /// consumed by adapters that understand them. Opaque to the domain.
+    #[serde(default)]
+    pub advanced: serde_json::Value,
 }
 
 /// Where a volume mount sits on both sides of the boundary.
@@ -178,6 +182,10 @@ pub struct ManagedData {
     /// Actual host ports by name, as last observed.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub port_map: HashMap<String, u16>,
+    /// The compiled PlacementPlan (decisions + hash), stored so `explain`
+    /// and drift-detection read the same document reality was built from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<serde_json::Value>,
 }
 
 /// The offering: one named unit of work on this stone.

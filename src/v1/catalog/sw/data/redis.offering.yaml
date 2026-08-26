@@ -1,0 +1,11 @@
+kind: software
+name: redis
+category: data
+description: In-memory data store and cache
+tags: [cache, kv]
+
+managed:
+  world: oci
+  image: redis:7-alpine
+  ports: { default: 6379 }
+  restart: unless-stopped

@@ -1,9 +1,9 @@
 # CONTINUATION — read me first, then delete me
 
 Written 2026-08-26 at a planned pause, mid-epic. Updated 2026-08-27: S3
-(rich ask/reply + songs), S4 (candidates pool), S5 (URI grammar cut) all
-landed; resume at S6. Self-contained for a clean context. Verify everything
-against the tree — trust files over this document.
+(rich ask/reply + songs), S4 (candidates pool), S5 (URI grammar cut), S6
+(rake sync) all landed; resume at S5.5. Self-contained for a clean context.
+Verify everything against the tree — trust files over this document.
 
 ## Project in one paragraph
 
@@ -134,17 +134,15 @@ part{n,of}} · received{discovered_at, last_seen}`.
       front door lists all faces exactly once, redirect + splice pinned.
       Topology gained `find(id_or_name)`. **rake is knowingly BROKEN until
       S6** (calls /garden/observe + /stone/offerings paths).
-- [ ] S6 — rake sync: update observe rendering to the sectioned frame
-      (stone.name, presence.health, inventory.services.items) + repoint
-      rake's paths (`moss_http.rs` OFFERINGS const → `/api/v1/offerings`;
-      main.rs:373 observe → `/garden/stones`; moss_http.rs:312 test
-      fixture path). SelfView splice awareness optional.
+- [x] **S6 — rake sync LANDED (10d07809).** Paths repointed
+      (`/garden/stones`, `/api/v1/offerings`, moss_http fixture);
+      GardenStone parses the splice (`is_self` from `"self"`,
+      `chirps: Option`); observe table gained an OFFERINGS column
+      (declared total or visible items, `-` when silent) and a `(me)`
+      marker on the spliced self row. Rake speaks the new grammar.
 - [ ] S5.5 — persistence v3: record.json/plan.json sectioned schema
       (identity/state/location/mode per R3.9) + auto-migration
       (`.migrated` pattern; pre-fleet, MUST land before S8).
-- [ ] S6 — rake sync: GardenStone flatten already works; update observe
-      rendering to sectioned frame (stone.name, presence.health,
-      inventory.services.items).
 - [ ] S7a — storage MVP local: `offerings/storage.rs` — Bank model
       {fqn(BankId grammar), device_id, state(mounted/ejected), roles[],
       capacity/used via sysinfo Disks}, scan of removable volumes,
@@ -201,7 +199,7 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. Open S6 per epic map: rake sync — repoint the two dead paths
-   (`OFFERINGS` const and the observe call) and update the observe
-   rendering to the sectioned frame. One slice = one commit, gates green
-   at every commit.
+2. Open S5.5 per epic map: persistence v3 — sectioned record.json/plan.json
+   (identity/state/location/mode per R3.9) with auto-migration (`.migrated`
+   pattern). Pre-fleet, MUST land before S8. One slice = one commit, gates
+   green at every commit.

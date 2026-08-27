@@ -376,7 +376,16 @@ async fn plant_offering(
         .garden
         .offer(&name, req.image, req.ports, Some(req.category), req.runtime.as_deref(), &req.inputs)
         .await?;
-    Ok(Json(serde_json::json!({ "data": { "offering": offering } })))
+    Ok(Json(
+        serde_json::json!({ "data": { "offering": record_view(&offering) } }),
+    ))
+}
+
+/// Offerings render the sectioned record — disk and HTTP speak one shape
+/// (R3.9, B1; S5.5).
+fn record_view(offering: &crate::offerings::model::Offering) -> serde_json::Value {
+    serde_json::to_value(crate::offerings::record::OfferingRecord::from_domain(offering))
+        .unwrap_or_default()
 }
 
 /// §5.3: the placed record with its plan attached. Off-grammar names
@@ -389,7 +398,9 @@ async fn show_offering(
     let fqn = garden_glossary::fqn::canonicalize(&name)
         .map_err(|e| CommandError::Conflict(e.to_string()))?;
     match state.garden.placed(&fqn) {
-        Some(o) => Ok(Json(serde_json::json!({ "data": { "offering": o } }))),
+        Some(o) => Ok(Json(
+            serde_json::json!({ "data": { "offering": record_view(&o) } }),
+        )),
         None => Err(CommandError::NotFound(fqn).into()),
     }
 }

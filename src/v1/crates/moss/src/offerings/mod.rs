@@ -14,6 +14,7 @@ pub mod facts;
 pub mod manifest;
 pub mod model;
 pub mod ports;
+pub mod record;
 pub mod registry;
 pub mod runtime;
 pub mod service;

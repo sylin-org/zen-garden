@@ -16,6 +16,8 @@
 //!   · legacy consolidated `offerings.json` → directories
 //!   · pre-namespace flat directories `{slug}/` → `{stem}/default/`
 //!     (their records gain the `::default` spelling)
+//!   · flat v2 records → the sectioned v3 schema (`record.rs`;
+//!     `*.json.migrated` keeps the evidence)
 
 use super::registry::{Snapshot, SnapshotStore};
 use garden_glossary::fqn;
@@ -131,7 +133,7 @@ impl DirectoryStore {
         if let Err(e) = std::fs::create_dir_all(dir.volumes()) {
             tracing::warn!(error = %e, "volumes dir create failed");
         }
-        let record = match serde_json::to_vec_pretty(o) {
+        let record = match serde_json::to_vec_pretty(&super::record::OfferingRecord::from_domain(o)) {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!(error = %e, "record encode failed");
@@ -163,23 +165,75 @@ impl DirectoryStore {
         active: &mut Vec<super::model::Offering>,
         candidates: &mut Vec<super::model::Offering>,
     ) {
-        let record = dir.join("record.json");
-        let candidate = dir.join("candidate.json");
-        if let Ok(bytes) = std::fs::read(&record) {
+        Self::read_registration(&dir.join("record.json"), false, active, candidates);
+        Self::read_registration(&dir.join("candidate.json"), true, active, candidates);
+    }
+
+    /// Read one registration file. v3 (sectioned) parses directly; the v2
+    /// flat shape migrates in place — source renamed `*.json.migrated`
+    /// (the evidence-preserving pattern), sectioned truth written fresh —
+    /// and still lands in this pass (a migration never costs an offering
+    /// a boot of visibility).
+    fn read_registration(
+        path: &Path,
+        is_candidate: bool,
+        active: &mut Vec<super::model::Offering>,
+        candidates: &mut Vec<super::model::Offering>,
+    ) {
+        let Ok(bytes) = std::fs::read(path) else {
+            return;
+        };
+        let parsed = if let Ok(rec) = serde_json::from_slice::<super::record::OfferingRecord>(&bytes)
+        {
+            Some(rec.into_domain())
+        } else {
             match serde_json::from_slice::<super::model::Offering>(&bytes) {
-                Ok(o) => active.push(o),
-                Err(e) => tracing::warn!(
-                    path = %record.display(), error = %e, "record unreadable; skipping"
-                ),
+                Ok(mut o) => {
+                    Self::migrate_registration(path, &mut o, is_candidate);
+                    Some(o)
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "registration unreadable; skipping");
+                    None
+                }
             }
-        } else if let Ok(bytes) = std::fs::read(&candidate) {
-            match serde_json::from_slice::<super::model::Offering>(&bytes) {
-                Ok(o) => candidates.push(o),
-                Err(e) => tracing::warn!(
-                    path = %candidate.display(), error = %e, "candidate unreadable; skipping"
-                ),
+        };
+        if let Some(o) = parsed {
+            if is_candidate {
+                candidates.push(o);
+            } else {
+                active.push(o);
             }
         }
+    }
+
+    /// One-time v2→v3 move for a registration file and its plan sidecar:
+    /// the old bytes are renamed aside (never destroyed), the sectioned
+    /// record — embedded plan re-sectioned — is written fresh.
+    fn migrate_registration(path: &Path, o: &mut super::model::Offering, is_candidate: bool) {
+        super::record::migrate_embedded_plan(o);
+        let migrated = path.with_extension("json.migrated");
+        if let Err(e) = std::fs::rename(path, &migrated) {
+            tracing::warn!(path = %path.display(), error = %e, "record migration rename failed");
+            return;
+        }
+        // The sidecar rides along: old plan aside, fresh sectioned one
+        // written by persist_one below (when this offering carries a plan).
+        let plan_path = path.with_file_name("plan.json");
+        if plan_path.is_file() {
+            let _ = std::fs::rename(&plan_path, plan_path.with_extension("json.migrated"));
+        }
+        if let Some(parent) = path.parent() {
+            let dir = OfferingDir {
+                root: parent.to_path_buf(),
+            };
+            Self::persist_one(&dir, o, is_candidate);
+        }
+        tracing::info!(
+            from = %migrated.display(),
+            name = %o.name,
+            "registration migrated to the sectioned v3 schema"
+        );
     }
 
     /// Read every instance-leaf under one STEM dir.
@@ -291,11 +345,19 @@ impl DirectoryStore {
         // stragglers stays; save()'s prune and next passes settle it.
         let _ = std::fs::remove_dir(flat);
         // Rewrite the stored name to canonical FQN (records carry monikers).
-        if let Ok(mut o) = serde_json::from_slice::<super::model::Offering>(&json_bytes) {
+        // Either record shape parses; persist_one writes the sectioned v3.
+        let mut o = if let Ok(rec) = serde_json::from_slice::<super::record::OfferingRecord>(&json_bytes)
+        {
+            Some(rec.into_domain())
+        } else {
+            serde_json::from_slice::<super::model::Offering>(&json_bytes).ok()
+        };
+        if let Some(ref mut o) = o {
+            super::record::migrate_embedded_plan(o);
             o.name = canonical_fqn.clone();
             o.offering = fqn::stem_of(&canonical_fqn);
             let dir = OfferingDir { root: target.clone() };
-            Self::persist_one(&dir, &o, is_candidate);
+            Self::persist_one(&dir, o, is_candidate);
         }
         tracing::info!(
             from = %flat.display(),
@@ -519,6 +581,72 @@ mod tests {
         let again = store.load().unwrap();
         assert_eq!(again.active.len(), 1);
         assert_eq!(again.active[0].name, "mongodb::default");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// S5.5: a flat v2 record (with a flat embedded plan and a v2 plan
+    /// sidecar) migrates on load — source bytes renamed `*.json.migrated`,
+    /// the sectioned v3 record written fresh, plan scalars re-homed under
+    /// `meta`. Idempotent; nothing is lost.
+    #[test]
+    fn v2_records_migrate_to_the_sectioned_schema() {
+        let tmp = std::env::temp_dir().join(format!("zg-dir-v3-{}", uuid::Uuid::now_v7()));
+        let leaf = tmp.join("redis").join("default");
+        std::fs::create_dir_all(&leaf).unwrap();
+
+        // Stage v2: flat record (Offering's legacy serde) + v2 plan, both
+        // embedded and as sidecar.
+        let mut v2 = sample("redis::default");
+        v2.mode_data = crate::offerings::model::ModeData::Managed(
+            crate::offerings::model::ManagedData {
+                runtime_kind: "oci".into(),
+                spec: Default::default(),
+                port_map: Default::default(),
+                plan: Some(serde_json::json!({
+                    "workload": {}, "decisions": [],
+                    "plan_hash": 42_u64, "facts_generation": 3_u64
+                })),
+            },
+        );
+        std::fs::write(
+            leaf.join("record.json"),
+            serde_json::to_vec_pretty(&v2).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            leaf.join("plan.json"),
+            serde_json::to_vec_pretty(v2.managed().unwrap().plan.as_ref().unwrap()).unwrap(),
+        )
+        .unwrap();
+
+        let store = DirectoryStore::new(tmp.clone());
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.active.len(), 1, "the migration never hides an offering");
+        assert_eq!(loaded.active[0].name, "redis::default");
+        let plan = loaded.active[0]
+            .managed()
+            .unwrap()
+            .plan
+            .as_ref()
+            .unwrap();
+        assert_eq!(plan["meta"]["plan_hash"], 42, "embedded plan re-sectioned");
+        assert!(plan.get("plan_hash").is_none(), "no flat scalars remain");
+
+        // The sectioned truth is on disk; the v2 evidence is aside, intact.
+        let record: crate::offerings::record::OfferingRecord =
+            serde_json::from_slice(&std::fs::read(leaf.join("record.json")).unwrap()).unwrap();
+        assert_eq!(record.identity.name, "redis::default");
+        assert_eq!(record.state.status, Status::Running);
+        assert!(leaf.join("record.json.migrated").is_file());
+        assert!(leaf.join("plan.json.migrated").is_file());
+        let sidecar: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(leaf.join("plan.json")).unwrap()).unwrap();
+        assert_eq!(sidecar["meta"]["facts_generation"], 3);
+
+        // Idempotent second pass.
+        let again = store.load().unwrap();
+        assert_eq!(again.active.len(), 1);
+        assert_eq!(again.active[0].name, "redis::default");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

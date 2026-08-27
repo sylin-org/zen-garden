@@ -653,15 +653,15 @@ fn display_name(fqn: &str) -> String {
 
 /// The moment after planting: what grew, where, listening on what.
 fn render_offered(target: &Candidate, offering: serde_json::Value) -> Result<(), String> {
-    let name = display_name(offering["name"].as_str().unwrap_or("(unnamed)"));
-    let status = offering["status"].as_str().unwrap_or("?");
+    let name = display_name(offering["identity"]["name"].as_str().unwrap_or("(unnamed)"));
+    let status = offering["state"]["status"].as_str().unwrap_or("?");
     println!("{name} planted — {status}");
     println!("  on      {} ({})", target.label(), target.origin_label());
-    if let Some(image) = offering["spec"]["image"].as_str() {
+    if let Some(image) = offering["mode"]["spec"]["image"].as_str() {
         println!("  image   {image}");
     }
-    let container_ports = offering["spec"]["named_ports"].clone();
-    let host_ports = offering.get("port_map").cloned().unwrap_or(serde_json::Value::Null);
+    let container_ports = offering["mode"]["spec"]["named_ports"].clone();
+    let host_ports = offering["mode"]["port_map"].clone();
     let host_has_names = host_ports.as_object().is_some_and(|m| !m.is_empty());
     if container_ports.is_object() {
         println!("  ports   {}", describe_ports(&container_ports, &host_ports));
@@ -690,31 +690,33 @@ fn describe_ports(container: &serde_json::Value, host: &serde_json::Value) -> St
 
 /// §5.3's placed record rendered by hand — the delightful reference.
 fn render_explain(target: &Candidate, offering: serde_json::Value) -> Result<(), String> {
-    let name = display_name(offering["name"].as_str().unwrap_or("(unnamed)"));
-    let status = offering["status"].as_str().unwrap_or("?");
-    let mode = offering["mode"].as_str().unwrap_or("?");
+    let name = display_name(offering["identity"]["name"].as_str().unwrap_or("(unnamed)"));
+    let status = offering["state"]["status"].as_str().unwrap_or("?");
+    let mode = offering["mode"]["mode"].as_str().unwrap_or("?");
 
     println!("{name} — {} ({})", target.label(), target.endpoint());
     println!(
         "  status     {status} · {mode}{}",
-        offering["runtime_kind"]
+        offering["mode"]["runtime_kind"]
             .as_str()
             .map(|k| format!(" · {k}"))
             .unwrap_or_default()
     );
     println!(
         "  identity   category {}{}",
-        offering["category"].as_str().unwrap_or("?"),
-        offering["offering_id"]
+        offering["identity"]["category"].as_str().unwrap_or("?"),
+        offering["identity"]["offering_id"]
             .as_str()
             .map(|id| format!(" · id {id}"))
             .unwrap_or_default()
     );
-    if let Some(image) = offering["spec"]["image"].as_str() {
-        let restart = offering["spec"]["restart"].as_str().unwrap_or("unless-stopped");
+    if let Some(image) = offering["mode"]["spec"]["image"].as_str() {
+        let restart = offering["mode"]["spec"]["restart"]
+            .as_str()
+            .unwrap_or("unless-stopped");
         println!("  spec       image {image} · restart {restart}");
-        let named = offering["spec"]["named_ports"].clone();
-        let mapped = offering["port_map"].clone();
+        let named = offering["mode"]["spec"]["named_ports"].clone();
+        let mapped = offering["mode"]["port_map"].clone();
         if named.is_object() {
             println!("  ports      {}", describe_ports(&named, &mapped));
         }
@@ -722,13 +724,13 @@ fn render_explain(target: &Candidate, offering: serde_json::Value) -> Result<(),
         println!("  spec       ({mode}; no workload container)");
     }
 
-    match offering.get("plan") {
+    match offering["mode"].get("plan") {
         Some(plan) => {
             let decisions = plan["decisions"].as_array();
             println!(
                 "  decisions  {} recorded{}",
                 decisions.map(Vec::len).unwrap_or(0),
-                plan["facts_generation"]
+                plan["meta"]["facts_generation"]
                     .as_u64()
                     .map(|g| format!(" against facts generation {g}"))
                     .unwrap_or_default()
@@ -743,7 +745,7 @@ fn render_explain(target: &Candidate, offering: serde_json::Value) -> Result<(),
                     .unwrap_or_default();
                 println!("    · {rule}: {chose} — {because}{source}");
             }
-            if let Some(hash) = plan["plan_hash"].as_u64() {
+            if let Some(hash) = plan["meta"]["plan_hash"].as_u64() {
                 println!("  plan       hash {:016x}", hash);
             }
         }
@@ -916,17 +918,23 @@ mod tests {
     #[test]
     fn explain_renders_plan_decisions_and_hash() {
         let offering = serde_json::json!({
-            "name": "redis", "status": "running", "mode": "managed",
-            "category": "data", "offering_id": "id-1", "runtime_kind": "oci",
-            "spec": { "image": "redis:7-alpine", "restart": "unless-stopped",
-                       "named_ports": { "default": 6379 } },
-            "port_map": { "default": 63001 },
-            "plan": {
-                "facts_generation": 3,
-                "plan_hash": 5709041973811721503_u64,
-                "decisions": [ { "rule": "arch-x86", "chose": "place",
-                                  "because": "x86_64 fits", "source": "manifest" } ]
-            }
+            "identity": { "offering_id": "id-1", "name": "redis::default",
+                          "stem": "redis", "category": "data" },
+            "state": { "status": "running" },
+            "location": { "host": "localhost", "port": 63001, "protocol": "http" },
+            "mode": { "mode": "managed", "runtime_kind": "oci",
+                      "spec": { "image": "redis:7-alpine", "restart": "unless-stopped",
+                                "named_ports": { "default": 6379 } },
+                      "port_map": { "default": 63001 },
+                      "plan": {
+                          "workload": {},
+                          "decisions": [ { "rule": "arch-x86", "chose": "place",
+                                           "because": "x86_64 fits", "source": "manifest" } ],
+                          "meta": { "facts_generation": 3,
+                                    "plan_hash": 5709041973811721503_u64 }
+                      } },
+            "registered_at": "2026-08-26T00:00:00Z",
+            "updated_at": "2026-08-26T00:00:00Z"
         });
         render_explain(&pinned(), offering).unwrap();
     }
@@ -934,7 +942,7 @@ mod tests {
     #[test]
     fn renderers_survive_sparse_records() {
         // Sparse/foreign shapes must degrade gracefully, never panic.
-        render_offered(&pinned(), serde_json::json!({ "name": "weird" })).unwrap();
+        render_offered(&pinned(), serde_json::json!({ "identity": { "name": "weird" } })).unwrap();
         render_explain(
             &pinned(),
             serde_json::json!({ "mode": "adopted", "plan": { "decisions": [ {"rule": "r"} ] } }),

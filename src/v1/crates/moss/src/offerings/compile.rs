@@ -52,11 +52,20 @@ pub struct Decision {
 }
 
 /// The resolved instructions for THIS stone — stored inside ManagedData,
-/// hashed for drift detection, rendered by `rake explain`.
+/// hashed for drift detection, rendered by `rake explain`. On media the
+/// scalars live in a `meta` section (S5.5, R3.9: sections hold facts).
 #[derive(Debug, Clone, Serialize)]
 pub struct PlacementPlan {
     pub workload: WorkloadSpec,
     pub decisions: Vec<Decision>,
+    #[serde(flatten)]
+    pub meta: PlanMeta,
+}
+
+/// Plan housekeeping: the hash of intent (drift detection's anchor) and
+/// the facts generation the plan was compiled against.
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanMeta {
     pub plan_hash: u64,
     pub facts_generation: u64,
 }
@@ -271,8 +280,10 @@ pub fn compile(
     Ok(PlacementPlan {
         workload,
         decisions,
-        plan_hash,
-        facts_generation: facts_gen.id,
+        meta: PlanMeta {
+            plan_hash,
+            facts_generation: facts_gen.id,
+        },
     })
 }
 

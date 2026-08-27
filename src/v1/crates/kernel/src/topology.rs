@@ -119,6 +119,17 @@ impl Topology {
         self.candidates.lock().values().cloned().collect()
     }
 
+    /// One peer by stone id or garden name — the redirect face's lookup
+    /// (ADR-0004 §4 `/stone/{ref}`).
+    pub fn find(&self, id_or_name: &str) -> Option<StoneView> {
+        let peers = self.peers.lock();
+        peers
+            .map
+            .values()
+            .find(|p| p.body.stone.id == id_or_name || p.body.stone.name == id_or_name)
+            .cloned()
+    }
+
     pub fn chirps_total(&self) -> u64 {
         self.chirps_total.load(Ordering::Relaxed)
     }

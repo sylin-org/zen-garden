@@ -354,12 +354,14 @@ async fn main() {
     })
     .await;
 
-    // HTTP surface, last: the garden answers once it can hear.
+    // HTTP surface, last: the garden answers once it can hear. The same
+    // chirp source composes the SelfView — one identity, many mouths (B1).
     let state = Arc::new(http::AppState {
         topology: Arc::clone(&topology),
         dispatcher: dispatcher.clone(),
         ingest_counters,
         garden,
+        chirp_source: chirp_source.clone() as Arc<dyn garden_kernel::announce::ChirpSource>,
         stone_name: identity.stone_name.clone(),
         boot_id,
         started_at: chrono::Utc::now(),

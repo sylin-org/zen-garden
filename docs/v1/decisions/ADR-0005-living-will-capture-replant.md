@@ -161,6 +161,43 @@ manifest but sits OUTSIDE `WorkloadSpec` and outside `plan_hash` — backup
 policy is lifecycle intent, not desired execution; hashing it would flip
 plans on policy edits (ORCH-0041's digest gotcha, prevented structurally).
 
+### 8. Storage rides the discovery envelope — a plugged drive is just news
+
+Operator ruling (2026-08-26): for the announcement mechanism, a plugged USB
+drive **is** a new offering. Plug a bank: *"hey guys, I got storage X, and
+here's some data about it."* Unplug: *"I lost storage X."* Every stone hears,
+updates its hot cache. The PoC required a SECOND protocol for this
+(STORAGE_BEACON, own type/cache/merge) purely because fat chirps couldn't
+afford passengers — ADR-0004's depth tiers delete that subsystem outright.
+Binding semantics:
+
+1. **Per-domain revisions.** `bank_rev` rides beside `svc_rev` in every
+   anchor frame; bank lifecycle never re-announces services and vice versa.
+2. **State bumps revs; measurements piggyback.** Mount / eject / rename /
+   visibility-change are lifecycle facts (bump `bank_rev`, emit rich frame).
+   Capacity and used-bytes are TELEMETRY — they never trigger frames, they
+   ride along as annotations on whatever frame happens anyway. This is the
+   anti-spam law; without it a write-heavy volume spams the room.
+3. **Liveness is inherited, never timered.** Bank rows live and die with the
+   hosting stone's heartbeat in the topology cache — the existing expiry
+   sweep dims them wholesale (`seen_at` stamped, resurrection-aware). Clean
+   eject announces absence authoritatively; yanked drives resolve through
+   expiry. Announce loudly what you know; expire quietly what you can't
+   prove.
+4. **Hearing-before-meeting.** Bank knowledge learned through middlemen (rich
+   replies overheard relays, forwarding queries) lands as TTL'd candidates;
+   the holding stone's own live frame promotes them. Ghost-prevention pool,
+   third instantiation after offerings and services.
+5. **Names follow ADR-0003.** Logical bank identity is an FQN:
+   `bank::default` = communal replication group (auto-joins by name);
+   private sets use explicit instances. Physical devices carry GUIDv7 ids
+   (per-device, path derivation) distinct from the logical set — announce-
+   ment frames include BOTH ({fqn, device_id, state, roles[],
+   capacity_bytes, used_bytes}), honoring STORAGE-0006's two-name model.
+6. **Newcomer bootstrapping unchanged:** the boot rich ask fills the entire
+   storage map in one exchange; later Cloud Filter-style placeholder
+   consumers feed from these same frames.
+
 ## Law encoded
 
 > Replication converges, and therefore faithfully repeats your mistakes;

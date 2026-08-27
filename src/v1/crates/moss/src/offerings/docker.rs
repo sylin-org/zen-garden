@@ -38,7 +38,7 @@ impl DockerRuntime {
     /// (`mc::prod` → `zen-offering-mc_prod`). Since the grammar bans `:`
     /// inside names outright, slugging is injective — no two offerings
     /// can collide here.
-    fn container_name(offering_fqn: &str) -> String {
+    pub(crate) fn container_name(offering_fqn: &str) -> String {
         format!(
             "{CONTAINER_PREFIX}{}",
             super::directory::slug(&garden_glossary::fqn::moniker(offering_fqn))
@@ -285,6 +285,53 @@ impl Runtime for DockerRuntime {
     }
 }
 
+#[async_trait::async_trait]
+impl super::capture_run::HookRunner for DockerRuntime {
+    async fn exec(
+        &self,
+        container: &str,
+        argv: &[String],
+        timeout: std::time::Duration,
+    ) -> Result<(), String> {
+        use bollard::exec::{CreateExecOptions, StartExecResults};
+        let exec = self
+            .docker
+            .create_exec(
+                container,
+                CreateExecOptions {
+                    cmd: Some(argv.to_vec()),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| format!("exec create: {e}"))?;
+        let started = self
+            .docker
+            .start_exec(&exec.id, None)
+            .await
+            .map_err(|e| format!("exec start: {e}"))?;
+        if let StartExecResults::Attached { mut output, .. } = started {
+            let drain = async {
+                while let Some(_line) = futures::StreamExt::next(&mut output).await {}
+            };
+            tokio::time::timeout(timeout, drain)
+                .await
+                .map_err(|_| format!("hook exceeded its {}s budget", timeout.as_secs()))?;
+        }
+        let inspect = self
+            .docker
+            .inspect_exec(&exec.id)
+            .await
+            .map_err(|e| format!("exec inspect: {e}"))?;
+        match inspect.exit_code {
+            Some(0) | None => Ok(()),
+            Some(code) => Err(format!("hook exited {code}")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -309,3 +356,4 @@ mod tests {
         );
     }
 }
+

@@ -171,6 +171,20 @@ impl Storage {
         banks
     }
 
+    /// Declare a bank's roles (§4: sink today; the set grows with the
+    /// tiers). Role news is state news - it bumps. #[cfg(test)] until the
+    /// sink-role declaration slice surfaces it on the API/rake pair.
+    #[cfg(test)]
+    pub fn set_roles(&self, fqn: &str, roles: Vec<String>) -> Option<Bank> {
+        let mut banks = self.banks.lock();
+        let bank = banks.get_mut(fqn)?;
+        bank.roles = roles;
+        let updated = bank.clone();
+        drop(banks);
+        self.bump();
+        Some(updated)
+    }
+
     /// The adopt ceremony (ADR-0005): write the manifest onto the device,
     /// remember the bank mounted, sing. Detect first, claim only what
     /// answers (L25).

@@ -112,6 +112,15 @@ enum Command {
         #[command(subcommand)]
         cmd: Option<StorageCmd>,
     },
+    /// Run an offering's declared will (ADR-0005): imprint, pack, ferry,
+    /// commit. `--last` reports the previous run instead.
+    Capture {
+        /// The offering's name (FQN or bare stem).
+        name: String,
+        /// Report the previous run instead of starting a new one.
+        #[arg(long)]
+        last: bool,
+    },
 }
 
 /// Storage verbs — each has its 1:1 API face (`/api/v1/storage*`).
@@ -488,7 +497,9 @@ async fn run(cli: &Cli) -> Result<(), String> {
             }
         }
         Command::Offer { .. } | Command::Explain { .. } | Command::Rest { .. }
-        | Command::Wake { .. } | Command::Uproot { .. } => cmd_stone_op(cli).await,
+        | Command::Wake { .. } | Command::Uproot { .. } | Command::Capture { .. } => {
+            cmd_stone_op(cli).await
+        }
         Command::Storage { cmd } => cmd_storage(cli, cmd.as_ref()).await,
     }
 }
@@ -667,6 +678,51 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
             }
             render_status("rested", &envelope_plain(&v)?)
         }
+        Command::Capture { name, last } => {
+            if *last {
+                let (_, v) = cli
+                    .stone_op("GET", paths::capture_last(name), None)
+                    .await?;
+                if cli.json {
+                    return emit_pretty(&v);
+                }
+                let run = envelope_plain(&v)?;
+                println!(
+                    "{} — last capture: {} ({}){}",
+                    display_name(name),
+                    run["phase"].as_str().unwrap_or("?"),
+                    run["started_at"].as_str().unwrap_or("?"),
+                    run["error"]
+                        .as_str()
+                        .map(|e| format!(" — {e}"))
+                        .unwrap_or_default(),
+                );
+                if let Some(cp) = run["checkpoint"].as_str() {
+                    println!("  checkpoint  {cp}");
+                }
+                if let Some(sinks) = run["ferried_to"].as_array()
+                    && !sinks.is_empty()
+                {
+                    let names: Vec<&str> = sinks.iter().filter_map(|s| s.as_str()).collect();
+                    println!("  ferried to  {}", names.join(", "));
+                }
+                return Ok(());
+            }
+            let (_, v) = cli
+                .stone_op("POST", paths::capture(name), None)
+                .await?;
+            if cli.json {
+                return emit_pretty(&v);
+            }
+            let run = envelope(&v, "run")?;
+            println!(
+                "{} — capture accepted, run {}",
+                display_name(name),
+                run["run_id"].as_str().unwrap_or("?"),
+            );
+            println!("  the will executes in the background; `rake capture {name} --last` reports progress");
+            Ok(())
+        }
         Command::Wake { name } => {
             let (_, v) = cli.stone_op("POST", paths::wake(name), None).await?;
             if cli.json {
@@ -709,6 +765,16 @@ mod paths {
     /// The eject verb's face.
     pub fn storage_eject(bank: &str) -> String {
         format!("{STORAGE}/{bank}/eject")
+    }
+
+    /// The living will's faces (ADR-0005 §2).
+    pub fn capture(name: &str) -> String {
+        format!("{OFFERINGS}/{name}/capture")
+    }
+
+    /// The last-run report face.
+    pub fn capture_last(name: &str) -> String {
+        format!("{OFFERINGS}/{name}/capture")
     }
 
     pub fn record(name: &str) -> String {

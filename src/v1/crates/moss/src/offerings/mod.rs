@@ -5,6 +5,7 @@
 //! work only. Modes know the registry; runtimes know containers.
 
 pub mod capture;
+pub mod capture_run;
 pub mod compile;
 pub mod converge;
 pub mod directory;

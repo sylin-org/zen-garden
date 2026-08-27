@@ -56,7 +56,7 @@ pub struct OfferingService {
     /// The stone's facts census — compile reads a generation snapshot.
     pub facts: Arc<Factsheet>,
     /// Where offering directories live (rehydration contract, OFFERINGS.md).
-    dirs_root: OfferingsRoot,
+    pub dirs_root: OfferingsRoot,
     /// The stone's service pool for address allocation (ADR-0002 ruling 1).
     pool: Pool,
     /// Per-offering convergence failure counters (converge.rs drives them).

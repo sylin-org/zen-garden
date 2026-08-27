@@ -26,6 +26,8 @@ pub struct AppState {
     pub garden: Arc<OfferingService>,
     /// This stone's banks (ADR-0005 §8) — the storage MVP's state.
     pub storage: Arc<crate::offerings::storage::Storage>,
+    /// The living will's runner (ADR-0005 §2).
+    pub capture: Arc<crate::offerings::capture_run::Runner>,
     pub topology: Arc<garden_kernel::topology::Topology>,
     pub dispatcher: Dispatcher,
     pub ingest_counters: Arc<IngestCounters>,
@@ -65,6 +67,10 @@ enum Face {
     StorageAdopt,
     /// Authoritative absence: the eject verb (ADR-0005 §8.3).
     StorageEject,
+    /// Run a will: the capture pipeline (ADR-0005 §2).
+    OfferingCapture,
+    /// The last capture run of an offering.
+    OfferingCaptureLast,
     /// The room's banks, projected from the cache (ADR-0004 §4 grid).
     GardenStorage,
     OfferingPlant,
@@ -75,7 +81,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 17] = [
+    const ALL: [Face; 19] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -88,6 +94,8 @@ impl Face {
         Face::StorageAdopt,
         Face::StorageEject,
         Face::GardenStorage,
+        Face::OfferingCapture,
+        Face::OfferingCaptureLast,
         Face::OfferingPlant,
         Face::OfferingShow,
         Face::OfferingRest,
@@ -107,8 +115,8 @@ impl Face {
             | Face::Catalog
             | Face::StorageList
             | Face::GardenStorage
-            | Face::OfferingShow => "GET",
-            Face::StorageAdopt | Face::StorageEject => "POST",
+            | Face::OfferingCaptureLast | Face::OfferingShow => "GET",
+            Face::StorageAdopt | Face::StorageEject | Face::OfferingCapture => "POST",
             Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
             Face::OfferingUproot => "DELETE",
         }
@@ -130,6 +138,9 @@ impl Face {
             Face::GardenStorage => "/api/v1/garden/storage",
             Face::OfferingPlant | Face::OfferingShow | Face::OfferingUproot => {
                 "/api/v1/offerings/{fqn}"
+            }
+            Face::OfferingCapture | Face::OfferingCaptureLast => {
+                "/api/v1/offerings/{fqn}/capture"
             }
             Face::OfferingRest => "/api/v1/offerings/{fqn}/rest",
             Face::OfferingWake => "/api/v1/offerings/{fqn}/wake",
@@ -172,6 +183,10 @@ impl Face {
                  inputs?}; catalog name wins when one exists."
             }
             Face::OfferingShow => "The placed record - plan, decisions, ports (OFFERINGS.md §5.3).",
+            Face::OfferingCapture => {
+                "Run this offering's declared will: Phase A imprint (quiesce -> copy -> resume), then pack, ferry, commit."
+            }
+            Face::OfferingCaptureLast => "The last capture run of this offering: phase, checkpoint, ferried sinks.",
             Face::OfferingRest => {
                 "Rest a managed offering - stopped, and reconcile will keep it so."
             }
@@ -196,6 +211,8 @@ impl Face {
             Face::StorageEject => post(storage_eject),
             Face::GardenStorage => get(garden_storage),
             Face::OfferingPlant => post(plant_offering),
+            Face::OfferingCapture => post(capture_offer),
+            Face::OfferingCaptureLast => get(capture_last),
             Face::OfferingShow => get(show_offering),
             Face::OfferingRest => post(rest_offering),
             Face::OfferingWake => post(wake_offering),
@@ -446,6 +463,122 @@ async fn garden_storage(State(state): State<Arc<AppState>>) -> Json<serde_json::
     Json(serde_json::json!({ "data": { "banks": rows } }))
 }
 
+/// Run a will (1:1 with `rake capture {name}`): Phase A imprint, then
+/// pack/ferry/commit in the background. The response carries the run; ask
+/// again on the GET face for its progress.
+async fn capture_offer(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    use crate::offerings::capture::{readiness, Readiness};
+    use crate::offerings::capture_run::{RunInfo, Workload};
+    use crate::offerings::model::Status;
+
+    let fqn = garden_glossary::fqn::canonicalize(&name)
+        .map_err(|e| CommandError::Conflict(e.to_string()))?;
+    let offering = state
+        .garden
+        .placed(&fqn)
+        .ok_or(CommandError::NotFound(format!("'{}' is not planted here", fqn)))?;
+
+    // The will lives in the catalog manifest (one machine-truth parse).
+    let manifest = state.garden.catalog.get(&offering.offering).ok_or_else(|| {
+        CommandError::Conflict(format!(
+            "'{fqn}' grows from stem '{}' with no catalog manifest - its will cannot be read",
+            offering.offering
+        ))
+    })?;
+    match readiness(manifest) {
+        Readiness::NothingToPreserve => {}
+        Readiness::Trusted(_) => {}
+        Readiness::Untrusted => {
+            return Err(CommandError::Conflict(format!(
+                "'{}' declares volumes but no capture policy - raw copy would be a lie;                  declare a `capture:` section in the manifest first",
+                fqn
+            ))
+            .into())
+        }
+    }
+    let Some(policy) = &manifest.capture else {
+        return Err(CommandError::Conflict(format!(
+            "'{}' declares no capture policy and no volumes - nothing to preserve",
+            fqn
+        ))
+        .into())
+    };
+
+    let dir = state.garden.dirs_root.dir_for(&offering.name).root;
+    let volumes = offering
+        .managed()
+        .map(|m| {
+            m.spec
+                .volumes
+                .iter()
+                .map(|v| {
+                    let name = std::path::Path::new(&v.host_path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| v.host_path.clone());
+                    (std::path::PathBuf::from(&v.host_path), name)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let workload = Workload {
+        dir,
+        volumes,
+        container: crate::offerings::docker::DockerRuntime::container_name(&offering.name),
+        running: offering.status == Status::Running,
+    };
+
+    let runner = Arc::clone(&state.capture);
+    let policy = policy.clone();
+    let fqn_str = fqn.clone();
+    let run_id = uuid::Uuid::now_v7().to_string();
+    let mut announced = RunInfo {
+        fqn: fqn_str.clone(),
+        run_id: run_id.clone(),
+        started_at: chrono::Utc::now(),
+        phase: "imprint".into(),
+        error: None,
+        checkpoint: None,
+        ferried_to: None,
+    };
+    state.capture.announce(announced.clone());
+    let task_fqn = fqn_str.clone();
+    let task_run = run_id.clone();
+    tokio::spawn(async move {
+        // The runner records progress under its own run id; the spawn carries
+        // the caller-visible one.
+        let _ = task_run;
+        if let Err(e) = runner
+            .execute_named(&task_fqn, &policy, &workload, &task_run)
+            .await
+        {
+            tracing::warn!(offering = %task_fqn, error = %e, "capture run failed");
+        }
+    });
+    announced.phase = "accepted".into();
+    Ok(Json(serde_json::json!({ "data": { "run": announced } })))
+}
+
+/// The last capture run of an offering.
+async fn capture_last(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    let fqn = garden_glossary::fqn::canonicalize(&name)
+        .map_err(|e| CommandError::Conflict(e.to_string()))?;
+    match state.capture.last_run(&fqn) {
+        Some(run) => Ok(Json(serde_json::json!({ "data": { "run": run } }))),
+        None => Err(CommandError::NotFound(format!(
+            "'{}' has run no capture on this stone",
+            fqn
+        ))
+        .into()),
+    }
+}
+
 async fn front_door() -> Json<serde_json::Value> {
     let routes: Vec<serde_json::Value> = Face::ALL
         .iter()
@@ -622,6 +755,10 @@ mod tests {
         Arc::new(AppState {
             garden: service,
             storage: Arc::new(crate::offerings::storage::Storage::new()),
+            capture: Arc::new(crate::offerings::capture_run::Runner::new(
+                Arc::new(crate::offerings::storage::Storage::new()),
+                Arc::new(crate::offerings::capture_run::NullHooks),
+            )),
             topology: Arc::new(garden_kernel::topology::Topology::new()),
             dispatcher: Dispatcher::new(16).0,
             ingest_counters: Arc::new(IngestCounters::default()),

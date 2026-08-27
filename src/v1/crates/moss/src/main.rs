@@ -263,6 +263,18 @@ async fn main() {
     );
     source::follow_offering_changes(&chirp_source, &offerings, token.clone());
     source::follow_storage_changes(&chirp_source, &storage, token.clone());
+
+    // The living will's runner (ADR-0005 §2): hooks via docker when it
+    // answers; loud refusal where no world can run them (companion).
+    let hook_runner: Arc<dyn offerings::capture_run::HookRunner> =
+        match offerings::docker::DockerRuntime::connect() {
+            Ok(d) => Arc::new(d),
+            Err(_) => Arc::new(offerings::capture_run::NullHooks),
+        };
+    let capture_runner = Arc::new(offerings::capture_run::Runner::new(
+        Arc::clone(&storage),
+        hook_runner,
+    ));
     let announce_socket = ingress.socket();
     tokio::spawn(announce::run(
         Arc::clone(&announce_socket),
@@ -376,6 +388,7 @@ async fn main() {
         ingest_counters,
         garden,
         storage: Arc::clone(&storage),
+        capture: capture_runner,
         chirp_source: chirp_source.clone() as Arc<dyn garden_kernel::announce::ChirpSource>,
         stone_name: identity.stone_name.clone(),
         boot_id,

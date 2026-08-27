@@ -24,9 +24,11 @@ is never edited — superseding decisions reference their predecessor.
 | [ADR-0001](ADR-0001-offering-directory.md) | Accepted | The Offering Directory as the unit of deployment |
 | [ADR-0002](ADR-0002-port-allocation-and-residence.md) | Accepted | Port addresses: stable allocation, honest residence |
 | [ADR-0003](ADR-0003-offering-fqn-namespace.md) | Accepted | Offering identity: the FQN namespace, the reserved default, moniker surfaces |
+| [ADR-0004](ADR-0004-discovery-envelope-and-uri-grammar.md) | Accepted | The discovery envelope: depth tiers, revision merges, and the URI grammar |
+| [ADR-0005](ADR-0005-living-will-capture-replant.md) | Accepted | The living will: capture, checkpoints, and replant |
 
 ## Queued (expected soon)
 
-- ADR-0004 — OCI-unified adapter: docker/podman as one engine, two sockets (§4 bet)
-- ADR-0005 — declared install forms (`inputs:`) replacing env-var incantations (§5.1)
-- ADR-0006 — declarative garden: per-stone plans lifted to `garden.yaml` (M3 bridge)
+- ADR-0006 — OCI-unified adapter: docker/podman as one engine, two sockets (§4 bet)
+- ADR-0007 — declared install forms (`inputs:`) replacing env-var incantations (§5.1)
+- ADR-0008 — declarative garden: per-stone plans lifted to `garden.yaml` (M3 bridge)

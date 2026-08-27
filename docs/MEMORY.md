@@ -16,6 +16,8 @@ this file points at; state lives once, decisions live once.
 | Open engineering debt | `src/v1/DEBT.md` |
 | Witnessed milestones | `src/v1/WITNESSES.md` |
 | Port address law (allocation/residence) | `docs/v1/decisions/ADR-0002-port-allocation-and-residence.md` |
+| Discovery envelope & URI grammar | `docs/v1/decisions/ADR-0004-discovery-envelope-and-uri-grammar.md` |
+| Living will (capture/checkpoints/replant) | `docs/v1/decisions/ADR-0005-living-will-capture-replant.md` |
 | Sequenced slices (O0→later) | `docs/v1/OFFERINGS.md` §7 |
 | Session-local environment/handoff | `local/NOTES.md` (gitignored), see `local/README.md` |
 

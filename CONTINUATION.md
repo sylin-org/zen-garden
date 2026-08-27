@@ -32,6 +32,8 @@ witness.
 ## Git state (branch `dev`; nothing pushed; no remote/main — decision pending)
 
 ```
+9df8c53b feat(v1): S2 - DynamicChirpSource speaks the registry's truth  ← S2 LANDED
+90d8ce65 docs: session continuation - S2 blocker root-caused
 0efa269f feat(v1): S1.6 - the inventory map, songs, and the framer
 2d9ea34f docs(v1): ADR-0004 A1 - records are paths; R3.9 codified
 5240773d refactor(v1)!: the canonical frame - records are paths
@@ -43,47 +45,16 @@ c0994316 docs(v1): ADR-0004 - discovery envelope + URI grammar
 24bbef47 feat(v1)!: ADR-0003 - FQN namespace, reserved default, moniker surfaces
 ```
 
-**UNCOMMITTED (working tree carries S2, do not lose):**
-- `crates/moss/src/source.rs` — REWRITTEN: `DynamicChirpSource` +
-  `follow_offering_changes` + 3 tests. **Contains a deadlock (see BLOCKER).**
-- `crates/moss/src/main.rs` — wired: `source::Voice` struct (replaces
-  static_body), DynamicChirpSource built AFTER offerings-load, follower
-  spawned with token; goodbye uses `chirp_source.body()`.
-- `crates/kernel/src/topology.rs` — on_response now fills
-  `hint.inventory.services` (was `hint.services`).
-- `crates/moss/src/http.rs` — sample_peer uses InventoryMap.
-- Cargo.locks — churn.
-All of it compiles clean (`clippy --workspace --all-targets -D warnings`
-passed); the failure is RUNTIME ONLY, in two new tests.
+Working tree is CLEAN (84 tests green, clippy -D warnings clean). The S2
+deadlock was FIXED before close: `send_modify` under one lock replaces the
+borrow-inside-send_replace pattern; a comment in source.rs guards the idiom.
 
-## ⚠️ BLOCKER: S2 test hang — root cause found, fix is one line
+## ~~⚠️ BLOCKER~~ RESOLVED (kept for the lesson)
 
-Symptom: `offering_change_bumps_rev_and_version` and
-`removal_bumps_rev_and_empties_items` hang >60s ("has been running for over
-60 seconds"), every other test green.
-
-Root cause (confirmed by reading): in `follow_offering_changes`
-(`crates/moss/src/source.rs`, the spawned task's `bump` closure):
-
-```rust
-source
-    .version_tx
-    .send_replace(source.version_tx.borrow().wrapping_add(1));
-```
-
-tokio's `watch::Sender::borrow()` takes a read lock; the guard is ALIVE
-while `send_replace` demands the write lock → deadlock on the
-current-thread `#[tokio::test]` runtime.
-
-**Fix (pick one):**
-```rust
-let next = source.version_tx.borrow().wrapping_add(1);
-source.version_tx.send_replace(next);
-// — or cleaner —
-source.version_tx.send_modify(|v| *v = v.wrapping_add(1));
-```
-Then: `cargo test -p garden-moss` (all 3 source tests + full suite), commit
-as `feat(v1): S2 - DynamicChirpSource ...`.
+The S2 hang was a tokio watch deadlock: `send_replace(source.version_tx
+.borrow()…)` holds the read guard across the write attempt. Fixed with
+`send_modify(|v| *v = v.wrapping_add(1))` under one lock (9df8c53b). The
+idiom comment lives in source.rs. No open blockers.
 
 ## The canonical shape (S1.5/S1.6 — MEMORIZE before touching wire code)
 
@@ -114,13 +85,11 @@ part{n,of}} · received{discovered_at, last_seen}`.
 
 - [x] S1/S1.5/S1.6 — wire anchors, canonical frame, A1+A2 amendments,
       inventory map, song+framer (committed)
-- [~] **S2 — DynamicChirpSource: code complete, ONE-LINE FIX + tests green
-      + commit REMAINING** (see BLOCKER). Design: rev starts at
+- [x] **S2 — DynamicChirpSource LANDED (9df8c53b).** Rev starts at
       max(snapshot.len(),1); bumps on OfferingChanged (lagged bumps once);
       version watch fires → announcer's existing debounce (L18) emits
-      change-chirp. Announcer untouched — it already had version-watch
-      machinery. Interim: inventory rides plain chirps; songs wire-up can
-      land in S3.
+      change-chirp. Interim: inventory rides plain chirps; songs wire-up
+      lands in S3.
 - [ ] S3 — rich responders: probe `ask_the_room_rich` (for_moss_rich);
       responder parses `rich` flag and answers with
       `DiscoveryResponse{stone, services: Some(inventory)}`; moss boot ask
@@ -196,11 +165,9 @@ W7), Lantern, O3 adoption.
 
 ## Resume procedure
 
-1. Read this + `git log --oneline -5` + `git status` (expect the 5 modified
-   files above; if missing, recover from this description).
-2. Apply the BLOCKER fix in source.rs.
-3. `cargo test -p garden-moss --bin moss source::` → 3 green.
-4. Full gates: `cargo clippy --workspace --all-targets -- -D warnings &&
-   cargo test --workspace` (81+ tests green before S2's 3 new ones).
-5. Commit S2. Proceed S3 per epic map. One slice = one commit, gates green
-   at every commit.
+1. Read this + `git log --oneline -5` + `git status` (expect clean tree).
+2. Open S3 per epic map: probe `ask_the_room_rich` variant +
+   `DiscoveryRequest::for_moss_rich` (exists), responder answers rich asks
+   with `DiscoveryResponse{stone, services: Some(source body inventory)}`,
+   moss boot ask goes rich. One slice = one commit, gates green at every
+   commit.

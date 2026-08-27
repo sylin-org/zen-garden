@@ -1,9 +1,9 @@
 # CONTINUATION — read me first, then delete me
 
 Written 2026-08-26 at a planned pause, mid-epic. Updated 2026-08-27: S3
-landed (rich ask/reply + the songs wire-up), S4 landed (candidates pool);
-resume at S5. Self-contained for a clean context. Verify everything against
-the tree — trust files over this document.
+(rich ask/reply + songs), S4 (candidates pool), S5 (URI grammar cut) all
+landed; resume at S6. Self-contained for a clean context. Verify everything
+against the tree — trust files over this document.
 
 ## Project in one paragraph
 
@@ -121,13 +121,24 @@ part{n,of}} · received{discovered_at, last_seen}`.
       The old on_response hint-entry behavior is gone (no more `starting`
       phantoms in observe / no Expired events for stones never met).
       merge_frame-on-ingest landed earlier with S3b. S4 complete.
-- [ ] S5 — URI grammar cut: `/api/v1` (manifest), `/stone`, `/stone/this`,
-      `/stone/{ref}` (404 + Location redirect from topology),
-      `/stone/posture` (move from /local/posture), `/garden/stones`
-      (replace /garden/observe), `/offerings[/{fqn}][/rest|/wake]`,
-      `/catalog`. SelfView splice: `/garden/stones` includes self (project
-      from source.body() + registry counts). Gate: route-manifest test also
-      forbids unadvertised emissions. Clean cut, no aliases.
+- [x] **S5 — URI grammar cut LANDED (0588c244).** Clean cut, no aliases:
+      `/api/v1` front door (the manifest), `/stone` + `/stone/this`
+      (SelfView: chirp source body re-voiced with song_blocks — AppState
+      gained `chirp_source`), `/stone/{ref}` (me by name-or-id; peers
+      answered 404 + Location + `knows_at` — the delight face; unknown =
+      plain 404), `/stone/posture` (gained candidates count),
+      `/garden/stones` (self spliced first, `"self": true`), `/catalog`,
+      `/offerings[/{fqn}][/rest|/wake]`. L9/R4.7 structural win: the
+      router is BUILT FROM the `Face` enum table — routes exist only as
+      manifest rows; tests: every face answers, legacy spellings dead,
+      front door lists all faces exactly once, redirect + splice pinned.
+      Topology gained `find(id_or_name)`. **rake is knowingly BROKEN until
+      S6** (calls /garden/observe + /stone/offerings paths).
+- [ ] S6 — rake sync: update observe rendering to the sectioned frame
+      (stone.name, presence.health, inventory.services.items) + repoint
+      rake's paths (`moss_http.rs` OFFERINGS const → `/api/v1/offerings`;
+      main.rs:373 observe → `/garden/stones`; moss_http.rs:312 test
+      fixture path). SelfView splice awareness optional.
 - [ ] S5.5 — persistence v3: record.json/plan.json sectioned schema
       (identity/state/location/mode per R3.9) + auto-migration
       (`.migrated` pattern; pre-fleet, MUST land before S8).
@@ -190,11 +201,7 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. Open S5 per epic map: the URI grammar cut (ADR-0004 §4) — `/api/v1`
-   front-door manifest, `/stone` + `/stone/this` + `/stone/{ref}` (404 +
-   Location redirect from topology), `/stone/posture` (from /local/posture),
-   `/garden/stones` (replaces /garden/observe), `/offerings[/{fqn}]`,
-   `/catalog`. SelfView splice: `/garden/stones` includes self (project
-   from source.body() + registry counts). Gate: route-manifest test also
-   forbids unadvertised emissions. Clean cut, no aliases. One slice = one
-   commit, gates green at every commit.
+2. Open S6 per epic map: rake sync — repoint the two dead paths
+   (`OFFERINGS` const and the observe call) and update the observe
+   rendering to the sectioned frame. One slice = one commit, gates green
+   at every commit.

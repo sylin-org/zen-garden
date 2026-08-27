@@ -2,7 +2,8 @@
 
 Written 2026-08-26 at a planned pause, mid-epic. Updated 2026-08-27: S3
 (songs/rich ask), S4 (candidates), S5 (URI cut), S6 (rake sync), S5.5
-(persistence v3), S7a (storage MVP) all landed; resume at S7b. Self-contained for a clean
+(persistence v3), S7a (storage MVP), S7b (the room's storage grid) all
+landed; resume at S8. Self-contained for a clean
 context. Verify everything against the tree — trust files over this doc.
 
 ## Project in one paragraph
@@ -165,12 +166,18 @@ part{n,of}} · received{discovered_at, last_seen}`.
       generalizes rev-merge to it — no interim passthrough debt. Source
       composes banks in BOTH registers (lean rev-only, songs full);
       follow_storage_changes wires storage bumps -> bank_rev -> song.
-- [ ] S7b — storage wire remainder: banks already typed + adopt/list faces
-      landed (S7a). REMAINING: `/garden/storage` face (garden-wide banks
-      from the topology cache, grid law ADR-0004 §4), eject verb (state
-      bump; liveness inherited — ADR-0005 §8) with its 1:1 `rake storage
-      eject`, cache rows verified end-to-end (peer songs -> topology -> rake
-      observe rendering shows foreign banks).
+- [x] **S7b — the room's storage grid LANDED (26724924).** `GET
+      /api/v1/garden/storage`: self's banks spliced first, then every
+      peer's banks from the one topology cache — rows name the holding
+      stone; 1:1 `rake storage garden`. Eject verb pair: POST
+      `/api/v1/storage/{fqn}/eject` + `rake storage eject <bank>` —
+      authoritative absence, sung. Eject LAWS (storage.rs, pinned by
+      tests): an operator's eject holds for the same slot for the boot's
+      life (no flip-flop with the watcher); physical absence releases the
+      hold (return = true re-plug, remounts); a different slot is a true
+      re-plug; vanish-ejected banks remount on return. End-to-end test:
+      peer song with banks -> topology merge -> /garden/storage renders
+      the foreign bank.
 - [ ] S8 — cross-compile linux-x64 (existing installer/v1 Dockerfile),
       deploy to 3 stones (~/zen-v1/, plink), upgrade binaries.
 - [ ] W6 witness (record in WITNESSES.md): plant on A visible from B ≤1
@@ -217,6 +224,12 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. Open S7b per epic map: `/garden/storage` face + eject verb (API + rake,
-   1:1) + end-to-end cache verification of foreign banks. One slice = one
-   commit, gates green at every commit.
+2. Open S8 per epic map: cross-compile linux-x64 (existing installer/v1
+   Dockerfile), deploy to 3 stones (~/zen-v1/, plink), upgrade binaries.
+   PRE-FLEET CHECKLIST: S5.5 migration landed (yes); push is current (yes);
+   one moss per host discipline on the stones (stop old moss.exe before
+   replacing — file lock). One slice = one commit, gates green at every
+   commit. Then W6 witness (record in WITNESSES.md): plant on A visible
+   from B <= 1 interval; rev-heal drill; USB drive adopt ceremony
+   garden-wide (plug -> announced, unplug -> gone by announcement or
+   expiry).

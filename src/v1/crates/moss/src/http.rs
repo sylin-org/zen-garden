@@ -217,14 +217,18 @@ async fn plant_offering(
     Ok(Json(serde_json::json!({ "data": { "offering": offering } })))
 }
 
-/// §5.3: the placed record with its plan attached.
+/// §5.3: the placed record with its plan attached. Off-grammar names
+/// refuse loudly here too — a tag-shaped read is an identity question,
+/// not a quiet miss.
 async fn show_offering(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> ApiResult {
-    match state.garden.placed(&name) {
+    let fqn = garden_glossary::fqn::canonicalize(&name)
+        .map_err(|e| CommandError::Conflict(e.to_string()))?;
+    match state.garden.placed(&fqn) {
         Some(o) => Ok(Json(serde_json::json!({ "data": { "offering": o } }))),
-        None => Err(CommandError::NotFound(name).into()),
+        None => Err(CommandError::NotFound(fqn).into()),
     }
 }
 

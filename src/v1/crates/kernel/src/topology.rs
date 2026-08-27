@@ -44,6 +44,24 @@ pub struct StoneView {
     pub chirps: u64,
 }
 
+/// A rumor about a stone (ADR-0004 §3): knowledge heard through
+/// middlemen — an overheard rich answer about a stone we have never met.
+/// A candidate is never a member: it does not render in snapshots, and
+/// chirp-borne truth always outranks it. Promoted to irrelevance by the
+/// stone's first live frame; expired quietly by [`Topology::run_expiry`]
+/// after `CANDIDATE_TTL_SECS`.
+#[derive(Debug, Clone)]
+pub struct Candidate {
+    /// What we heard: the answer's card and whatever inventory rode it.
+    pub response: garden_contract::discovery::DiscoveryResponse,
+    /// Who we heard it from (the relayer, not the stone).
+    pub heard_from: std::net::SocketAddr,
+    /// When the rumor was first heard.
+    pub first_seen: chrono::DateTime<chrono::Utc>,
+    /// When the rumor was last refreshed.
+    pub last_seen: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Default)]
 struct Peers {
     map: HashMap<String, StoneView>,
@@ -54,6 +72,7 @@ struct Peers {
 #[derive(Clone)]
 pub struct Topology {
     peers: Arc<parking_lot::Mutex<Peers>>,
+    candidates: Arc<parking_lot::Mutex<HashMap<String, Candidate>>>,
     events_tx: broadcast::Sender<TopologyEvent>,
     version_tx: watch::Sender<u64>,
     chirps_total: Arc<AtomicU64>,
@@ -71,6 +90,7 @@ impl Topology {
         let (version_tx, _) = watch::channel(0);
         Self {
             peers: Arc::new(parking_lot::Mutex::new(Peers::default())),
+            candidates: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             events_tx,
             version_tx,
             chirps_total: Arc::new(AtomicU64::new(0)),
@@ -90,6 +110,13 @@ impl Topology {
     /// Snapshot of the current garden.
     pub fn snapshot(&self) -> Vec<StoneView> {
         self.peers.lock().map.values().cloned().collect()
+    }
+
+    /// The rumor pool (ADR-0004 §3): stones heard about but never met.
+    /// Room-level resolution reads peers first, candidates second; a
+    /// candidate is a rumor until a chirp confirms it.
+    pub fn candidates(&self) -> Vec<Candidate> {
+        self.candidates.lock().values().cloned().collect()
     }
 
     pub fn chirps_total(&self) -> u64 {
@@ -164,6 +191,9 @@ impl Topology {
                 fresh.meta = frame.meta.clone();
                 fresh.inventory.merge_frame(&frame.inventory);
                 fresh.received.last_seen = msg.received_at;
+                // The stone spoke for itself: any rumor about it is
+                // redundant (ADR-0004 §3 — promotion by first live frame).
+                self.candidates.lock().remove(&frame.stone.id);
                 TopologyEvent::Seen(Box::new(StoneView {
                     body: frame,
                     last_seen: entry.last_seen,
@@ -176,10 +206,11 @@ impl Topology {
         self.publish(event);
     }
 
-    /// A discovery response is a hint, not a chirp: we know a stone exists
-    /// at an address but nothing of its offerings beyond what a rich answer
-    /// carried. Record it as `starting` so observe shows it immediately; the
-    /// stone's own next chirp overwrites this entry with the full truth.
+    /// An answer is a rumor, not a meeting (ADR-0004 §3): it lands in the
+    /// candidates pool — stamped with who we heard it from and when — and
+    /// never in the peers map. Live truth outranks: a stone we already
+    /// hear from teaches us nothing through gossip, and its own frame
+    /// retires the rumor anyway.
     async fn on_response(self: &Arc<Self>, msg: Ingested) {
         let Ok(resp) = serde_json::from_value::<garden_contract::discovery::DiscoveryResponse>(
             msg.announcement.data,
@@ -187,51 +218,51 @@ impl Topology {
             tracing::debug!(source = %msg.source, "discovery response undecodable");
             return;
         };
-        let now = chrono::Utc::now();
-        let event = {
-            let mut peers = self.peers.lock();
-            let stone_id = if resp.stone.id.is_empty() {
-                resp.stone.name.clone()
-            } else {
-                resp.stone.id.clone()
-            };
-            // A real frame (proto stamped) already told us more than any
-            // hint can; never downgrade it.
-            if peers
-                .map
-                .get(&stone_id)
-                .is_some_and(|p| p.body.meta.proto.is_some())
-            {
+        // A rumor without identity cannot be confirmed or resolved — skip.
+        if resp.stone.id.is_empty() {
+            return;
+        }
+        {
+            let peers = self.peers.lock();
+            if peers.map.contains_key(&resp.stone.id) {
                 return;
             }
-            let mut hint = ChirpFrame::answered(
-                resp.stone.name.clone(),
-                resp.stone.network.address.clone(),
-                resp.stone.moss.version.clone(),
-            );
-            hint.stone.id = stone_id.clone();
-            if let Some(inv) = resp.services {
-                hint.inventory.services = Some(inv);
+        }
+        let now = chrono::Utc::now();
+        let mut candidates = self.candidates.lock();
+        match candidates.get_mut(&resp.stone.id) {
+            Some(known) => {
+                known.response = resp;
+                known.heard_from = msg.source;
+                known.last_seen = now;
             }
-            hint.received.discovered_at = now;
-            let event = {
-                let entry = peers.map.entry(stone_id).or_insert_with(|| StoneView {
-                    body: hint.clone(),
-                    last_seen: now,
-                    chirps: 0,
-                });
-                entry.last_seen = now;
-                entry.body = hint.clone();
-                TopologyEvent::Seen(Box::new(StoneView {
-                    body: hint,
-                    last_seen: entry.last_seen,
-                    chirps: entry.chirps,
-                }))
-            };
-            peers.version += 1;
-            event
-        };
-        self.publish(event);
+            None => {
+                tracing::debug!(stone = %resp.stone.name, from = %msg.source,
+                                "candidate heard; awaiting its own frame");
+                candidates.insert(
+                    resp.stone.id.clone(),
+                    Candidate {
+                        response: resp,
+                        heard_from: msg.source,
+                        first_seen: now,
+                        last_seen: now,
+                    },
+                );
+            }
+        }
+        // No version bump: candidates are not membership. The room's map
+        // changed only in the gossip ledger.
+    }
+
+    /// Drop candidates silent past the TTL (ADR-0004 §3). Returns how many
+    /// rumors died — callers log it; tests assert it.
+    fn sweep_candidates(&self, now: chrono::DateTime<chrono::Utc>) -> usize {
+        let cutoff =
+            chrono::Duration::seconds(garden_contract::consts::CANDIDATE_TTL_SECS as i64);
+        let mut candidates = self.candidates.lock();
+        let before = candidates.len();
+        candidates.retain(|_, c| now - c.last_seen <= cutoff);
+        before - candidates.len()
     }
 
     async fn on_goodbye(self: &Arc<Self>, msg: Ingested) {
@@ -281,6 +312,11 @@ impl Topology {
                     };
                     for (stone_id, stone_name) in expired {
                         self.publish(TopologyEvent::Expired { stone_id, stone_name });
+                    }
+                    // Rumors age out silently — they were never promised.
+                    let rumors = self.sweep_candidates(now);
+                    if rumors > 0 {
+                        tracing::debug!(expired = rumors, "unconfirmed candidates aged out");
                     }
                 }
             }
@@ -432,6 +468,159 @@ mod tests {
         let inv = stored.body.inventory.services.expect("block kept");
         assert!(inv.items.is_empty(), "newer empty set defends itself");
         assert_eq!(inv.rev, Some(3));
+        token.cancel();
+    }
+
+    // --- candidates (S4, ADR-0004 §3) ------------------------------------
+
+    use garden_contract::discovery::DiscoveryResponse;
+
+    /// A rich answer from a stone we have never met.
+    fn answer(id: &str, name: &str) -> DiscoveryResponse {
+        DiscoveryResponse {
+            stone: Stone {
+                id: id.into(),
+                name: name.into(),
+                moss: Moss { version: "1.0.0".into() },
+                network: Network {
+                    address: PeerAddress {
+                        ip: IpAddr::from(Ipv4Addr::LOCALHOST),
+                        port: 7285,
+                        tls_port: None,
+                    },
+                    mac: None,
+                },
+            },
+            lantern_endpoint: None,
+            services: Some(Inventory {
+                rev: Some(7),
+                total: None,
+                items: Vec::new(),
+            }),
+        }
+    }
+
+    /// Deliver an overheard answer through the claim path.
+    async fn overhear(
+        topology: &Arc<Topology>,
+        dispatcher: &Dispatcher,
+        resp: &DiscoveryResponse,
+    ) {
+        dispatcher
+            .ingest(Ingested {
+                announcement: garden_contract::wire::Announcement::new(
+                    announcement::DISCOVERY_RESPONSE,
+                    serde_json::to_value(resp).unwrap(),
+                ),
+                source: SocketAddr::from((Ipv4Addr::LOCALHOST, 50001)),
+                received_at: chrono::Utc::now(),
+            })
+            .await;
+        // on_response does not bump the version watch (candidates are not
+        // membership) — settle by time.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = topology; // symmetry with speak()
+    }
+
+    #[tokio::test]
+    async fn overheard_answer_is_a_rumor_not_a_member() {
+        let (dispatcher, handle) = Dispatcher::new(16);
+        let topology = Arc::new(Topology::new());
+        let token = CancellationToken::new();
+        topology.claim(&dispatcher, token.clone());
+        tokio::spawn(handle.run(token.clone()));
+
+        overhear(&topology, &dispatcher, &answer("r1", "stone-rumor")).await;
+        // A rumor without identity is worthless — not even a candidate.
+        overhear(&topology, &dispatcher, &answer("", "stone-ghost")).await;
+
+        assert!(topology.snapshot().is_empty(), "a rumor is never a member");
+        let cands = topology.candidates();
+        assert_eq!(cands.len(), 1, "only the identified rumor lands");
+        assert_eq!(cands[0].response.stone.name, "stone-rumor");
+        assert_eq!(
+            cands[0].response.services.as_ref().and_then(|i| i.rev),
+            Some(7),
+            "the rich answer's inventory rides the rumor"
+        );
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn first_live_frame_promotes_and_silences_the_rumor() {
+        let (dispatcher, handle) = Dispatcher::new(16);
+        let topology = Arc::new(Topology::new());
+        let token = CancellationToken::new();
+        topology.claim(&dispatcher, token.clone());
+        tokio::spawn(handle.run(token.clone()));
+
+        overhear(&topology, &dispatcher, &answer("r1", "stone-rumor")).await;
+        speak(
+            &topology,
+            &dispatcher,
+            announcement::STONE_CHIRP,
+            frame("r1", Some(one_item(2))),
+        )
+        .await;
+
+        assert!(topology.candidates().is_empty(), "the rumor is redundant");
+        let peer = topology
+            .snapshot()
+            .into_iter()
+            .find(|v| v.body.stone.id == "r1")
+            .expect("live truth cached");
+        assert_eq!(
+            peer.body.inventory.services.and_then(|i| i.rev),
+            Some(2),
+            "the peer entry speaks the stone's own truth, not the rumor's"
+        );
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn live_truth_ignores_gossip() {
+        let (dispatcher, handle) = Dispatcher::new(16);
+        let topology = Arc::new(Topology::new());
+        let token = CancellationToken::new();
+        topology.claim(&dispatcher, token.clone());
+        tokio::spawn(handle.run(token.clone()));
+
+        speak(
+            &topology,
+            &dispatcher,
+            announcement::STONE_CHIRP,
+            frame("r1", Some(one_item(2))),
+        )
+        .await;
+        overhear(&topology, &dispatcher, &answer("r1", "stone-rumor")).await;
+
+        assert!(
+            topology.candidates().is_empty(),
+            "chirp-borne truth outranks gossip; no rumor accumulates"
+        );
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_rumors_age_out() {
+        let (dispatcher, handle) = Dispatcher::new(16);
+        let topology = Arc::new(Topology::new());
+        let token = CancellationToken::new();
+        topology.claim(&dispatcher, token.clone());
+        tokio::spawn(handle.run(token.clone()));
+
+        overhear(&topology, &dispatcher, &answer("r2", "stone-late")).await;
+        assert_eq!(topology.candidates().len(), 1);
+
+        // Within the TTL nothing dies.
+        assert_eq!(topology.sweep_candidates(chrono::Utc::now()), 0);
+        // Past it, the rumor dies quietly.
+        let past = chrono::Utc::now()
+            + chrono::Duration::seconds(
+                garden_contract::consts::CANDIDATE_TTL_SECS as i64 + 1,
+            );
+        assert_eq!(topology.sweep_candidates(past), 1);
+        assert!(topology.candidates().is_empty());
         token.cancel();
     }
 }

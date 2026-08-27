@@ -50,6 +50,14 @@ pub const HEARTBEAT_SECS: u64 = 30;
 /// Silence longer than this marks a peer offline (two missed heartbeats + grace).
 pub const OFFLINE_THRESHOLD_SECS: u64 = 90;
 
+/// How long an unconfirmed candidate survives (ADR-0004 §3): knowledge
+/// heard through middlemen — an overheard rich answer about a stone we
+/// have never met. Must outlive the room's IGMP convergence breath
+/// (L24: one querier cycle, ~60–125s) with margin; dies before a rumor
+/// can matter. The stone's own live frame promotes the truth and
+/// retires the rumor, whichever comes first.
+pub const CANDIDATE_TTL_SECS: u64 = 300;
+
 /// Announcement `type` discriminators, byte-exact with the PoC wire
 /// (transcribed from `poc/common/src/infra/communications/announcement_types.rs`
 /// — lowercase; pinned again by fixture test).

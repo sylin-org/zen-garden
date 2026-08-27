@@ -12,8 +12,8 @@ Lantern, O3 adoption, then the M-milestones.
 
 Slices 1-4 LANDED — the capture grammar (`offerings/capture.rs`), the
 two-phase pipeline (`offerings/capture_run.rs`, `310a0522`), checkpoint
-verify/unpack + sink-role declaration (`7993233a`), and REPLANT
-(`a3553e17`): Runner.select_checkpoint (local ledger + mounted sink
+verify/unpack + sink-role declaration (`7993233a`), REPLANT
+(`a3553e17`), and surfacing + scheduler (`1c4e6e0e`): Runner.select_checkpoint (local ledger + mounted sink
 banks), restore_into (fresh-target only - refuses to overwrite an
 incarnation), service.replant (place from the STORED spec, no catalog
 needed; audit chain opens Replanted{predecessor_offering_id,
@@ -44,12 +44,18 @@ classifier (NothingToPreserve/Trusted/Untrusted) for honest surfaces;
 `capture` sits outside WorkloadSpec AND plan_hash (test-pinned: policy
 edits never flip plans). DEBT D15 opened: corpus capture coverage by RC0.
 
-REMAINING: (5) capture/capture-status/replant surfaced in `explain` and
-posture (readiness classifier is ready for rendering); scheduled capture
-cadence (ADR-0005's "five daily" rotation implies a scheduler); adopt
-request carrying roles inline. THEN (6) W7 witness: kill a stone holding
-a captured offering, replant on another stone from the ferried sink
-checkpoint, connection string unchanged. Self-contained for a clean
+Slice 5 LANDED — show face carries a `capture` annex (readiness
+trusted/untrusted/nothing-to-preserve + mode + last run), posture carries
+capture counters, `rake explain` renders the will honestly (UNTRUSTED
+volumes are named as a lie waiting to happen), and the scheduler
+(`run_scheduler`, daily CADENCE_SECS) runs every placed offering's
+trusted will on cadence — pinned by test.
+
+REMAINING in this epic: (small) adopt request carrying roles inline;
+explain showing the last checkpoint age. THEN (6) W7 witness: capture an
+offering on the fleet, let the ferry land it on the seed bank, kill the
+stone (or the container), replant on another stone from the bank —
+connection string unchanged. THE DEMO. Self-contained for a clean
 context. Verify everything against the tree — trust files over this doc.
 
 ## Project in one paragraph
@@ -275,6 +281,8 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. Continue the living-will epic: slice 5 per the map above — surface
-   readiness/capture state in explain + posture, then the scheduler. One
-   slice = one commit, gates green at every commit.
+2. The living-will machinery is COMPLETE (slices 1-5). What remains is
+   the W7 WITNESS on the live fleet: capture -> ferry to the seed bank ->
+   kill -> replant elsewhere -> the demo. Small leftovers first if
+   desired: roles inline on adopt; checkpoint age in explain. One slice =
+   one commit, gates green at every commit.

@@ -155,6 +155,48 @@ candidate is a rumor until a chirp confirms it; self is rebuilt, never
 stored; and if a human can't derive a URI's purpose from its spelling, the
 grammar — not the reader — is wrong.
 
+## Amendment A1 — records are paths (2026-08-26, same day)
+
+Operator review of the first envelope implementation rejected the flat
+field zoo (`stone_id`, `stone_name`, `moss_version`, `svc_rev`… as root
+siblings): *"rootspace holds sections; sections hold facts."* The frame —
+and every record of this system — became sectioned, because the rest of
+the house already speaks paths (FQNs, URIs, the facts tree):
+
+- `ChirpFrame` replaces `ChirpBody`: `stone{id, name, moss.version,
+  network{address, mac}} · presence{health, status} · services{rev, total,
+  items[]} · meta{proto, boot_id, seq} · received{discovered_at,
+  last_seen}`. The svc anchors become the `services` inventory block; each
+  garden domain gets one such block (banks arrive via ADR-0005 §8 with
+  `banks{rev,total,items[]}`) — the revision vector is a shape, not a
+  field list.
+- `ServiceEntry`: `name` speaks the FQN verbatim; `offering` renamed
+  `stem` (ADR-0003's lexical term); `status`+`role` grouped under
+  `state{}`.
+- Discovery request/response join the grammar (request carries the rich
+  flag; response's `stone:` block mirrors the frame's).
+- **Reception facts separated**: `received` is the listener's record —
+  senders emit placeholders, listeners overwrite. The cache can finally
+  hold announced truth apart from what we saw.
+- **v0 wire compatibility RETIRED.** The flat-shape fixture pins existed
+  for a fleet-migration story that died when v1 took its own room (ADR
+  cited: own group/port; PoC fleet frozen at `poc-final`; zero contact by
+  construction). Fixtures now pin the canonical shape.
+- **B1 clarification:** the charter bet (one canonical shape; envelope-vs-
+  bare unrepresentable) is honored literally — the topology cache stores
+  contract types directly, and HTTP projections render the same frame.
+  The earlier "flat at the boundary" comment was a local idiom, not the
+  law.
+- **Nesting rule:** every level must be a nameable noun (`stone.network.
+  address` ✓; `stone.data.info` ✗). Flat remains correct for same-kind
+  maps (`ports: {role: n}`) and records too small to have sections.
+- Construction ergonomics: `Default` derives on optional-heavy sections;
+  call sites use struct-update — the cure for builder noise is Rust's,
+  not shallower models.
+- Costs accepted: persistence schema changes ride the S5.5 migration slice
+  (directory auto-migration pattern, pre-fleet); pure-internal computation
+  types adopt opportunistically.
+
 ## Alternatives considered
 
 - **Rich everything (services in every heartbeat)** — the exact posture

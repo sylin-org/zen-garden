@@ -165,6 +165,9 @@ config twin. (PoC scar: ~50 env knobs, and `STONE_NAME` env silently losing to
 cached hostname.)
 
 **R3.8** Every crate and module opens with `//!` stating its responsibility in
+
+**R3.9** Records are paths: rootspace holds sections; sections hold facts; every nesting level is a nameable noun. One canonical shape per record - wire, HTTP, cache, and disk render it identically (B1). Flat remains correct for same-kind maps (ports: {role: n}) and records too small to have sections. Shape authority lives in the contract crate; consumers render, never re-invent.
+
 one to three sentences. If three sentences won't fit, it is more than one
 module (R3.4).
 

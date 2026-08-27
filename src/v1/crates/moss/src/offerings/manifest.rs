@@ -32,6 +32,10 @@ pub struct Manifest {
     /// Declared install form (OFFERINGS.md §5.1): ask/secret/default.
     #[serde(default)]
     pub inputs: BTreeMap<String, InputField>,
+    /// The living will (ADR-0005 §1): how this offering asks to be
+    /// remembered. Lifecycle intent — never hashed into plans (§7).
+    #[serde(default)]
+    pub capture: Option<super::capture::CapturePolicy>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -312,6 +316,23 @@ impl Catalog {
     /// a host-port declaration must name an EXISTING container port role —
     /// there is nothing to expose otherwise.
     fn validate(m: &Manifest) -> Result<(), String> {
+        // The living will is a managed offering's will: capture without
+        // placed work has nothing to preserve and nothing to hook into.
+        if let Some(policy) = &m.capture {
+            if m.managed.is_none() {
+                return Err(format!(
+                    "manifest '{}': capture requires a managed section — adoption and borrow have their own laws",
+                    m.name
+                ));
+            }
+            let volumes: Vec<String> = Self::managed_volume_names(m);
+            let roles: Vec<String> = m
+                .managed
+                .as_ref()
+                .map(|managed| managed.ports.keys().cloned().collect())
+                .unwrap_or_default();
+            policy.validate(&m.name, &volumes, &roles)?;
+        }
         let Some(managed) = &m.managed else {
             return Ok(());
         };
@@ -324,6 +345,14 @@ impl Catalog {
             }
         }
         Ok(())
+    }
+
+    /// Declared volume names for template validation (ADR-0005 §1).
+    fn managed_volume_names(m: &Manifest) -> Vec<String> {
+        m.managed
+            .as_ref()
+            .map(|managed| managed.volumes.iter().map(|v| v.name.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// A catalog seeded from documents — test convenience over `load_dir`.

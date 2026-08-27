@@ -546,4 +546,44 @@ managed:
 
         let _ = std::fs::remove_dir_all(dir.root.clone());
     }
+
+#[tokio::test]
+async fn capture_policy_never_flips_the_plan_hash() {
+    // ADR-0005 §7: capture rides the manifest but sits outside plan_hash —
+    // backup policy is lifecycle intent, not desired execution.
+    use crate::offerings::facts::{Factsheet};
+    use crate::offerings::manifest::Catalog;
+    use crate::offerings::ports::Pool;
+
+    let without = r#"
+kind: software
+name: witnessdb
+category: data
+description: fixture
+managed:
+  image: witnessdb:7
+"#;
+    let with = r#"
+kind: software
+name: witnessdb
+category: data
+description: fixture
+managed:
+  image: witnessdb:7
+capture:
+  mode: export
+  export: { exec: ["dump", "{workspace}/db.dump"] }
+"#;
+    let factsheet = Factsheet::empty();
+    let snapshot = factsheet.snapshot();
+    let inputs = std::collections::BTreeMap::new();
+    let dir = crate::offerings::directory::OfferingsRoot::new(std::path::PathBuf::from(
+        ".zen-garden-probe",
+    ))
+    .dir_for("witnessdb");
+
+    let a = compile(&Catalog::parse("witnessdb", without).unwrap(), &snapshot, &inputs, &dir, &[], Pool::default()).unwrap();
+    let b = compile(&Catalog::parse("witnessdb", with).unwrap(), &snapshot, &inputs, &dir, &[], Pool::default()).unwrap();
+    assert_eq!(a.meta.plan_hash, b.meta.plan_hash, "policy edits must not flip plans");
+}
 }

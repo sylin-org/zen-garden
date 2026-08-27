@@ -4,6 +4,7 @@
 //! pools); the runtime seam is the pluggable substrate beneath *managed*
 //! work only. Modes know the registry; runtimes know containers.
 
+pub mod capture;
 pub mod compile;
 pub mod converge;
 pub mod directory;

@@ -14,9 +14,9 @@
 | D12 | Orchestration roles/elections (primary/replica/joining) deferred | Post-O2 | ORCH-0001/0006 in PoC; wire `role` field already carried |
 | D13 | Borrow credentials vaulting (Koi vault keys) deferred | With borrow feature (O3) | PoC stored `borrowed:{name}:credentials` keys; v1 has no vault yet |
 | D14 | ~~`start()` cannot hold ledged host ports on containers created with dynamic bindings~~ | — | **Closed 2026-08-27** — W5 witnessed the whole chain live on stone-crystalline-dune: arbiter drew home 7300 (tier flexible), the allocation rode the stored spec, Docker bound it explicitly, and rest/wake re-emitted the SAME ledgered home (WITNESSES.md W5). Ledger wins over sockets (L26) |
+| D15 | Catalog corpus lacks capture declarations: every stateful entry should state its living will (capture grammar landed, corpus not yet covered) | RC0 | ADR-0005's own review duty. Until declared, such offerings surface as capture-untrusted (never silently tarred) | 
 
 ## Closed
-
 | id | was | closed |
 |----|-----|--------|
 | D1 | v1 defaulted to the PoC-shared discovery room, gated behind `--isolate` | 2026-08-25 — charter amendment: v1 owns its topology (`7284`/`239.255.42.199`, block 7284–7299). The PoC proved the mechanisms work; v1 chooses its room deliberately (L20). No shared-room contact by construction |

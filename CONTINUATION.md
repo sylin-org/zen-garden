@@ -5,8 +5,28 @@ Written 2026-08-26 at a planned pause, mid-epic. Updated 2026-08-27: S3
 (persistence v3), S7a (storage MVP), S7b (the room's storage grid), S8
 (fleet deploy) + **W6 witnessed** all landed. THE EPIC IS COMPLETE — see
 WITNESSES.md W6 for the live proofs and the three findings it harvested.
-What remains is OUTSIDE this epic: W7 (ADR-0005 capture/replant),
-Lantern, O3 adoption, then the M-milestones. Self-contained for a clean
+What remains is OUTSIDE that epic: W7 (ADR-0005 capture/replant),
+Lantern, O3 adoption, then the M-milestones.
+
+## NEW EPIC OPEN (2026-08-27): the living will (ADR-0005, W7)
+
+Slice 1 LANDED — the capture grammar (`offerings/capture.rs`):
+stateless/lock-and-copy/export modes parsed from manifests; loud load
+errors (lock-and-copy needs BOTH quiesce+resume, export needs its hook,
+stateless takes no hooks, capture needs a managed section); closed
+template vocabulary ({fqn},{stem},{instance},{workspace},{volume.<name>},
+{port.<role>}) checked against declared volumes/roles at load; readiness
+classifier (NothingToPreserve/Trusted/Untrusted) for honest surfaces;
+`capture` sits outside WorkloadSpec AND plan_hash (test-pinned: policy
+edits never flip plans). DEBT D15 opened: corpus capture coverage by RC0.
+
+NEXT SLICES (ADR-0005 §§2-6): (2) two-phase pipeline — workspace
+imprint (quiesce->raw copy->resume, Phase A bounded) then pack/ferry/
+commit (Phase B unbounded); (3) checkpoint commits (SHA-256 manifest,
+atomic rename, rotation N=5); (4) sinks: bank role SINK registration +
+ferry to registered sinks; (5) replant: signature+checkpoint ->
+directory -> place() -> Replanted audit event; (6) W7 witness: kill the
+stone, watch the garden regrow it, connection string unchanged. Self-contained for a clean
 context. Verify everything against the tree — trust files over this doc.
 
 ## Project in one paragraph
@@ -232,7 +252,8 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. The epic is DONE. Pick the next arc per charter sequencing: M1 release
-   pipeline (main branch + tag->build->sign->publish), or W7's living-will
-   work (ADR-0005 capture/checkpoint/replant — the next epic candidate).
-   Re-run the deploy procedure for 192.168.1.82 when that stone returns.
+2. Continue the living-will epic: slice 2 per the map above — the
+   two-phase capture pipeline (`offerings/capture.rs` grows the runner;
+   workspaces at `~/.zen-garden/workspace/{fqn}/{run}/`; DISK-speed lock
+   budget, network speed never locks). One slice = one commit, gates
+   green at every commit.

@@ -38,22 +38,26 @@ fn sample_frame() -> ChirpFrame {
             health: garden_glossary::health::THRIVING.into(),
             status: garden_glossary::presence::ONLINE.into(),
         },
-        services: Inventory {
-            rev: Some(7),
-            total: None,
-            items: vec![ServiceEntry {
-                offering_id: "0198e0c7-0000-7000-8000-0000000000aa".into(),
-                name: "memcached::default".into(),
-                stem: "memcached".into(),
-                category: "cache".into(),
-                state: ServiceState { status: "running".into(), role: None },
-                ports: Default::default(),
-            }],
+        inventory: garden_contract::chirp::InventoryMap {
+            services: Some(Inventory {
+                rev: Some(7),
+                total: None,
+                items: vec![ServiceEntry {
+                    offering_id: "0198e0c7-0000-7000-8000-0000000000aa".into(),
+                    name: "memcached::default".into(),
+                    stem: "memcached".into(),
+                    category: "cache".into(),
+                    state: ServiceState { status: "running".into(), role: None },
+                    ports: Default::default(),
+                }],
+            }),
+            ..Default::default()
         },
         meta: garden_contract::chirp::FrameMeta {
             proto: Some(consts::PROTO_V1.into()),
             boot_id: Some("0198e0c7-0000-7000-8000-0000000000bb".into()),
             seq: Some(42),
+            part: None,
         },
         received: Reception {
             discovered_at: chrono::Utc::now(),
@@ -63,20 +67,21 @@ fn sample_frame() -> ChirpFrame {
 }
 
 /// Section spelling on the wire: rootspace holds sections, sections hold
-/// facts, and every nesting level is a nameable noun.
+/// facts, and every nesting level is a nameable noun. The inventory map's
+/// known domain appears nested; unknown domains would join it as siblings.
 #[test]
 fn canonical_sections_are_present_on_the_wire() {
     let v = serde_json::to_value(sample_frame()).unwrap();
-    for section in ["stone", "presence", "services", "meta", "received"] {
+    for section in ["stone", "presence", "inventory", "meta", "received"] {
         assert!(v.get(section).is_some(), "canonical section `{section}` missing");
     }
     // Paths, not underscores: identity nests; the frame speaks FQNs.
     assert_eq!(v["stone"]["id"], "0198e0c7-0000-7000-8000-000000000001");
     assert_eq!(v["stone"]["network"]["address"]["port"], 7285);
     assert_eq!(v["stone"]["moss"]["version"], "1.0.0-alpha");
-    assert_eq!(v["services"]["items"][0]["name"], "memcached::default");
-    assert_eq!(v["services"]["items"][0]["stem"], "memcached");
-    assert_eq!(v["services"]["rev"], 7);
+    assert_eq!(v["inventory"]["services"]["items"][0]["name"], "memcached::default");
+    assert_eq!(v["inventory"]["services"]["items"][0]["stem"], "memcached");
+    assert_eq!(v["inventory"]["services"]["rev"], 7);
 }
 
 /// Optional-noise discipline: None options must not emit; the frame stays
@@ -86,8 +91,8 @@ fn absent_options_do_not_emit() {
     let v = serde_json::to_value(sample_frame()).unwrap();
     assert!(v.get("tls_port").is_none());
     assert!(v["stone"]["network"].get("mac").is_none());
-    assert!(v["services"].get("total").is_none(), "undeclared total = no truncation");
-    assert!(v["services"]["items"][0]["state"].get("role").is_none());
+    assert!(v["inventory"]["services"].get("total").is_none(), "undeclared total = no truncation");
+    assert!(v["inventory"]["services"]["items"][0]["state"].get("role").is_none());
 }
 
 /// Envelope discipline: same discriminator, msg_id for dedup, sectioned
@@ -129,8 +134,8 @@ fn answered_frames_hint_health_and_carry_no_inventory() {
         "1.0.0",
     );
     assert_eq!(f.presence.health, "starting");
-    assert!(f.services.items.is_empty());
-    assert!(f.services.rev.is_none());
+    assert!(f.inventory.services.as_ref().is_none_or(|s| s.items.is_empty()));
+    assert!(f.inventory.services.as_ref().and_then(|s| s.rev).is_none());
 }
 
 /// R0.5 pin: discriminators are LOWERCASE on the wire — transcribed from
@@ -196,3 +201,4 @@ fn multicast_group_consts_match_historical_dotted_forms() {
         consts::MULTICAST_GROUP_POC_STR
     );
 }
+

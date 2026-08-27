@@ -107,9 +107,8 @@ pub struct ServiceState {
 }
 
 /// A domain inventory block: capped items, declared totals, one revision.
-/// One shape per garden domain — services today, banks with the storage
-/// slice (ADR-0005 §8) — so new domains extend the frame without touching
-/// rootspace.
+/// The unit of the inventory map (A2.1) and of framer quantization (A2.3):
+/// a block rides WHOLE or waits — partial item lists are forbidden.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Inventory<T> {
     /// Monotonic per-boot generation of this domain's set. The merge
@@ -123,6 +122,74 @@ pub struct Inventory<T> {
     /// The (possibly capped) items themselves.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<T>,
+}
+
+/// The inventory MAP (ADR-0004 A2.1): rootspace of the frame is closed;
+/// garden domains enter here as blocks. Known domains are compile-time
+/// fields; unknown domains from newer stones round-trip losslessly through
+/// the passthrough map (older stones relay without destroying).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct InventoryMap {
+    /// Offerings this stone hosts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub services: Option<Inventory<ServiceEntry>>,
+    /// Storage banks this stone holds (ADR-0005 §8; lands with the storage
+    /// slice — claimed slot, typed then).
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "banks")]
+    pub _banks_slot: Option<serde_json::Value>,
+    /// Unknown domains from newer speakers, preserved verbatim.
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl InventoryMap {
+    /// Build from (domain, block) pairs — the framer's and composer's
+    /// natural input shape. A pair keyed `"services"` populates the typed
+    /// slot (decoded from JSON); anything else lands in the passthrough.
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (String, serde_json::Value)>) -> Self {
+        let mut map = Self::default();
+        for (key, value) in pairs {
+            map.insert(key, value);
+        }
+        map
+    }
+
+    /// Insert one domain block: `"services"` decodes into the typed slot;
+    /// every other key is preserved verbatim in the passthrough map.
+    pub fn insert(&mut self, key: String, value: serde_json::Value) {
+        if key == "services" {
+            let decoded = serde_json::from_value::<Inventory<ServiceEntry>>(value.clone());
+            if let Ok(inv) = decoded {
+                self.services = Some(inv);
+                return;
+            }
+            // Not decodable as a service block (foreign or future shape):
+            // preserve verbatim rather than destroy.
+        }
+        self.extra.insert(key, value);
+    }
+
+    /// Merge `newer` over `self` per-domain by revision (A2.1): absent key
+    /// keeps what we have; present block's rev decides. Unknown-domain
+    /// blocks merge by their embedded `rev` when comparable.
+    pub fn merge_frame(&mut self, newer: &InventoryMap) {
+        if let Some(n) = &newer.services {
+            let stale = self
+                .services
+                .as_ref()
+                .and_then(|m| m.rev)
+                .is_some_and(|old| n.rev.is_some_and(|new| new <= old));
+            if !stale {
+                self.services = Some(n.clone());
+            }
+        }
+        // Unknown domains: last-writer-wins on whole JSON blocks. Their
+        // internal rev comparison is the owning slice's problem (A2.3);
+        // relays must not guess semantics they cannot parse.
+        for (k, v) in &newer.extra {
+            self.extra.insert(k.clone(), v.clone());
+        }
+    }
 }
 
 /// Wire cap on inventory items per frame (ADR-0004 §1). Keeps the whole
@@ -141,6 +208,18 @@ pub struct FrameMeta {
     /// Monotonic chirp counter for this boot — gap detection, ordering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<u64>,
+    /// Quantization position when one announcement spans several frames
+    /// (ADR-0004 A2.3). Purely informational: consumers never wait or
+    /// reassemble — revs make every frame independently mergeable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<Part>,
+}
+
+/// Position of this frame within a multi-frame announcement.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Part {
+    pub n: u32,
+    pub of: u32,
 }
 
 /// Reception facts: when WE first/last heard from this stone. Senders emit
@@ -163,9 +242,9 @@ pub struct ChirpFrame {
     pub stone: Stone,
     /// WHAT it claims right now.
     pub presence: Presence,
-    /// Its offering inventory (rev + capped items + declared total).
+    /// Its inventory domains (services today; banks next; unknown preserved).
     #[serde(default)]
-    pub services: Inventory<ServiceEntry>,
+    pub inventory: InventoryMap,
     /// Frame housekeeping.
     #[serde(default)]
     pub meta: FrameMeta,
@@ -191,7 +270,7 @@ impl ChirpFrame {
                 health: health::STARTING.into(),
                 status: presence::ONLINE.into(),
             },
-            services: Inventory::default(),
+            inventory: InventoryMap::default(),
             meta: FrameMeta::default(),
             received: Reception { discovered_at: now, last_seen: now },
         }

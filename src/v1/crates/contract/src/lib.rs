@@ -10,4 +10,5 @@
 pub mod chirp;
 pub mod consts;
 pub mod discovery;
+pub mod song;
 pub mod wire;

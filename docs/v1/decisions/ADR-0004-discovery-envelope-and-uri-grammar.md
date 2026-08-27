@@ -197,6 +197,51 @@ the house already speaks paths (FQNs, URIs, the facts tree):
   (directory auto-migration pattern, pre-fleet); pure-internal computation
   types adopt opportunistically.
 
+## Amendment A2 — the inventory map, songs, and the framer (2026-08-26)
+
+Three refinements from operator review of the sectioned frame, recorded as
+law before S2 composes against the shape:
+
+**A2.1 · The inventory is a MAP of domain blocks.** Rootspace is closed at
+`{stone, presence, inventory, meta, received}` forever. `inventory` holds
+`Map<domain, InventoryBlock>` — `services{rev,total,items}` today, `banks`
+tomorrow (ADR-0005 §8), future domains without frame edits. Rules: absent
+key = nothing to say about that domain (sparse by nature); present block =
+rev speaks (merge rule unchanged: absent = keep, present = compare); a
+domain that emptied still defends its rev (block present, items empty); a
+stone with nothing to say omits `inventory` wholesale; lean frames carry
+rev-only blocks. Typing: known domains are compile-time fields
+(`services: Option<…>`, `banks: Option<…>`); **unknown domains round-trip
+losslessly** through a flatten passthrough map — older stones relay newer
+stones' domains without destroying them (B1: shape authority in contract;
+deliberate schema evolution, not accidental fields).
+
+**A2.2 · The full-voice frame is a SONG.** "Rich chirp" was a mode
+description, not a name. Two registers, one bird: **chirp** (lean presence,
+anchors only, every heartbeat — discriminator `stone_chirp` unchanged) and
+**song** (`stone_song`, new): presence + one or more inventory domains,
+spoken on change and in rich replies. Boots and USB plugs sing; heartbeats
+chirp. Same envelope, same sections, same merge law.
+
+**A2.3 · The framer quantizes by domain against the datagram budget.** UDP
+ceil is 4 KB; the framer targets a conservative ~3.5 KB (JSON measured, not
+guessed). Composition: collect DIRTY domains only (per-domain change flags);
+serialize; greedy-pack blocks whole — **a block rides entire or waits**
+(partial item lists inside a block are forbidden); overflow opens the next
+frame. Every frame re-anchors presence/meta so each is independently
+mergeable; `meta.part: {n, of}` is carried purely informationally —
+consumers never wait or reassemble, revs make order irrelevant
+(fragmentation without coordination). Priority order when space competes:
+**services > banks > future domains** (reserved rule: new domains append
+after, never reorder); within equals, bigger-first. Backpressure valve: a
+domain that cannot fit even a dedicated song (pathological future) trips
+the signed-beacon escape hatch — the 24-item cap remains the LAST resort
+with `total` declared, and is expected to be nearly unreachable because
+chirps carry inventory *metadata*, never file listings (deep reads are
+HTTP's job). Framer behavior is pinned by tests using exactly the two
+operator examples: "these fit → one song"; "no way → N songs, part
+1/N…N/N".
+
 ## Alternatives considered
 
 - **Rich everything (services in every heartbeat)** — the exact posture

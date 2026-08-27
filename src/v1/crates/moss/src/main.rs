@@ -238,17 +238,28 @@ async fn main() {
         discovery.offline_threshold_secs,
     ));
 
+    // Storage banks (ADR-0005 §8): boot scan recognizes adopted devices
+    // (the manifest rides the drive); the watcher keeps reality fresh.
+    let storage = Arc::new(offerings::storage::Storage::new());
+    storage.reconcile(&offerings::storage::scan_volumes());
+    tokio::spawn(offerings::storage::watch_mounts(
+        Arc::clone(&storage),
+        token.clone(),
+    ));
+
     // The announcer speaks through the same bound port number: a boot SONG
     // (full voice) plus the rich ask, then lean heartbeat chirps and
     // change-songs after (ADR-0004 A2.2). The source is DYNAMIC (S2): it
-    // composes the offerings inventory and bumps its rev on
-    // OfferingChanged (follow_offering_changes below).
+    // composes the offerings AND banks inventories, bumping their revs on
+    // OfferingChanged / storage news (follow_* below).
     let chirp_source = source::DynamicChirpSource::new(
         voice.clone(),
         boot_id.to_string(),
         Arc::clone(&offerings),
+        Arc::clone(&storage),
     );
     source::follow_offering_changes(&chirp_source, &offerings, token.clone());
+    source::follow_storage_changes(&chirp_source, &storage, token.clone());
     let announce_socket = ingress.socket();
     tokio::spawn(announce::run(
         Arc::clone(&announce_socket),
@@ -361,6 +372,7 @@ async fn main() {
         dispatcher: dispatcher.clone(),
         ingest_counters,
         garden,
+        storage: Arc::clone(&storage),
         chirp_source: chirp_source.clone() as Arc<dyn garden_kernel::announce::ChirpSource>,
         stone_name: identity.stone_name.clone(),
         boot_id,

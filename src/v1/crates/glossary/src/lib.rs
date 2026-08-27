@@ -67,6 +67,23 @@ pub mod offering {
     }
 }
 
+/// Bank vocabulary — storage, after *seed bank*: what outlives the season
+/// (ADR-0005). The metaphor teaches: a bank holds the garden's future in
+/// trust, and a plugged drive is just news.
+pub mod bank {
+    /// Present and answering at its mount point.
+    pub const MOUNTED: &str = "mounted";
+    /// Absent from its stone — ejected cleanly or yanked; the garden
+    /// resolves the difference through liveness inheritance (§8.3).
+    pub const EJECTED: &str = "ejected";
+
+    /// Roles a bank may hold. A **sink** receives checkpoints (ADR-0005
+    /// §4: backup semantics, never in the converge path).
+    pub mod role {
+        pub const SINK: &str = "sink";
+    }
+}
+
 /// The naming well: poetical stone names (`stone-{adjective}-{noun}`),
 /// transcribed from the PoC's dictionaries.
 pub mod fqn;

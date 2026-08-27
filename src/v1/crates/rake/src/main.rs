@@ -107,6 +107,25 @@ enum Command {
     Wake { name: String },
     /// Uproot — remove the workload and forget the offering entirely.
     Uproot { name: String },
+    /// Storage banks: list this stone's, or adopt a removable volume.
+    Storage {
+        #[command(subcommand)]
+        cmd: Option<StorageCmd>,
+    },
+}
+
+/// Storage verbs — each has its 1:1 API face (`/api/v1/storage*`).
+#[derive(Subcommand)]
+enum StorageCmd {
+    /// The adopt ceremony: write the garden manifest onto a removable
+    /// volume and announce it to the room (ADR-0005 §8).
+    Adopt {
+        /// The volume's mount point (what `rake storage` lists as device).
+        device: String,
+        /// The bank's logical name — FQN or bare stem (canonicalized).
+        #[arg(long)]
+        name: String,
+    },
 }
 
 /// Where a candidate endpoint came from — provenance drives recovery
@@ -462,7 +481,97 @@ async fn run(cli: &Cli) -> Result<(), String> {
         }
         Command::Offer { .. } | Command::Explain { .. } | Command::Rest { .. }
         | Command::Wake { .. } | Command::Uproot { .. } => cmd_stone_op(cli).await,
+        Command::Storage { cmd } => cmd_storage(cli, cmd.as_ref()).await,
     }
+}
+
+/// The storage faces. Every verb here is the 1:1 client of one API face:
+/// list -> GET /api/v1/storage; adopt -> POST /api/v1/storage/adopt.
+async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> {
+    match cmd {
+        None => {
+            let (_, v) = cli.stone_op("GET", paths::STORAGE.to_string(), None).await?;
+            if cli.json {
+                return emit_pretty(&v);
+            }
+            render_storage(&envelope_plain(&v)?)
+        }
+        Some(StorageCmd::Adopt { device, name }) => {
+            let body = serde_json::json!({ "device": device, "name": name });
+            let (_, v) = cli
+                .stone_op("POST", paths::STORAGE_ADOPT.to_string(), Some(&body))
+                .await?;
+            if cli.json {
+                return emit_pretty(&v);
+            }
+            let bank = envelope(&v, "bank")?;
+            println!(
+                "{} adopted on {} — {}",
+                display_name(bank["fqn"].as_str().unwrap_or("(unnamed)")),
+                bank["mount_point"].as_str().unwrap_or("?"),
+                bank["state"].as_str().unwrap_or("?"),
+            );
+            if let (Some(cap), Some(used)) = (bank["capacity_bytes"].as_u64(), bank["used_bytes"].as_u64())
+            {
+                println!("  capacity  {} ({} used)", human_bytes(cap), human_bytes(used));
+            }
+            println!("  the garden hears the news within one song");
+            Ok(())
+        }
+    }
+}
+
+/// Bytes for human eyes.
+fn human_bytes(n: u64) -> String {
+    let units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = n as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < units.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} {}", units[0])
+    } else {
+        format!("{value:.1} {}", units[unit])
+    }
+}
+
+/// The banks table: what this stone holds, and what it could adopt.
+fn render_storage(v: &serde_json::Value) -> Result<(), String> {
+    let banks = v["banks"].as_array();
+    match banks {
+        Some(b) if !b.is_empty() => {
+            println!("{:<26} {:<10} {:<22} CAPACITY", "BANK", "STATE", "DEVICE");
+            for bank in b {
+                let cap = bank["capacity_bytes"]
+                    .as_u64()
+                    .map(human_bytes)
+                    .unwrap_or_else(|| "-".into());
+                println!(
+                    "{:<26} {:<10} {:<22} {}",
+                    display_name(bank["fqn"].as_str().unwrap_or("?")),
+                    bank["state"].as_str().unwrap_or("?"),
+                    bank["mount_point"].as_str().unwrap_or("?"),
+                    cap,
+                );
+            }
+        }
+        _ => println!("No banks adopted yet on this stone."),
+    }
+    if let Some(adoptable) = v["adoptable"].as_array() {
+        for vol in adoptable {
+            println!(
+                "ready to adopt: {} ({}) — rake storage adopt <device> --name <bank>",
+                vol["device"].as_str().unwrap_or("?"),
+                vol["capacity_bytes"]
+                    .as_u64()
+                    .map(human_bytes)
+                    .unwrap_or_else(|| "unknown size".into()),
+            );
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
@@ -534,6 +643,11 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
 /// Request paths with their commands (R2.2): built where used, kept nowhere.
 mod paths {
     pub const OFFERINGS: &str = "/api/v1/offerings";
+
+    /// Local storage (L22): banks and adoptable volumes.
+    pub const STORAGE: &str = "/api/v1/storage";
+    /// The adopt ceremony's face.
+    pub const STORAGE_ADOPT: &str = "/api/v1/storage/adopt";
 
     pub fn record(name: &str) -> String {
         format!("{OFFERINGS}/{name}")

@@ -24,6 +24,8 @@ use uuid::Uuid;
 pub struct AppState {
     /// The offering application service (domain + worlds coordinated).
     pub garden: Arc<OfferingService>,
+    /// This stone's banks (ADR-0005 §8) — the storage MVP's state.
+    pub storage: Arc<crate::offerings::storage::Storage>,
     pub topology: Arc<garden_kernel::topology::Topology>,
     pub dispatcher: Dispatcher,
     pub ingest_counters: Arc<IngestCounters>,
@@ -57,6 +59,10 @@ enum Face {
     StonePosture,
     GardenStones,
     Catalog,
+    /// Local banks + adoptable volumes (L22: stone data).
+    StorageList,
+    /// The adopt ceremony: claim a removable volume for the garden.
+    StorageAdopt,
     OfferingPlant,
     OfferingShow,
     OfferingRest,
@@ -65,7 +71,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 13] = [
+    const ALL: [Face; 15] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -74,6 +80,8 @@ impl Face {
         Face::StonePosture,
         Face::GardenStones,
         Face::Catalog,
+        Face::StorageList,
+        Face::StorageAdopt,
         Face::OfferingPlant,
         Face::OfferingShow,
         Face::OfferingRest,
@@ -91,7 +99,9 @@ impl Face {
             | Face::StonePosture
             | Face::GardenStones
             | Face::Catalog
+            | Face::StorageList
             | Face::OfferingShow => "GET",
+            Face::StorageAdopt => "POST",
             Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
             Face::OfferingUproot => "DELETE",
         }
@@ -107,6 +117,8 @@ impl Face {
             Face::StonePosture => "/api/v1/stone/posture",
             Face::GardenStones => "/api/v1/garden/stones",
             Face::Catalog => "/api/v1/catalog",
+            Face::StorageList => "/api/v1/storage",
+            Face::StorageAdopt => "/api/v1/storage/adopt",
             Face::OfferingPlant | Face::OfferingShow | Face::OfferingUproot => {
                 "/api/v1/offerings/{fqn}"
             }
@@ -134,6 +146,12 @@ impl Face {
                  among the peers, every row a canonical frame."
             }
             Face::Catalog => "The catalog this stone can place from (derived).",
+            Face::StorageList => {
+                "This stone's banks, plus the removable volumes ready for adoption."
+            }
+            Face::StorageAdopt => {
+                "The adopt ceremony: {device: mount point, name: bank FQN} - writes the manifest onto the drive and sings the news (ADR-0005 sec 8)."
+            }
             Face::OfferingPlant => {
                 "Plant a managed offering {image?, ports:{name:container}, runtime?, \
                  inputs?}; catalog name wins when one exists."
@@ -158,6 +176,8 @@ impl Face {
             Face::StonePosture => get(posture),
             Face::GardenStones => get(garden_stones),
             Face::Catalog => get(catalog),
+            Face::StorageList => get(storage_list),
+            Face::StorageAdopt => post(storage_adopt),
             Face::OfferingPlant => post(plant_offering),
             Face::OfferingShow => get(show_offering),
             Face::OfferingRest => post(rest_offering),
@@ -302,6 +322,71 @@ async fn catalog(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> 
         })
         .collect();
     Json(serde_json::json!({ "data": { "catalog": entries } }))
+}
+
+/// Local storage (L22): this stone's banks and the volumes ready for
+/// adoption.
+async fn storage_list(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let volumes = crate::offerings::storage::scan_volumes();
+    let adoptable: Vec<serde_json::Value> =
+        crate::offerings::storage::Storage::adoptable(&volumes)
+            .into_iter()
+            .map(|v| {
+                serde_json::json!({
+                    "device": v.mount_point.display().to_string(),
+                    "capacity_bytes": v.capacity_bytes,
+                })
+            })
+            .collect();
+    Json(serde_json::json!({
+        "data": {
+            "banks": state.storage.banks(),
+            "adoptable": adoptable,
+        }
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct AdoptRequest {
+    /// The volume's mount point (a scan's `device` value).
+    device: String,
+    /// The bank's logical name - FQN or bare stem (canonicalized).
+    name: String,
+}
+
+/// The adopt ceremony's API face (1:1 with `rake storage adopt`): write
+/// the manifest onto the drive, remember the bank, sing the news.
+async fn storage_adopt(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AdoptRequest>,
+) -> ApiResult {
+    use crate::offerings::storage::AdoptError;
+    let wanted = std::path::PathBuf::from(&req.device);
+    let volumes = crate::offerings::storage::scan_volumes();
+    let vol = volumes
+        .iter()
+        .find(|v| dirs_equal(&v.mount_point, &wanted))
+        .ok_or(CommandError::Conflict(format!(
+            "no removable volume answers at '{}' - plug it in, or name its mount point",
+            req.device
+        )))?;
+    let stone_id = state.chirp_source.body().stone.id;
+    let bank = state.storage.adopt(vol, &req.name, &stone_id).map_err(|e| match e {
+        AdoptError::AlreadyAdopted(_) => CommandError::Conflict(e.to_string()),
+        AdoptError::BadName(_) => CommandError::Conflict(e.to_string()),
+        AdoptError::Io(_) => CommandError::Runtime(crate::offerings::runtime::RuntimeError::Failed(
+            e.to_string(),
+        )),
+    })?;
+    Ok(Json(serde_json::json!({ "data": { "bank": bank } })))
+}
+
+/// Mount-point comparison tolerant of trailing separators (`E:` == `E:`+slash).
+fn dirs_equal(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let clean = |p: &std::path::Path| -> std::path::PathBuf {
+        p.components().collect::<std::path::PathBuf>()
+    };
+    clean(a) == clean(b)
 }
 
 async fn front_door() -> Json<serde_json::Value> {
@@ -475,9 +560,11 @@ mod tests {
             },
             "boot-test".into(),
             registry,
+            Arc::new(crate::offerings::storage::Storage::new()),
         );
         Arc::new(AppState {
             garden: service,
+            storage: Arc::new(crate::offerings::storage::Storage::new()),
             topology: Arc::new(garden_kernel::topology::Topology::new()),
             dispatcher: Dispatcher::new(16).0,
             ingest_counters: Arc::new(IngestCounters::default()),
@@ -676,6 +763,33 @@ mod tests {
         assert_eq!(stones[0]["stone"]["name"], "stone-test");
         assert_eq!(stones[1]["stone"]["name"], "stone-peer");
         assert_eq!(stones[1]["chirps"], 1, "one accepted frame through the real door");
+    }
+
+    /// The adopt face routes and validates: a device no scan reports is a
+    /// loud Conflict naming the problem (R3.3), never a silent empty.
+    #[tokio::test]
+    async fn adopt_refuses_unknown_devices_loudly() {
+        let app = router(test_state());
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/v1/storage/adopt")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                r#"{"device": "Q:", "name": "seed-vault"}"#,
+            ))
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        let body = axum::body::to_bytes(res.into_body(), 100_000).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("no removable volume"),
+            "the refusal teaches: {}",
+            v["error"]["message"]
+        );
     }
 
     fn sample_peer() -> StoneView {

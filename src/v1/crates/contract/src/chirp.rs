@@ -106,6 +106,30 @@ pub struct ServiceState {
     pub role: Option<String>,
 }
 
+/// One storage bank in presence (ADR-0005 §8): logical FQN identity plus
+/// the physical device, its state, and roles. Capacity/used are TELEMETRY —
+/// they never trigger frames, they ride along (§8.2's anti-spam law); both
+/// are optional because "unknown" is honest.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BankEntry {
+    /// Logical bank identity, FQN per ADR-0003 (`bank::default` communal,
+    /// explicit instances private).
+    pub fqn: String,
+    /// Physical device identity (GUIDv7, per-device).
+    pub device_id: String,
+    /// mounted | ejected (glossary::bank).
+    pub state: String,
+    /// Declared roles (sink today; the set grows with ADR-0005's tiers).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<String>,
+    /// Total bytes, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity_bytes: Option<u64>,
+    /// Used bytes, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_bytes: Option<u64>,
+}
+
 /// A domain inventory block: capped items, declared totals, one revision.
 /// The unit of the inventory map (A2.1) and of framer quantization (A2.3):
 /// a block rides WHOLE or waits — partial item lists are forbidden.
@@ -133,10 +157,9 @@ pub struct InventoryMap {
     /// Offerings this stone hosts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub services: Option<Inventory<ServiceEntry>>,
-    /// Storage banks this stone holds (ADR-0005 §8; lands with the storage
-    /// slice — claimed slot, typed then).
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "banks")]
-    pub _banks_slot: Option<serde_json::Value>,
+    /// Storage banks this stone holds (ADR-0005 §8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banks: Option<Inventory<BankEntry>>,
     /// Unknown domains from newer speakers, preserved verbatim.
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -154,18 +177,23 @@ impl InventoryMap {
         map
     }
 
-    /// Insert one domain block: the services key decodes into the typed
-    /// slot; every other key is preserved verbatim in the passthrough map.
+    /// Insert one domain block: known keys decode into their typed slots;
+    /// every other key is preserved verbatim in the passthrough map.
     pub fn insert(&mut self, key: String, value: serde_json::Value) {
-        if key == DOMAIN_SERVICES {
-            let decoded = serde_json::from_value::<Inventory<ServiceEntry>>(value.clone());
-            if let Ok(inv) = decoded {
-                self.services = Some(inv);
-                return;
-            }
-            // Not decodable as a service block (foreign or future shape):
-            // preserve verbatim rather than destroy.
+        if key == DOMAIN_SERVICES
+            && let Ok(inv) = serde_json::from_value::<Inventory<ServiceEntry>>(value.clone())
+        {
+            self.services = Some(inv);
+            return;
         }
+        if key == DOMAIN_BANKS
+            && let Ok(inv) = serde_json::from_value::<Inventory<BankEntry>>(value.clone())
+        {
+            self.banks = Some(inv);
+            return;
+        }
+        // Not decodable as a known block (foreign or future shape):
+        // preserve verbatim rather than destroy.
         self.extra.insert(key, value);
     }
 
@@ -173,6 +201,8 @@ impl InventoryMap {
     /// keeps what we have; present block's rev decides. Unknown-domain
     /// blocks merge by their embedded `rev` when comparable.
     pub fn merge_frame(&mut self, newer: &InventoryMap) {
+        // Typed domains merge by per-block revision; absent key keeps what
+        // we have; a present block's rev speaks.
         if let Some(n) = &newer.services {
             let stale = self
                 .services
@@ -181,6 +211,16 @@ impl InventoryMap {
                 .is_some_and(|old| n.rev.is_some_and(|new| new <= old));
             if !stale {
                 self.services = Some(n.clone());
+            }
+        }
+        if let Some(n) = &newer.banks {
+            let stale = self
+                .banks
+                .as_ref()
+                .and_then(|m| m.rev)
+                .is_some_and(|old| n.rev.is_some_and(|new| new <= old));
+            if !stale {
+                self.banks = Some(n.clone());
             }
         }
         // Unknown domains: last-writer-wins on whole JSON blocks. Their
@@ -195,6 +235,10 @@ impl InventoryMap {
 /// The services domain's inventory-map key (A2.1). Wire literal: changing
 /// it is a contract change and must fail the fixtures.
 pub const DOMAIN_SERVICES: &str = "services";
+
+/// The banks domain's inventory-map key (ADR-0005 §8). Wire literal, same
+/// law as [`DOMAIN_SERVICES`].
+pub const DOMAIN_BANKS: &str = "banks";
 
 /// Wire cap on inventory items per frame (ADR-0004 §1). Keeps the whole
 /// envelope safely inside the <4 KB budget with signature headroom.

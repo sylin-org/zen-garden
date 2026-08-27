@@ -202,3 +202,47 @@ fn multicast_group_consts_match_historical_dotted_forms() {
     );
 }
 
+#[test]
+fn banks_merge_by_revision_like_services() {
+    use garden_contract::chirp::{BankEntry, Inventory, InventoryMap};
+
+    let bank = |state: &str| BankEntry {
+        fqn: "seed-vault::default".into(),
+        device_id: "dev-1".into(),
+        state: state.into(),
+        roles: vec![],
+        capacity_bytes: None,
+        used_bytes: None,
+    };
+    let block = |rev: u64, state: &str| Inventory {
+        rev: Some(rev),
+        total: None,
+        items: vec![bank(state)],
+    };
+
+    let mut cache = InventoryMap {
+        banks: Some(block(2, "mounted")),
+        ..Default::default()
+    };
+    let stale = InventoryMap {
+        banks: Some(block(1, "ejected")),
+        ..Default::default()
+    };
+    cache.merge_frame(&stale);
+    assert_eq!(
+        cache.banks.as_ref().unwrap().items[0].state,
+        "mounted",
+        "a stale rev never beats a fresh one"
+    );
+
+    let fresh = InventoryMap {
+        banks: Some(block(3, "ejected")),
+        ..Default::default()
+    };
+    cache.merge_frame(&fresh);
+    assert_eq!(
+        cache.banks.as_ref().unwrap().items[0].state,
+        "ejected",
+        "the newer rev speaks (ADR-0005 sec 8.3)"
+    );
+}

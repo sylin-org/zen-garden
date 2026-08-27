@@ -18,3 +18,4 @@ pub mod record;
 pub mod registry;
 pub mod runtime;
 pub mod service;
+pub mod storage;

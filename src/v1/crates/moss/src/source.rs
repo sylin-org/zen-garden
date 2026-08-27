@@ -1,19 +1,20 @@
 //! The daemon's voice: what this stone says when it chirps or sings.
 //!
-//! [`DynamicChirpSource`] speaks the registry's truth in TWO registers
-//! (ADR-0004 A2.1/A2.2): `body()` is the LEAN heartbeat — anchors plus a
-//! rev-only services block, because presence must not amortize inventory;
-//! `song_blocks()` is the full voice — the services inventory the framer
-//! quantizes into songs, spoken on boot and on `OfferingChanged` (the
-//! announcer's version watch fires; L18 — the machinery existed since W1;
-//! this is the composer it waited for).
+//! [`DynamicChirpSource`] speaks the registry's AND the storage's truth in
+//! TWO registers (ADR-0004 A2.1/A2.2; ADR-0005 §8): `body()` is the LEAN
+//! heartbeat — anchors plus rev-only inventory blocks, because presence
+//! must not amortize inventory; `song_blocks()` is the full voice — the
+//! domain inventories the framer quantizes into songs, spoken on boot and
+//! on change (the announcer's version watch fires; L18 — the machinery
+//! existed since W1; this is the composer it waited for).
 
 use garden_contract::chirp::{
-    ChirpFrame, Inventory, InventoryMap, Moss, Network, PeerAddress, Presence, Reception,
-    ServiceEntry, Stone, INVENTORY_CAP,
+    BankEntry, ChirpFrame, Inventory, InventoryMap, Moss, Network, PeerAddress, Presence,
+    Reception, ServiceEntry, Stone, INVENTORY_CAP,
 };
 use garden_kernel::announce::ChirpSource;
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Best-effort LAN address for the chirp: first eligible non-loopback IPv4,
@@ -47,7 +48,11 @@ pub struct DynamicChirpSource {
     voice: Voice,
     boot_id: String,
     registry: Arc<crate::offerings::registry::Registry>,
-    rev: std::sync::atomic::AtomicU64,
+    rev: AtomicU64,
+    /// The bank revision (ADR-0005 §8.1): rides beside svc_rev, bumped on
+    /// storage news — mount/eject/rename/visibility, never measurements.
+    bank_rev: AtomicU64,
+    storage: Arc<crate::offerings::storage::Storage>,
     version_tx: tokio::sync::watch::Sender<u64>,
 }
 
@@ -58,6 +63,7 @@ impl DynamicChirpSource {
         voice: Voice,
         boot_id: String,
         registry: Arc<crate::offerings::registry::Registry>,
+        storage: Arc<crate::offerings::storage::Storage>,
     ) -> Arc<Self> {
         let initial = (registry.snapshot().len() as u64).max(1);
         let (version_tx, _) = tokio::sync::watch::channel(0);
@@ -65,9 +71,19 @@ impl DynamicChirpSource {
             voice,
             boot_id,
             registry,
-            rev: std::sync::atomic::AtomicU64::new(initial),
+            rev: AtomicU64::new(initial),
+            bank_rev: AtomicU64::new(1),
+            storage,
             version_tx,
         })
+    }
+
+    /// Storage news arrived: the bank_rev speaks (ADR-0005 §8.1) and the
+    /// announcer's debounce turns it into a song. NB: send_modify under
+    /// one lock — never borrow inside send_replace (the S2 idiom).
+    pub fn bump_bank_rev(&self) {
+        self.bank_rev.fetch_add(1, Ordering::Relaxed);
+        self.version_tx.send_modify(|v| *v = v.wrapping_add(1));
     }
 
     /// The services inventory block, composed fresh from the aggregate.
@@ -93,6 +109,42 @@ impl DynamicChirpSource {
             items: Vec::new(),
         }
     }
+
+    /// The banks' lean register: rev-only, same law (ADR-0005 §8.1).
+    fn lean_banks(&self) -> Inventory<BankEntry> {
+        Inventory {
+            rev: Some(self.bank_rev.load(Ordering::Relaxed)),
+            total: None,
+            items: Vec::new(),
+        }
+    }
+}
+
+impl DynamicChirpSource {
+    /// The banks inventory, composed fresh from storage (ADR-0005 §8.5:
+    /// {fqn, device_id, state, roles[], capacity_bytes, used_bytes} —
+    /// telemetry rides, it never leads).
+    fn banks_block(&self) -> Inventory<BankEntry> {
+        let items: Vec<BankEntry> = self
+            .storage
+            .banks()
+            .into_iter()
+            .map(|b| BankEntry {
+                fqn: b.fqn,
+                device_id: b.device_id,
+                state: b.state,
+                roles: b.roles,
+                capacity_bytes: b.capacity_bytes,
+                used_bytes: b.used_bytes,
+            })
+            .collect();
+        Inventory {
+            rev: Some(self.bank_rev.load(Ordering::Relaxed)),
+            total: None,
+            items,
+        }
+    }
+
 }
 
 impl ChirpSource for DynamicChirpSource {
@@ -118,6 +170,7 @@ impl ChirpSource for DynamicChirpSource {
             },
             inventory: InventoryMap {
                 services: Some(self.lean_services()),
+                banks: Some(self.lean_banks()),
                 ..Default::default()
             },
             meta: garden_contract::chirp::FrameMeta {
@@ -128,28 +181,60 @@ impl ChirpSource for DynamicChirpSource {
         }
     }
 
-    /// The full voice: the services block, whole (A2.3 — a block rides
-    /// entire or waits). The 24-item alphabetical cap is the LAST resort;
-    /// truncation is declared by `total`, never silent.
+    /// The full voice: the services and banks blocks, whole (A2.3 — a
+    /// block rides entire or waits). The 24-item alphabetical cap is the
+    /// LAST resort; truncation is declared by `total`, never silent.
     fn song_blocks(&self) -> Vec<(String, serde_json::Value)> {
-        let mut block = self.services_block();
-        if block.items.len() > INVENTORY_CAP {
-            block.items.sort_by(|a, b| a.name.cmp(&b.name));
-            block.total = Some(block.items.len() as u32);
-            block.items.truncate(INVENTORY_CAP);
+        let mut blocks: Vec<(String, serde_json::Value)> = Vec::new();
+        let mut services = self.services_block();
+        if services.items.len() > INVENTORY_CAP {
+            services.items.sort_by(|a, b| a.name.cmp(&b.name));
+            services.total = Some(services.items.len() as u32);
+            services.items.truncate(INVENTORY_CAP);
         }
-        match serde_json::to_value(block) {
-            Ok(v) => vec![(garden_contract::chirp::DOMAIN_SERVICES.into(), v)],
-            Err(e) => {
-                tracing::warn!(error = %e, "services block encode failed; singing silence");
-                Vec::new()
-            }
+        match serde_json::to_value(&services) {
+            Ok(v) => blocks.push((garden_contract::chirp::DOMAIN_SERVICES.into(), v)),
+            Err(e) => tracing::warn!(error = %e, "services block encode failed; singing silence"),
         }
+        let mut banks = self.banks_block();
+        if banks.items.len() > INVENTORY_CAP {
+            banks.items.sort_by(|a, b| a.fqn.cmp(&b.fqn));
+            banks.total = Some(banks.items.len() as u32);
+            banks.items.truncate(INVENTORY_CAP);
+        }
+        match serde_json::to_value(&banks) {
+            Ok(v) => blocks.push((garden_contract::chirp::DOMAIN_BANKS.into(), v)),
+            Err(e) => tracing::warn!(error = %e, "banks block encode failed; singing silence"),
+        }
+        blocks
     }
 
     fn version(&self) -> tokio::sync::watch::Receiver<u64> {
         self.version_tx.subscribe()
     }
+}
+
+/// Listen to storage mutations for the life of the stone: every bump is
+/// bank news (ADR-0005 §8.1) — rev up, version watch fired, song follows.
+/// Call once at startup.
+pub fn follow_storage_changes(
+    source: &Arc<DynamicChirpSource>,
+    storage: &Arc<crate::offerings::storage::Storage>,
+    token: tokio_util::sync::CancellationToken,
+) {
+    let source = Arc::clone(source);
+    let mut signal = storage.subscribe();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => return,
+                changed = signal.changed() => match changed {
+                    Ok(()) => source.bump_bank_rev(),
+                    Err(_) => return,
+                },
+            }
+        }
+    });
 }
 
 /// Listen to the registry for the life of the stone: every OfferingChanged
@@ -206,6 +291,15 @@ mod tests {
         }
     }
 
+    fn source_with(registry: Arc<crate::offerings::registry::Registry>) -> Arc<DynamicChirpSource> {
+        DynamicChirpSource::new(
+            voice(),
+            "boot-1".into(),
+            registry,
+            Arc::new(crate::offerings::storage::Storage::new()),
+        )
+    }
+
     fn planted(name: &str) -> Offering {
         let now = chrono::Utc::now();
         Offering {
@@ -243,7 +337,7 @@ mod tests {
     #[test]
     fn body_is_lean_and_songs_carry_the_set() {
         let registry = registry_with(vec![planted("redis::default")]);
-        let source = DynamicChirpSource::new(voice(), "boot-1".into(), Arc::clone(&registry));
+        let source = source_with(Arc::clone(&registry));
 
         // The heartbeat: anchors plus a rev-only block (A2.1).
         let frame = source.body();
@@ -253,12 +347,16 @@ mod tests {
         assert_eq!(lean.rev, Some(1), "boot snapshot = generation 1");
         assert!(lean.items.is_empty(), "heartbeats speak revs, not items");
 
-        // The full voice: the same rev, the actual set (A2.2).
+        // The full voice: the same rev, the actual set (A2.2). Both domains
+        // sing — services and banks (ADR-0005 §8).
         let blocks = source.song_blocks();
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].0, garden_contract::chirp::DOMAIN_SERVICES);
-        let full: Inventory<ServiceEntry> = serde_json::from_value(blocks[0].1.clone())
-            .expect("services block decodes");
+        assert_eq!(blocks.len(), 2, "services and banks ride the song");
+        let services_block = blocks
+            .iter()
+            .find(|(d, _)| d == garden_contract::chirp::DOMAIN_SERVICES)
+            .expect("services block present");
+        let full: Inventory<ServiceEntry> =
+            serde_json::from_value(services_block.1.clone()).expect("services block decodes");
         assert_eq!(full.items.len(), 1);
         assert_eq!(full.items[0].name, "redis::default");
         assert_eq!(full.items[0].stem, "redis");
@@ -274,7 +372,7 @@ mod tests {
         let items: Vec<Offering> =
             (0..30).map(|i| planted(&format!("svc{:02}::default", i))).collect();
         let registry = registry_with(items);
-        let source = DynamicChirpSource::new(voice(), "boot-1".into(), Arc::clone(&registry));
+        let source = source_with(Arc::clone(&registry));
 
         let full: Inventory<ServiceEntry> =
             serde_json::from_value(source.song_blocks()[0].1.clone()).expect("decodes");
@@ -292,7 +390,7 @@ mod tests {
     #[tokio::test]
     async fn offering_change_bumps_rev_and_version() {
         let registry = registry_with(vec![]);
-        let source = DynamicChirpSource::new(voice(), "boot-1".into(), Arc::clone(&registry));
+        let source = source_with(Arc::clone(&registry));
         follow_offering_changes(
             &Arc::clone(&source),
             &Arc::clone(&registry),
@@ -321,12 +419,74 @@ mod tests {
         );
     }
 
+    /// ADR-0005 §8: a plugged bank is news. Adopt bumps the storage watch;
+    /// follow_storage_changes raises the bank_rev; the song carries the
+    /// banks block with the bank's entries. Lean bodies stay rev-only.
+    #[tokio::test]
+    async fn storage_news_bumps_bank_rev_and_sings_the_banks() {
+        let registry = registry_with(vec![]);
+        let storage = Arc::new(crate::offerings::storage::Storage::new());
+        let source = DynamicChirpSource::new(
+            voice(),
+            "boot-1".into(),
+            Arc::clone(&registry),
+            Arc::clone(&storage),
+        );
+        follow_storage_changes(
+            &source,
+            &storage,
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        let mut version = source.version();
+        let before = *version.borrow_and_update();
+
+        storage
+            .adopt(
+                &crate::offerings::storage::VolumeFact {
+                    mount_point: std::path::PathBuf::from("E:\\"),
+                    device_id: None,
+                    fqn: None,
+                    capacity_bytes: 1000,
+                    available_bytes: 500,
+                },
+                "seed-vault",
+                "sid-1",
+            )
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), version.changed())
+            .await
+            .expect("storage news must fire the version watch")
+            .expect("watch alive");
+        assert!(*version.borrow() > before);
+
+        let banks_domain = garden_contract::chirp::DOMAIN_BANKS;
+        let banks_block = source
+            .song_blocks()
+            .into_iter()
+            .find(|(domain, _)| domain == banks_domain)
+            .expect("banks ride the song");
+        let inv: Inventory<BankEntry> =
+            serde_json::from_value(banks_block.1).expect("banks block decodes");
+        assert_eq!(inv.items.len(), 1);
+        assert_eq!(inv.items[0].fqn, "seed-vault::default");
+        assert_eq!(inv.items[0].state, garden_glossary::bank::MOUNTED);
+        assert_eq!(inv.items[0].capacity_bytes, Some(1000));
+        assert!(inv.rev >= Some(2), "the bank_rev spoke");
+
+        // The lean register speaks the rev, not the items.
+        let lean = source.body().inventory.banks.expect("lean banks block");
+        assert!(lean.items.is_empty());
+        assert!(lean.rev >= Some(2));
+    }
+
     /// Uproot also bumps: the SET changed even though a stone may now host
     /// nothing — a block with empty items and a fresh rev defends that truth.
     #[tokio::test]
     async fn removal_bumps_rev_and_empties_items() {
         let registry = registry_with(vec![planted("redis::default")]);
-        let source = DynamicChirpSource::new(voice(), "boot-1".into(), Arc::clone(&registry));
+        let source = source_with(Arc::clone(&registry));
         let id = registry.snapshot()[0].offering_id.clone();
         follow_offering_changes(
             &Arc::clone(&source),

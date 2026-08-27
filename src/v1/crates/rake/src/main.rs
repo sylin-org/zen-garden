@@ -512,7 +512,9 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
             if cli.json {
                 emit_pretty(&v)
             } else {
-                println!("{name} uprooted");
+                // Echo what was ACTUALLY uprooted, moniker-displayed.
+                let canonical = v["data"]["name"].as_str().unwrap_or(name);
+                println!("{} uprooted", display_name(canonical));
                 Ok(())
             }
         }
@@ -634,9 +636,15 @@ fn named_pairs(map: &serde_json::Value, sep: &str) -> String {
 
 // --- human renderings for stone ops -----------------------------------------
 
+/// Surfaces suppress `::default` (infrastructure noise); foreign instances
+/// stay in full (`ollama::adopted` is honest on the wire AND to humans).
+fn display_name(fqn: &str) -> String {
+    garden_glossary::fqn::moniker(fqn)
+}
+
 /// The moment after planting: what grew, where, listening on what.
 fn render_offered(target: &Candidate, offering: serde_json::Value) -> Result<(), String> {
-    let name = offering["name"].as_str().unwrap_or("(unnamed)");
+    let name = display_name(offering["name"].as_str().unwrap_or("(unnamed)"));
     let status = offering["status"].as_str().unwrap_or("?");
     println!("{name} planted — {status}");
     println!("  on      {} ({})", target.label(), target.origin_label());
@@ -673,7 +681,7 @@ fn describe_ports(container: &serde_json::Value, host: &serde_json::Value) -> St
 
 /// §5.3's placed record rendered by hand — the delightful reference.
 fn render_explain(target: &Candidate, offering: serde_json::Value) -> Result<(), String> {
-    let name = offering["name"].as_str().unwrap_or("(unnamed)");
+    let name = display_name(offering["name"].as_str().unwrap_or("(unnamed)"));
     let status = offering["status"].as_str().unwrap_or("?");
     let mode = offering["mode"].as_str().unwrap_or("?");
 
@@ -739,7 +747,7 @@ fn render_explain(target: &Candidate, offering: serde_json::Value) -> Result<(),
 
 /// rest/wake speak in the past tense with the resulting status as truth.
 fn render_status(verb_past: &str, data: &serde_json::Value) -> Result<(), String> {
-    let name = data["name"].as_str().unwrap_or("(unnamed)");
+    let name = display_name(data["name"].as_str().unwrap_or("(unnamed)"));
     let status = data["status"].as_str().unwrap_or("?");
     println!("{name} {verb_past} — {status}");
     Ok(())

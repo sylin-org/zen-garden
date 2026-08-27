@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 garden-contract.workspace = true
+garden-glossary.workspace = true
 garden-kernel.workspace = true
 clap.workspace = true
 serde.workspace = true

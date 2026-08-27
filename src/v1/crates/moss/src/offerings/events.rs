@@ -38,9 +38,14 @@ pub struct EventLog {
 }
 
 impl EventLog {
+    /// The offering's audit ledger lives INSIDE its directory (ADR-0001),
+    /// nested `{stem}/{instance}` under the namespace law — the same
+    /// traversal every other artifact uses.
     pub fn for_dir(dir: &Path, offering_name: &str) -> Self {
         Self {
-            file: dir.join(super::directory::slug(offering_name)).join("events.jsonl"),
+            file: dir
+                .join(super::directory::OfferingDir::new(dir, offering_name).root)
+                .join("events.jsonl"),
         }
     }
 

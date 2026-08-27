@@ -28,7 +28,8 @@ garden is *for*. Three modes (inherited verbatim from PoC):
 | **borrowed** | A service living elsewhere entirely, registered here for discovery | Nobody; a pointer with a health probe |
 
 Identity: GUIDv7 `offering_id` (survives renames) + FQN name
-(`mongodb`, `ollama::adopted`). Statuses: `installing → running ↔ stopped`,
+(`mongodb::default`, `ollama::adopted`; grammar per [ADR-0003](decisions/ADR-0003-offering-fqn-namespace.md)).
+Statuses: `installing  running  stopped`,
 plus `cordoned`, `maintenance`, `degraded`. Health vocabulary per glossary.
 Wire strings lowercase, byte-compatible with poc constants.
 
@@ -185,14 +186,16 @@ Format laws:
   or deeper). Overlay entries OVERRIDE base entries by NAME; missing
   layers are routine, malformed manifests are skipped with warnings like
   any other. One stone's private adjustments must not fork the corpus.
-- **Named installations (2026-08-26):** `{stem}:{instance}` plants a second
-  copy of a catalog offering under its own name (`redis` and `redis:prod`
-  coexist on one stone). Instances inherit the stem's manifest and
-  category, carry their own identity/directory/decisions, draw INDEPENDENT
-  addresses from the ledger (the `offering` field keeps the stem as
-  provenance), and appear separately in chirps. Suffixes accept letters,
-  digits, '-' and '_'; anything else refuses loudly. FQN names (`::`)
-  remain adoption namespace territory.
+- **FQN namespace & the moniker surface (2026-08-26, ADR-0003):** every
+  offering's machine name is an FQN `{stem}::{instance}`; `:` appears ONLY
+  as `::` and nowhere inside segments (image tags live in single-colon
+  space and can never masquerade as names). `default` is RESERVED - each
+  stem implicitly owns it, so `offer redis` plants `redis::default`, whose
+  directory is `{stem}/default/`. Users see and speak MONIKERS (`rake`
+  lists "redis", "uproot redis" works); machines store, hash, and chirp
+  FQNs exclusively. Second installations are explicit instances
+  (`redis::prod`): same manifest lineage, independent identity,
+  directory `redis/prod/`, own ledgered address.
 
 ### 5.2 Compile
 

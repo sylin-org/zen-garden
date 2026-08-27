@@ -2,22 +2,29 @@
 //! **an offering is constituted by its directory.** Record, plan, configs,
 //! volumes — one self-contained unit; copy it and you hold the whole thing.
 //!
-//! Layout (canonical, under `{root}` = `~/.zen-garden/offerings`):
-//!   {root}/{slug}/record.json      — active placed record
-//!   {root}/{slug}/candidate.json   — adopted candidate (not yet confirmed)
-//!   {root}/{slug}/plan.json        — compiled PlacementPlan (when managed)
-//!   {root}/{slug}/configs/         — materialized config files
-//!   {root}/{slug}/volumes/         — data volumes (nested by design)
+//! Layout (canonical, under `{root}` = `~/.zen-garden/offerings`) mirrors
+//! the FQN namespace (glossary::fqn): `{stem}/{instance}/` per offering —
+//! identity parsing is path traversal, not string surgery:
+//!   {root}/{stem}/{instance}/record.json      — active placed record
+//!   {root}/{stem}/{instance}/candidate.json   — adopted candidate (unconfirmed)
+//!   {root}/{stem}/{instance}/plan.json        — compiled PlacementPlan
+//!   {root}/{stem}/{instance}/configs/         — materialized config files
+//!   {root}/{stem}/{instance}/volumes/         — data volumes (nested by design)
 //!
-//! The legacy consolidated `offerings.json` migrates automatically on
-//! first load; its file is renamed `.migrated` after conversion.
+//! Migrations handled transparently on load (each renames its source so it
+//! runs once):
+//!   · legacy consolidated `offerings.json` → directories
+//!   · pre-namespace flat directories `{slug}/` → `{stem}/default/`
+//!     (their records gain the `::default` spelling)
 
 use super::registry::{Snapshot, SnapshotStore};
+use garden_glossary::fqn;
 use std::path::{Path, PathBuf};
 
-/// Filesystem-safe slugging of an offering FQN (`ollama::adopted` →
-/// `ollama_adopted`). The offering_id inside the record stays the true
-/// key; the slug names the directory.
+/// Filesystem-safe slugging of arbitrary strings (`ollama::prod` →
+/// `ollama_prod`). Container names still ride this rule (PoC compat);
+/// OFFERING DIRECTORIES no longer do — they nest by FQN segments instead,
+/// which are grammar-guaranteed fs-safe.
 pub fn slug(fqn_or_name: &str) -> String {
     fqn_or_name
         .chars()
@@ -35,8 +42,13 @@ pub struct OfferingDir {
 }
 
 impl OfferingDir {
+    /// `{base}/{stem}/{instance}`. Names failing the grammar fall back to
+    /// slugged flat storage with a loud warning — they cannot come from a
+    /// validated surface, but on-disk tolerance beats panic during recovery.
     pub fn new(base: &Path, name: &str) -> Self {
-        Self { root: base.join(slug(name)) }
+        Self {
+            root: leaf_dir(base, name),
+        }
     }
 
     pub fn record_json(&self) -> PathBuf {
@@ -57,6 +69,19 @@ impl OfferingDir {
 
     pub fn volumes(&self) -> PathBuf {
         self.root.join("volumes")
+    }
+}
+
+/// The offering's leaf directory: `{base}/{stem}/{instance}`, resolved
+/// through the FQN grammar. Invalid names degrade to one slugged flat
+/// directory (visible in logs, never a panic).
+fn leaf_dir(base: &Path, name: &str) -> PathBuf {
+    match fqn::parse(name) {
+        Ok((stem, instance)) => base.join(stem).join(instance),
+        Err(e) => {
+            tracing::warn!(name = %name, error = %e, "offering name off-grammar; using slug fallback");
+            base.join(slug(name))
+        }
     }
 }
 
@@ -85,11 +110,11 @@ impl OfferingsRoot {
 
 /// SnapshotStore backed by the directory tree.
 ///
-/// - `load`: reads every record/candidate under the root; auto-migrates a
-///   legacy consolidated file once (renames it `.migrated`).
+/// - `load`: reads every record/candidate under the root; auto-migrates
+///   legacy layouts once (consolidated file; flat pre-namespace dirs).
 /// - `save`: writes each active into `record.json`, each candidate into
-///   `candidate.json`; directories that no longer appear lose their JSON
-///   but KEEP their volumes — data outlives registration by law.
+///   `candidate.json`; leaf directories that no longer appear lose their
+///   JSON but KEEP their volumes — data outlives registration by law.
 pub struct DirectoryStore {
     base: PathBuf,
 }
@@ -129,12 +154,164 @@ impl DirectoryStore {
             }
         }
     }
+
+    /// Read ONE offering-leaf directory's registration files into the
+    /// snapshot vectors (record.json → active, candidate.json → candidates).
+    /// Shared by canonical traversal and same-pass migrated trees.
+    fn push_leaf(
+        dir: &Path,
+        active: &mut Vec<super::model::Offering>,
+        candidates: &mut Vec<super::model::Offering>,
+    ) {
+        let record = dir.join("record.json");
+        let candidate = dir.join("candidate.json");
+        if let Ok(bytes) = std::fs::read(&record) {
+            match serde_json::from_slice::<super::model::Offering>(&bytes) {
+                Ok(o) => active.push(o),
+                Err(e) => tracing::warn!(
+                    path = %record.display(), error = %e, "record unreadable; skipping"
+                ),
+            }
+        } else if let Ok(bytes) = std::fs::read(&candidate) {
+            match serde_json::from_slice::<super::model::Offering>(&bytes) {
+                Ok(o) => candidates.push(o),
+                Err(e) => tracing::warn!(
+                    path = %candidate.display(), error = %e, "candidate unreadable; skipping"
+                ),
+            }
+        }
+    }
+
+    /// Read every instance-leaf under one STEM dir.
+    fn read_instances(
+        stem_dir: &Path,
+        active: &mut Vec<super::model::Offering>,
+        candidates: &mut Vec<super::model::Offering>,
+    ) {
+        let instances = match std::fs::read_dir(stem_dir) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for inst in instances.flatten() {
+            let dir = inst.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            Self::push_leaf(&dir, active, candidates);
+        }
+    }
+
+    /// One-time move of a PRE-NAMESPACE flat directory into
+    /// `{stem}/{default}`, rewriting the record's name to the FQN spelling.
+    /// Returns the relocated path (the original parent stem dir).
+    fn migrate_flat(flat: &Path) -> Option<PathBuf> {
+        let base = flat.parent()?;
+        let old_stem = flat.file_name()?.to_str()?.to_string();
+
+        // Identity comes from the record when readable — it is machine truth.
+        let record_path = flat.join("record.json");
+        let candidate_path = flat.join("candidate.json");
+        let (canonical_fqn, json_bytes, is_candidate) = if let Ok(bytes) =
+            std::fs::read(&record_path)
+        {
+            match serde_json::from_slice::<super::model::Offering>(&bytes) {
+                Ok(o) => (
+                    fqn::canonicalize(&o.name)
+                        .unwrap_or_else(|_| fqn::join(&old_stem, fqn::DEFAULT_INSTANCE)),
+                    bytes,
+                    false,
+                ),
+                Err(_) => (
+                    fqn::join(&old_stem, fqn::DEFAULT_INSTANCE),
+                    bytes,
+                    false,
+                ),
+            }
+        } else if let Ok(bytes) = std::fs::read(&candidate_path) {
+            (
+                fqn::join(&old_stem, fqn::DEFAULT_INSTANCE),
+                bytes,
+                true,
+            )
+        } else {
+            // No registration files: nothing to represent, leave untouched.
+            return None;
+        };
+
+        let (stem, instance) = fqn::parse(&canonical_fqn)
+            .unwrap_or_else(|_| (old_stem.clone(), fqn::DEFAULT_INSTANCE.to_string()));
+        let target = base.join(&stem).join(&instance);
+        if target.exists() {
+            tracing::warn!(
+                from = %flat.display(),
+                to = %target.display(),
+                "flat migration skipped - target exists"
+            );
+            return None;
+        }
+        // The target NESTS INSIDE the source (`mongodb/` → `mongodb/default/`),
+        // so the directory cannot be renamed as a whole — no engine allows
+        // moving a dir into its own subtree. Relocate children one level
+        // deeper instead: every artifact rides along, the shell vanishes.
+        if let Err(e) = std::fs::create_dir_all(&target) {
+            tracing::warn!(error = %e, "migration target create failed");
+            return None;
+        }
+        // Materialize the child list FIRST: we are about to delete entries
+        // of this very directory, and a lazily-streamed ReadDir over a
+        // directory being mutated yields skips/replays on Windows — the
+        // record could silently miss its own move.
+        let children: Vec<std::fs::DirEntry> = match std::fs::read_dir(flat) {
+            Ok(r) => r.flatten().collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "flat migration read failed");
+                let _ = std::fs::remove_dir_all(&target);
+                return None;
+            }
+        };
+        let mut moved_any = false;
+        for child in children {
+            let from = child.path();
+            if from == target {
+                // The landing zone lives INSIDE the source; it is not cargo.
+                continue;
+            }
+            if std::fs::rename(&from, target.join(child.file_name())).is_ok() {
+                moved_any = true;
+            } else {
+                tracing::warn!(path = %from.display(), "flat migration left an entry behind");
+            }
+        }
+        if !moved_any {
+            let _ = std::fs::remove_dir_all(&target);
+            return None;
+        }
+        // Remove ONLY the emptied shell — never recurse, because the target
+        // sits inside it (`mongodb/` became mongodb{default/…}). A shell with
+        // stragglers stays; save()'s prune and next passes settle it.
+        let _ = std::fs::remove_dir(flat);
+        // Rewrite the stored name to canonical FQN (records carry monikers).
+        if let Ok(mut o) = serde_json::from_slice::<super::model::Offering>(&json_bytes) {
+            o.name = canonical_fqn.clone();
+            o.offering = fqn::stem_of(&canonical_fqn);
+            let dir = OfferingDir { root: target.clone() };
+            Self::persist_one(&dir, &o, is_candidate);
+        }
+        tracing::info!(
+            from = %flat.display(),
+            to = %target.display(),
+            name = %canonical_fqn,
+            "flat directory migrated to namespaced layout"
+        );
+        Some(target)
+    }
 }
 
 impl SnapshotStore for DirectoryStore {
     fn load(&self) -> Option<Snapshot> {
-        // One-time legacy migration, transparent to callers.
-        let legacy = OfferingsRoot::new(self.base.clone()).legacy_file();
+        // One-time legacy migrations, transparent to callers.
+        let root = OfferingsRoot::new(self.base.clone());
+        let legacy = root.legacy_file();
         if legacy.is_file() {
             tracing::info!(path = %legacy.display(), "migrating legacy offerings.json -> directories");
             if let Ok(bytes) = std::fs::read(&legacy)
@@ -152,27 +329,27 @@ impl SnapshotStore for DirectoryStore {
             Err(_) => return None,
         };
         for entry in read.flatten() {
-            let dir = entry.path();
-            if !dir.is_dir() {
+            let top = entry.path();
+            if !top.is_dir() {
                 continue;
             }
-            let record = dir.join("record.json");
-            let candidate = dir.join("candidate.json");
-            if let Ok(bytes) = std::fs::read(&record) {
-                match serde_json::from_slice::<super::model::Offering>(&bytes) {
-                    Ok(o) => active.push(o),
-                    Err(e) => tracing::warn!(
-                        path = %record.display(), error = %e, "record unreadable; skipping"
-                    ),
-                }
-            } else if let Ok(bytes) = std::fs::read(&candidate) {
-                match serde_json::from_slice::<super::model::Offering>(&bytes) {
-                    Ok(o) => candidates.push(o),
-                    Err(e) => tracing::warn!(
-                        path = %candidate.display(), error = %e, "candidate unreadable; skipping"
-                    ),
+            // Pre-namespace flat layout? (registration files directly here)
+            let flat_record = top.join("record.json").is_file();
+            let flat_candidate = top.join("candidate.json").is_file();
+            if flat_record || flat_candidate {
+                match Self::migrate_flat(&top) {
+                    Some(moved) => {
+                        // `moved` IS the offering leaf — read it directly in
+                        // this pass (a migration must never cost an offering
+                        // a boot of visibility).
+                        Self::push_leaf(&moved, &mut active, &mut candidates);
+                        continue;
+                    }
+                    None => continue, // stuck mid-move; logged at the site
                 }
             }
+            // Canonical nesting: top is a STEM holding instance dirs.
+            Self::read_instances(&top, &mut active, &mut candidates);
         }
         Some(Snapshot { active, candidates })
     }
@@ -191,22 +368,157 @@ impl SnapshotStore for DirectoryStore {
             live_dirs.push(dir.root);
         }
 
-        // Prune stale registration files; never touch volumes/configs data.
-        if let Ok(read) = std::fs::read_dir(&self.base) {
-            for entry in read.flatten() {
-                let p = entry.path();
-                if !p.is_dir() || live_dirs.contains(&p) {
+        // Prune stale registration files across BOTH nesting levels; never
+        // touch volumes/configs data.
+        if let Ok(stems) = std::fs::read_dir(&self.base) {
+            for stem_entry in stems.flatten() {
+                let stem_dir = stem_entry.path();
+                if !stem_dir.is_dir() {
                     continue;
                 }
-                let had_record = p.join("record.json").is_file();
-                let had_candidate = p.join("candidate.json").is_file();
-                if had_record || had_candidate {
-                    let _ = std::fs::remove_file(p.join("record.json"));
-                    let _ = std::fs::remove_file(p.join("candidate.json"));
-                    let _ = std::fs::remove_file(p.join("plan.json"));
-                    tracing::info!(dir = %p.display(), "unregistered; volumes preserved");
+                // Legacy flotsam at stem level (post-migration leftovers).
+                if !live_dirs.contains(&stem_dir) {
+                    let had_record = stem_dir.join("record.json").is_file();
+                    let had_candidate = stem_dir.join("candidate.json").is_file();
+                    if had_record || had_candidate {
+                        let _ = std::fs::remove_file(stem_dir.join("record.json"));
+                        let _ = std::fs::remove_file(stem_dir.join("candidate.json"));
+                        let _ = std::fs::remove_file(stem_dir.join("plan.json"));
+                        tracing::info!(dir = %stem_dir.display(), "unregistered; volumes preserved");
+                    }
+                }
+                let instances = match std::fs::read_dir(&stem_dir) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                for inst_entry in instances.flatten() {
+                    let p = inst_entry.path();
+                    if !p.is_dir() || live_dirs.contains(&p) {
+                        continue;
+                    }
+                    let had_record = p.join("record.json").is_file();
+                    let had_candidate = p.join("candidate.json").is_file();
+                    if had_record || had_candidate {
+                        let _ = std::fs::remove_file(p.join("record.json"));
+                        let _ = std::fs::remove_file(p.join("candidate.json"));
+                        let _ = std::fs::remove_file(p.join("plan.json"));
+                        tracing::info!(dir = %p.display(), "unregistered; volumes preserved");
+                    }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::offerings::model::{Location, ManagedData, ModeData, Status};
+
+    fn sample(name: &str) -> crate::offerings::model::Offering {
+        let now = chrono::Utc::now();
+        crate::offerings::model::Offering {
+            offering_id: uuid::Uuid::now_v7().to_string(),
+            name: name.to_string(),
+            offering: "redis".into(),
+            category: "data".into(),
+            status: Status::Running,
+            location: Location {
+                host: "localhost".into(),
+                port: 7300,
+                protocol: "http".into(),
+            },
+            mode_data: ModeData::Managed(ManagedData {
+                runtime_kind: "oci".into(),
+                spec: Default::default(),
+                port_map: Default::default(),
+                plan: None,
+            }),
+            registered_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn directories_nest_by_fqn_segments() {
+        let tmp = std::env::temp_dir().join(format!("zg-dir-nest-{}", uuid::Uuid::now_v7()));
+        let root = OfferingsRoot::new(tmp.clone());
+        assert_eq!(
+            root.dir_for("memcached::default").root,
+            tmp.join("memcached").join("default")
+        );
+        assert_eq!(
+            root.dir_for("redis::prod").root,
+            tmp.join("redis").join("prod")
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The rehydration round trip under the nested layout, including a
+    /// moniker-spelled offering that must land at `{stem}/default`.
+    #[test]
+    fn store_round_trips_through_nested_layout() {
+        let tmp = std::env::temp_dir().join(format!("zg-dir-store-{}", uuid::Uuid::now_v7()));
+        let store = DirectoryStore::new(tmp.clone());
+        let snap = Snapshot {
+            active: vec![sample("memcached")],
+            candidates: vec![],
+        };
+        store.save(&snap);
+
+        let expected = tmp.join("memcached").join("default").join("record.json");
+        assert!(expected.is_file(), "{} missing", expected.display());
+
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.active[0].name, "memcached");
+
+        // Registration removal keeps data by law (configs/volumes survive).
+        let empty = Snapshot { active: vec![], candidates: vec![] };
+        store.save(&empty);
+        assert!(!expected.is_file());
+        assert!(tmp.join("memcached").join("default").join("volumes").is_dir());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Pre-namespace flat dirs migrate once into `{stem}/default`, records
+    /// rewritten to FQN spelling; a second load is stable and idempotent.
+    #[test]
+    fn flat_layouts_migrate_and_names_gain_the_namespace() {
+        use crate::offerings::registry::Snapshot as Snap2;
+
+        let tmp = std::env::temp_dir().join(format!("zg-dir-flat-{}", uuid::Uuid::now_v7()));
+        let flat = tmp.join("mongodb");
+        std::fs::create_dir_all(&flat).unwrap();
+        let legacy_snapshot = Snap2 {
+            active: vec![sample("mongodb")], // legacy name: no :: suffix
+            candidates: vec![],
+        };
+        // Stage a legacy-style dir via old-style direct write.
+        std::fs::create_dir_all(flat.join("configs")).unwrap();
+        std::fs::create_dir_all(flat.join("volumes")).unwrap();
+        std::fs::write(
+            flat.join("record.json"),
+            serde_json::to_vec_pretty(&legacy_snapshot.active[0]).unwrap(),
+        )
+        .unwrap();
+
+        let store = DirectoryStore::new(tmp.clone());
+        let loaded = store.load().unwrap();
+
+        assert_eq!(loaded.active.len(), 1);
+        assert_eq!(loaded.active[0].name, "mongodb::default");
+        assert_eq!(loaded.active[0].offering, "mongodb");
+        assert!(
+            tmp.join("mongodb").join("default").join("record.json").is_file(),
+            "relocated under the reserved default instance"
+        );
+
+        // Idempotent second pass.
+        let again = store.load().unwrap();
+        assert_eq!(again.active.len(), 1);
+        assert_eq!(again.active[0].name, "mongodb::default");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

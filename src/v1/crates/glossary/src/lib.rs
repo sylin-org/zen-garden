@@ -60,6 +60,7 @@ pub mod offering {
 
 /// The naming well: poetical stone names (`stone-{adjective}-{noun}`),
 /// transcribed from the PoC's dictionaries.
+pub mod fqn;
 pub mod naming;
 
 /// Domain verbs — CLI words, API words, function words. One spelling each.

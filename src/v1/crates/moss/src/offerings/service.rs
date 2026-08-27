@@ -1,4 +1,4 @@
-﻿//! The application service: sequences domain commands against runtime
+//! The application service: sequences domain commands against runtime
 //! worlds (OFFERINGS.md §4). This is the ONLY place that knows both the
 //! registry and the runtimes; HTTP handlers delegate here, O2's reconcile
 //! loop will call these same commands.
@@ -162,20 +162,11 @@ impl OfferingService {
         self.worlds.kinds()
     }
 
-    /// Instance suffix grammar for named installations (`{stem}:{suffix}`):
-    /// letters, digits, '-' or '_', ≤64 chars. Docker-legal via slug.
-    fn valid_instance_suffix(suffix: &str) -> bool {
-        !suffix.is_empty()
-            && suffix.len() <= 64
-            && suffix
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
-    }
-
-    /// Plant an offering by name (OFFERINGS.md §5). Catalog manifests
-    /// compile against current facts — compatibility decides, decisions are
-    /// logged into the stored plan. Ad-hoc images place directly when no
-    /// catalog entry exists.
+    /// Plant an offering by name (OFFERINGS.md §5). Names arrive as
+    /// MONIKERS (`ollama`) or explicit FQNs (`ollama::prod`); the grammar
+    /// (glossary::fqn) canonicalizes both to machine truth. Instances of a
+    /// stem share its catalog manifest while holding their own identity,
+    /// directory, decisions, and ledgered addresses.
     pub async fn offer(
         &self,
         name: &str,
@@ -185,45 +176,33 @@ impl OfferingService {
         requested_world: Option<&str>,
         inputs: &std::collections::BTreeMap<String, String>,
     ) -> Result<Offering, CommandError> {
-        if self.registry.get_by_name(name).is_some() {
-            return Err(CommandError::Conflict(format!("'{name}' is already planted")));
+        let fqn = garden_glossary::fqn::canonicalize(name)
+            .map_err(|e| CommandError::Conflict(e.to_string()))?;
+        if self.registry.get_by_name(&fqn).is_some() {
+            return Err(CommandError::Conflict(format!("'{fqn}' is already planted")));
         }
         let kind = requested_world.unwrap_or(&self.default_world).to_string();
         let rt = self.worlds.by_kind(&kind).map_err(CommandError::WorldUnavailable)?;
 
-        // Catalog path: manifest is truth; compile decides. Named
-        // installations (`{stem}:{instance}`) inherit the stem's manifest
-        // under their own name; a malformed suffix refuses loudly rather
-        // than quietly degrading into ad-hoc placement.
-        let exact = self.catalog.get(name);
-        let via_instance = if exact.is_none()
-            && let Some((base, suffix)) = name.split_once(':')
-        {
-            if !Self::valid_instance_suffix(suffix) {
-                return Err(CommandError::Conflict(format!(
-                    "'{suffix}' is not a valid installation suffix (letters, digits, '-', '_')"
-                )));
-            }
-            self.catalog.get(base)
-        } else {
-            None
-        };
-        if let Some(m) = exact.or(via_instance) {
+        // Catalog path: manifest is truth; compile decides. Every instance
+        // inherits its STEM's manifest; only stems exist in the catalog.
+        let stem = garden_glossary::fqn::stem_of(&fqn);
+        if let Some(m) = self.catalog.get(&stem) {
             // One machine-truth parse (OFFERINGS.md §5.1): a catalog-named
             // offering's image comes from its manifest. Explicit overrides
             // would fork deployed reality from compiled decisions.
             if image.is_some() {
                 return Err(CommandError::Conflict(format!(
-                    "'{name}' is a catalog offering; its manifest defines the image and no explicit image may be supplied"
+                    "'{fqn}' is a catalog offering; its manifest defines the image and no explicit image may be supplied"
                 )));
             }
             if m.managed.is_none() {
                 return Err(CommandError::Conflict(format!(
-                    "'{name}' declares no managed placement"
+                    "'{fqn}' declares no managed placement"
                 )));
             }
             let facts_gen = self.facts.snapshot();
-            let dir = self.dirs_root.dir_for(name);
+            let dir = self.dirs_root.dir_for(&fqn);
             let claims = self.ledger();
             let plan = compile::compile(m, &facts_gen, inputs, &dir, &claims, self.pool).map_err(|e| match e {
                 super::compile::CompileError::Denied { because, suggest } => {
@@ -235,15 +214,15 @@ impl OfferingService {
                 other => CommandError::Runtime(RuntimeError::Failed(other.to_string())),
             })?;
             let placement =
-                rt.place(name, &plan.workload).await.map_err(CommandError::Runtime)?;
+                rt.place(&fqn, &plan.workload).await.map_err(CommandError::Runtime)?;
             let now = chrono::Utc::now();
             let plan_value = serde_json::to_value(&plan)
                 .map_err(|e| CommandError::Conflict(format!("plan encode: {e}")))?;
             let offering = Offering {
                 offering_id: uuid::Uuid::now_v7().to_string(),
-                // Identity: the full invocation name; provenance: the stem.
-                // 'memcache:prod'.offering == 'memcache'.
-                name: name.to_string(),
+                // Identity is the FQN; provenance is the stem. Both
+                // `memcached` and `memcached::prod`.offering == "memcached".
+                name: fqn.clone(),
                 offering: m.name.clone(),
                 // Provenance is the manifest's (§5.1 machine-truth): a
                 // client-supplied category must not rewrite catalog identity.
@@ -259,11 +238,12 @@ impl OfferingService {
                     spec: plan.workload.clone(),
                     port_map: placement.named_host_ports,
                     plan: Some(plan_value),
-                }),                registered_at: now,
+                }),
+                registered_at: now,
                 updated_at: now,
             };
             self.registry.register(offering.clone());
-            self.audit(name, "Placed", serde_json::json!({ "world": kind, "catalog": true }));
+            self.audit(&fqn, "Placed", serde_json::json!({ "world": kind, "catalog": true }));
             return Ok(offering);
         }
 
@@ -271,7 +251,7 @@ impl OfferingService {
         // Ad-hoc path: a raw image with no catalog behind it.
         let Some(image) = image else {
             return Err(CommandError::NotFound(format!(
-                "no catalog entry for '{name}' and no image given"
+                "no catalog entry for '{stem}' and no image given"
             )));
         };
         // ADR-0002: ad-hoc offerings are citizens too — their roles draw
@@ -310,12 +290,13 @@ impl OfferingService {
                 .collect(),
             ..Default::default()
         };
-        let placement = rt.place(name, &spec).await.map_err(CommandError::Runtime)?;
+        let placement = rt.place(&fqn, &spec).await.map_err(CommandError::Runtime)?;
         let now = chrono::Utc::now();
         let offering = Offering {
             offering_id: uuid::Uuid::now_v7().to_string(),
-            name: name.to_string(),
-            offering: name.to_string(),
+            name: fqn.clone(),
+            // Ad-hoc offerings are their own stem (no catalog behind them).
+            offering: stem,
             category: category.unwrap_or_else(|| "misc".into()),
             status: Status::Running,
             location: Location {
@@ -333,7 +314,7 @@ impl OfferingService {
             updated_at: now,
         };
         self.registry.register(offering.clone());
-        self.audit(name, "Placed", serde_json::json!({ "world": kind, "catalog": false }));
+        self.audit(&fqn, "Placed", serde_json::json!({ "world": kind, "catalog": false }));
         Ok(offering)
     }
 
@@ -342,19 +323,22 @@ impl OfferingService {
         self.catalog.len()
     }
 
-    /// The full placed record — plan attached (§5.3).
+    /// The full placed record — plan attached (§5.3). Monikers resolve to
+    /// their FQN (`memcached` finds `memcached::default`).
     pub fn placed(&self, name: &str) -> Option<Offering> {
-        self.registry.get_by_name(name)
+        let fqn = garden_glossary::fqn::canonicalize(name).ok()?;
+        self.registry.get_by_name(&fqn)
     }
 
     /// Rest: stopped, and reconcile will keep it so (§3.2).
     pub async fn rest(&self, name: &str) -> Result<Offering, CommandError> {
         let offering = self.managed(name)?;
         let rt = self.world_for(&offering)?;
-        rt.stop(name).await.map_err(CommandError::Runtime)?;
+        let fqn = offering.name.clone();
+        rt.stop(&fqn).await.map_err(CommandError::Runtime)?;
         self.registry.mark_status(&offering.offering_id, Status::Stopped);
-        self.audit(name, "Stopped", serde_json::json!({ "reason": "rest" }));
-        self.registry.get_by_name(name).ok_or_else(|| CommandError::NotFound(name.into()))
+        self.audit(&fqn, "Stopped", serde_json::json!({ "reason": "rest" }));
+        self.registry.get_by_name(&fqn).ok_or(CommandError::NotFound(fqn))
     }
 
     /// Wake: running again — resurrecting the workload from its stored spec
@@ -362,35 +346,36 @@ impl OfferingService {
     pub async fn wake(&self, name: &str) -> Result<Offering, CommandError> {
         let offering = self.managed(name)?;
         let rt = self.world_for(&offering)?;
+        let fqn = offering.name.clone();
         let managed = offering.managed().ok_or_else(|| {
-            CommandError::Conflict(format!("'{name}' is not managed"))
+            CommandError::Conflict(format!("'{fqn}' is not managed"))
         })?;
 
-        match rt.observe(name).await {
+        match rt.observe(&fqn).await {
             None => {
-                tracing::warn!(offering = %name, "workload missing - resurrecting from stored spec");
+                tracing::warn!(offering = %fqn, "workload missing - resurrecting from stored spec");
                 // The stored spec already carries the ledgered allocations
                 // (ADR-0002): identity rides along; residence is chosen at
                 // the create edge (squatters relocate, homes remembered).
                 let spec = managed.spec.clone();
-                rt.place(name, &spec).await.map_err(CommandError::Runtime)?;
-                self.audit(name, "Resurrected", serde_json::json!({}));
+                rt.place(&fqn, &spec).await.map_err(CommandError::Runtime)?;
+                self.audit(&fqn, "Resurrected", serde_json::json!({}));
             }
             Some(observed) if !observed.running => {
-                rt.start(name).await.map_err(CommandError::Runtime)?;
+                rt.start(&fqn).await.map_err(CommandError::Runtime)?;
             }
             Some(_) => {} // already running; idempotent wake
         }
 
         self.registry.mark_status(&offering.offering_id, Status::Running);
-        self.audit(name, "Started", serde_json::json!({}));
+        self.audit(&fqn, "Started", serde_json::json!({}));
 
-        // Port honesty: ephemeral reassignment without a ledger yet (O2) —
-        // observe and refresh rather than lie about stale mappings.
+        // Port honesty: observe and refresh rather than lie about stale
+        // mappings. Relocation under pressure is recorded, never denied.
         let mut updated = offering;
         updated.status = Status::Running; // the stale clone must not undo the mark above
         if let ModeData::Managed(m) = &mut updated.mode_data
-            && let Some(observed) = rt.observe(name).await
+            && let Some(observed) = rt.observe(&fqn).await
             && observed.named_host_ports != m.port_map
             && !observed.named_host_ports.is_empty()
         {
@@ -398,9 +383,9 @@ impl OfferingService {
             updated.location.port = m.port_map.values().copied().next().unwrap_or(0);
             updated.updated_at = chrono::Utc::now();
             self.registry.replace(updated.clone());
-            tracing::info!(offering = %name, "host ports remapped after wake");
+            tracing::info!(offering = %fqn, "host ports remapped after wake");
         }
-        self.registry.get_by_name(name).ok_or_else(|| CommandError::NotFound(name.into()))
+        self.registry.get_by_name(&fqn).ok_or(CommandError::NotFound(fqn))
     }
 
     /// Uproot: remove the workload and forget the offering. Managed only —
@@ -408,16 +393,24 @@ impl OfferingService {
     pub async fn uproot(&self, name: &str) -> Result<(), CommandError> {
         let offering = self.managed(name)?;
         let rt = self.world_for(&offering)?;
-        rt.remove(name).await.map_err(CommandError::Runtime)?;
+        let fqn = offering.name.clone();
+        rt.remove(&fqn).await.map_err(CommandError::Runtime)?;
         self.registry.remove(&offering.offering_id);
-        self.audit(name, "Uprooted", serde_json::json!({}));
+        self.audit(&fqn, "Uprooted", serde_json::json!({}));
         Ok(())
     }
 
+    /// Managed-only lookup. Monikers canonicalize here (`uproot memcached`
+    /// uproots `memcached::default`); off-grammar names refuse with hints.
     fn managed(&self, name: &str) -> Result<Offering, CommandError> {
-        let o = self.registry.get_by_name(name).ok_or_else(|| CommandError::NotFound(name.into()))?;
+        let fqn = garden_glossary::fqn::canonicalize(name)
+            .map_err(|e| CommandError::Conflict(e.to_string()))?;
+        let o = self
+            .registry
+            .get_by_name(&fqn)
+            .ok_or(CommandError::NotFound(fqn.clone()))?;
         if o.managed().is_none() {
-            return Err(CommandError::Conflict(format!("'{name}' is not a managed offering")));
+            return Err(CommandError::Conflict(format!("'{fqn}' is not a managed offering")));
         }
         Ok(o)
     }
@@ -557,10 +550,10 @@ managed:
         assert_eq!(err.to_string(), "runtime unsupported here: the null world places nothing");
     }
 
-    /// Multi-instance hosts (operator ruling, post-W4 evaluation): two
-    /// installations of one stem coexist under distinct names, each with
-    /// its OWN ledgered address. The second draws :7301 regardless of the
-    /// first's status — claims decide, not sockets.
+    /// Multi-instance hosts (namespace law): two installations of one stem
+    /// coexist under FQN identities, each with its OWN ledgered address.
+    /// The second draws :7301 regardless of the first's status — claims
+    /// decide, not sockets. The bare moniker plants ::default.
     #[tokio::test]
     async fn named_installations_share_a_stem_but_not_addresses() {
         let catalog = Catalog::embedded([("redis", REDIS)]).unwrap();
@@ -571,13 +564,13 @@ managed:
             .await
             .unwrap();
         let second = service
-            .offer("redis:prod", None, HashMap::new(), None, Some("rec"), &inputs())
+            .offer("redis::prod", None, HashMap::new(), None, Some("rec"), &inputs())
             .await
             .unwrap();
 
         // Distinct identities over shared provenance.
-        assert_eq!(first.name, "redis");
-        assert_eq!(second.name, "redis:prod");
+        assert_eq!(first.name, "redis::default");
+        assert_eq!(second.name, "redis::prod");
         assert_eq!(second.offering, "redis", "provenance stays the stem");
         assert_ne!(first.offering_id, second.offering_id);
 
@@ -589,22 +582,45 @@ managed:
         assert_eq!(m2.port_map["default"], 7301);
     }
 
-    /// A malformed suffix refuses loudly instead of degrading into a
-    /// confusing ad-hoc 'no catalog entry' error.
+    /// Surfaces speak moniker; machine truth is the FQN. `rest redis` and
+    /// `explain redis` must find `redis::default`.
     #[tokio::test]
-    async fn invalid_installation_suffix_names_itself() {
+    async fn moniker_arguments_resolve_to_the_default_instance() {
+        let catalog = Catalog::embedded([("redis", REDIS)]).unwrap();
+        let (service, _root) = service_with(catalog);
+
+        service
+            .offer("redis", None, HashMap::new(), None, Some("rec"), &inputs())
+            .await
+            .unwrap();
+
+        assert!(
+            service.placed("redis").is_some(),
+            "moniker lookup finds the default instance"
+        );
+        assert_eq!(service.rest("redis").await.unwrap().name, "redis::default");
+        assert!(service.wake("redis").await.is_ok());
+        // Double-plant by alias spelling collides — same identity.
+        let err = service
+            .offer("redis::default", None, HashMap::new(), None, Some("rec"), &inputs())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("already planted"));
+    }
+
+    /// Off-grammar names refuse loudly — image-tag shapes get the '::'
+    /// hint instead of a confusing catalog miss.
+    #[tokio::test]
+    async fn single_colon_names_refuse_with_the_namespace_hint() {
         let catalog = Catalog::embedded([("redis", REDIS)]).unwrap();
         let (service, _root) = service_with(catalog);
 
         let err = service
-            .offer("redis:b@d!suffix", None, HashMap::new(), None, Some("rec"), &inputs())
+            .offer("redis:7-alpine", None, HashMap::new(), None, Some("rec"), &inputs())
             .await
             .unwrap_err();
         let msg = err.to_string();
-        assert!(
-            msg.contains("'b@d!suffix'") && msg.contains("suffix"),
-            "got: {msg}"
-        );
+        assert!(msg.contains("redis::7-alpine") && msg.contains("':'"), "{msg}");
     }
 }
 

@@ -32,11 +32,17 @@ impl DockerRuntime {
         Ok(Self { docker })
     }
 
-    fn container_name(name: &str) -> String {
-        // Docker forbids ':' (and friends) in container names; instance
-        // names like 'memcache:prod' and FQNs like 'ollama::adopted' ride
-        // the same slug rule as offering directories.
-        format!("{CONTAINER_PREFIX}{}", super::directory::slug(name))
+    /// Container name for an offering FQN. Moniker-slugged (glossary::fqn):
+    /// `memcached` (= memcached::default) keeps its PoC-compatible
+    /// `zen-offering-memcached`; foreign instances slug their full FQN
+    /// (`mc::prod` → `zen-offering-mc_prod`). Since the grammar bans `:`
+    /// inside names outright, slugging is injective — no two offerings
+    /// can collide here.
+    fn container_name(offering_fqn: &str) -> String {
+        format!(
+            "{CONTAINER_PREFIX}{}",
+            super::directory::slug(&garden_glossary::fqn::moniker(offering_fqn))
+        )
     }
 
     async fn pull(&self, image: &str) -> Result<(), RuntimeError> {
@@ -284,18 +290,19 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
 
-    /// Instance and FQN names slug into Docker-legal container names —
-    /// colons are forbidden by the engine, so `mc:prod` cannot survive
-    /// unslugged (the multi-instance bug this pins shut).
+    /// Container naming rides the MONIKER: default instances keep their
+    /// PoC-compatible short form, foreign instances slug their full FQN.
+    /// With ':' banned in the grammar, this stays collision-free.
     #[test]
-    fn instance_names_slug_into_docker_legality() {
+    fn container_names_follow_the_moniker_rule() {
         assert_eq!(
-            DockerRuntime::container_name("memcached"),
+            DockerRuntime::container_name("memcached::default"),
             "zen-offering-memcached"
         );
-        assert_eq!(DockerRuntime::container_name("mc:prod"), "zen-offering-mc_prod");
-        // Each ':' maps to '_' — identical to the directory slug rule, so
-        // container and directory derivations stay consistent per name.
+        assert_eq!(
+            DockerRuntime::container_name("mc::prod"),
+            "zen-offering-mc__prod"
+        );
         assert_eq!(
             DockerRuntime::container_name("ollama::adopted"),
             "zen-offering-ollama__adopted"

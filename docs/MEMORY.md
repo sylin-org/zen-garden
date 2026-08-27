@@ -30,6 +30,11 @@ this file points at; state lives once, decisions live once.
 
 ## Durable learnings (cross-session gotchas)
 
+- Offering names are FQNs `{stem}::{instance}` (ADR-0003, glossary::fqn is
+  the ONLY grammar): single `:` is banned outright (image-tag territory);
+  `default` is reserved; humans see monikers, machines see FQNs; directories
+  nest `{stem}/{instance}/`. When touching name code, import the grammar —
+  never hand-split on `:`.
 - `gen` is a RESERVED keyword in Rust edition 2024 — never use as identifier.
 - A tokio `interval` fires immediately on first tick — consume once before loops.
 - rg/PowerShell quoting breaks through two hops of tooling — prefer

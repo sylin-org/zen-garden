@@ -10,8 +10,15 @@ Lantern, O3 adoption, then the M-milestones.
 
 ## NEW EPIC OPEN (2026-08-27): the living will (ADR-0005, W7)
 
-Slices 1-2 LANDED — the capture grammar (`offerings/capture.rs`) and the
-two-phase pipeline (`offerings/capture_run.rs`, `310a0522`): workspaces
+Slices 1-3 LANDED — the capture grammar (`offerings/capture.rs`), the
+two-phase pipeline (`offerings/capture_run.rs`, `310a0522`), and
+checkpoint verify/unpack + sink-role declaration (`7993233a`):
+verify_checkpoint proves archive + per-file SHA-256 (tamper = loud
+refusal), unpack_volumes restores traversal-checked volumes fresh,
+latest_checkpoint selects (replant composes all three); Storage::set_roles
+is live with glossary-validated roles — 1:1 faces POST
+`/api/v1/storage/{fqn}/roles` + `rake storage roles {bank} --role sink`.
+Slice 1 remained — the capture grammar (`offerings/capture.rs`): workspaces
 at `~/.zen-garden/workspace/{fqn}/{run}` (MOSS_WORKSPACE_DIR override);
 Phase A quiesce->imprint->resume with finally-style resume, max_locked_s
 budget, rested offerings skipping the lock, export hooks templated with
@@ -30,13 +37,12 @@ classifier (NothingToPreserve/Trusted/Untrusted) for honest surfaces;
 `capture` sits outside WorkloadSpec AND plan_hash (test-pinned: policy
 edits never flip plans). DEBT D15 opened: corpus capture coverage by RC0.
 
-NEXT SLICES (ADR-0005 §§2-6): (3) checkpoint SELECT + verify + restore
-into fresh volumes (unpack tar.zst, checksums verified); (4) sink-role
-DECLARATION surfaced 1:1 (`rake storage seed-vault --role sink` or the
-adopt request carrying roles; Storage::set_roles is cfg(test) until
-then); (5) replant: signature+checkpoint -> directory -> place() ->
-Replanted audit event; (6) W7 witness: kill the stone, watch the garden
-regrow it, connection string unchanged. Self-contained for a clean
+NEXT SLICES (ADR-0005 §§2-6): (4, remainder) roles already declared 1:1 —
+remaining: adopt request may carry roles inline; (5) replant: signature+
+checkpoint -> directory -> place() -> Replanted audit event (composes
+latest_checkpoint + verify + unpack_volumes, all standing ready); (6) W7
+witness: kill the stone, watch the garden regrow it, connection string
+unchanged. Self-contained for a clean
 context. Verify everything against the tree — trust files over this doc.
 
 ## Project in one paragraph
@@ -262,7 +268,8 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. Continue the living-will epic: slice 3 per the map above — checkpoint
-   select/verify/restore (unpack with checksum verification into fresh
-   volumes), then the sink-role declaration faces. One slice = one
-   commit, gates green at every commit.
+2. Continue the living-will epic: slice 4 per the map above — REPLANT
+   (`replant` verb pair: rake + POST /api/v1/offerings/{fqn}/replant,
+   composes select/verify/unpack with a fresh directory + place(); the
+   audit chain opens Replanted{predecessor_offering_id, final_hash}). One
+   slice = one commit, gates green at every commit.

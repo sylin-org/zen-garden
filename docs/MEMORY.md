@@ -19,6 +19,7 @@ this file points at; state lives once, decisions live once.
 | Discovery envelope & URI grammar | `docs/v1/decisions/ADR-0004-discovery-envelope-and-uri-grammar.md` |
 | Living will (capture/checkpoints/replant) | `docs/v1/decisions/ADR-0005-living-will-capture-replant.md` |
 | Sequenced slices (O0→later) | `docs/v1/OFFERINGS.md` §7 |
+| DX & delight research (vocabulary tiers, tutorial gap; DRAFT) | `docs/v1/design/dx-delight-research.md` |
 | Session-local environment/handoff | `local/NOTES.md` (gitignored), see `local/README.md` |
 
 ## Standing preferences

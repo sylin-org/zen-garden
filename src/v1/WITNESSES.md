@@ -114,6 +114,20 @@ proved it.
 
 ---
 
+## W5 — the ledger wins over sockets (2026-08-27, stone-crystalline-dune)
+
+- `redis::ports` planted ad hoc with one named port (`default: 6379`); the
+  arbiter drew home **7300** (tier flexible), the allocation rode the
+  stored spec, and Docker showed the explicit binding
+  (`0.0.0.0:7300->6379`) — never a dynamic assignment.
+- `rest` -> `wake`: the ledgered home **survived the lifecycle**
+  (`port_map {default: 7300}` re-emitted, binding re-created explicitly).
+  A rested offering's claim beat anyone's socket probe (L26).
+- D14 closes on this witness (arbiter + directory + adapter all in the
+  path, neighbour choreography observed end-to-end).
+
+---
+
 ## W6 — the garden knows itself, witnessed live (2026-08-27)
 
 Deployed to the fleet and witnessed end-to-end, from this workstation

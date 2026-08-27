@@ -13,7 +13,7 @@
 | D11 | Ceremonies (nourish/vacate/replant/store journals + rollback) deferred | Post-O2 | PoC reference poc/moss/src/domain/ceremony/ |
 | D12 | Orchestration roles/elections (primary/replica/joining) deferred | Post-O2 | ORCH-0001/0006 in PoC; wire `role` field already carried |
 | D13 | Borrow credentials vaulting (Koi vault keys) deferred | With borrow feature (O3) | PoC stored `borrowed:{name}:credentials` keys; v1 has no vault yet |
-| D14 | ~~`start()` cannot hold ledged host ports on containers created with dynamic bindings~~ | Closes on implementation of [ADR-0002](../docs/v1/decisions/ADR-0002-port-allocation-and-residence.md) slices | Design retired this debt's framing: allocations are claimed ledger-first, every create emits explicit HostPort bindings (never `""`), and residence may legitimately differ from allocation. Closes when the arbiter/directory/adapter slices land + W5 witnesses the neighbour choreography |
+| D14 | ~~`start()` cannot hold ledged host ports on containers created with dynamic bindings~~ | — | **Closed 2026-08-27** — W5 witnessed the whole chain live on stone-crystalline-dune: arbiter drew home 7300 (tier flexible), the allocation rode the stored spec, Docker bound it explicitly, and rest/wake re-emitted the SAME ledgered home (WITNESSES.md W5). Ledger wins over sockets (L26) |
 
 ## Closed
 

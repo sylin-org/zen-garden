@@ -144,6 +144,15 @@ blocks on a slow handler: bounded queues, counted drops, visible in posture (B3)
 **R3.1** Code speaks garden. Function names use glossary verbs (`offer`, `rest`,
 `wake`, `replant`) so a stack trace reads like an operator sentence. If the CLI
 says `wake`, no function is named `start_service_2`.
+*(Amended 2026-08-27 — registers.)* The garden verbs STAY in the CLI:
+standard terms (`stop`, `deploy`, `remove`) import standard semantics and
+lie where the garden's lifecycle differs — `rest` is a converged desired
+state, not a momentary `stop`; the unfamiliar word is the honesty marker.
+The expert's first-contact cost is paid by BRIDGES, never second names
+(R1.3): every non-derivable verb's help glosses its nearest standard term
+plus the divergence, and R3.3's "what to try" carries the cross-reference.
+Provenance: `docs/v1/design/dx-delight-research.md` (open ruling) +
+operator agreement, 2026-08-27.
 
 **R3.2** Signatures: arguments in domain order (what → where → how), errors as
 types, no bare `bool` parameters (name them or split the function), builders over

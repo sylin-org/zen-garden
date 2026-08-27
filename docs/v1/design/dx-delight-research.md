@@ -154,6 +154,9 @@ acceptance note on the S5 slice.
   **lightweight contributor process** — epic ceremony stays maintainer-side);
   E accepted, applies when S5 opens (the not-here answer becomes an
   acceptance criterion on the slice).
+- **2026-08-27, operator agreement (settled):** the CLI keeps garden
+  verbs; bridges in help/error text, never aliases. Codified as the R3.1
+  registers amendment the same day.
 - **Open ruling — the CLI register.** Operator proposal: detach rake onto
   technically standard terms (stop/deploy/remove) to minimize cognitive load
   for advanced operators; poetic semantic language reserved for UX. Session

@@ -51,6 +51,14 @@ that count, not the line count.
 noun and verb once. No synonyms (`storage`/`bank`/`volume` for one thing), no
 overloaded terms (the three-lease sin). The glossary is load-bearing: names in
 code, API, CLI, and docs derive from it.
+*(Amended 2026-08-27 — registers.)* The glossary's jurisdiction is code, wire,
+and operator surfaces. Household surfaces (family portal, companions) speak a
+declared plain register: one rendering per noun, chosen so the metaphor teaches
+where it can and household words carry where it cannot (`bank` renders
+*storage*, never untranslated). Registers bridge through help and error text —
+the standard-term nearest neighbor plus how the garden word differs — never
+through second names (R1.3). Provenance:
+`docs/v1/design/dx-delight-research.md` (F4) + operator ruling, 2026-08-27.
 
 **R1.2** No parallel implementations of anything. Two mDNS stacks, two enabled-flag
 formats, two canonical-layout validators — each was a PoC wound. If two exist at

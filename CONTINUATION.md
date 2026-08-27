@@ -2,8 +2,11 @@
 
 Written 2026-08-26 at a planned pause, mid-epic. Updated 2026-08-27: S3
 (songs/rich ask), S4 (candidates), S5 (URI cut), S6 (rake sync), S5.5
-(persistence v3), S7a (storage MVP), S7b (the room's storage grid) all
-landed; resume at S8. Self-contained for a clean
+(persistence v3), S7a (storage MVP), S7b (the room's storage grid), S8
+(fleet deploy) + **W6 witnessed** all landed. THE EPIC IS COMPLETE — see
+WITNESSES.md W6 for the live proofs and the three findings it harvested.
+What remains is OUTSIDE this epic: W7 (ADR-0005 capture/replant),
+Lantern, O3 adoption, then the M-milestones. Self-contained for a clean
 context. Verify everything against the tree — trust files over this doc.
 
 ## Project in one paragraph
@@ -178,11 +181,16 @@ part{n,of}} · received{discovered_at, last_seen}`.
       re-plug; vanish-ejected banks remount on return. End-to-end test:
       peer song with banks -> topology merge -> /garden/storage renders
       the foreign bank.
-- [ ] S8 — cross-compile linux-x64 (existing installer/v1 Dockerfile),
-      deploy to 3 stones (~/zen-v1/, plink), upgrade binaries.
-- [ ] W6 witness (record in WITNESSES.md): plant on A visible from B ≤1
-      interval; rev-heal drill; **USB drive adopt ceremony garden-wide**
-      (plug → announced, unplug → gone by announcement or expiry).
+- [x] **S8 + W6 — fleet deploy + witness LANDED (6566fad3 + WITNESSES.md
+      W6).** linux-x64 release via the perennial builder; deployed and
+      upgraded on 192.168.1.111 + .195 (`.82` offline — same procedure
+      when it returns). Witnessed live: mutual presence; plant on A
+      visible from B <= 1 interval; rev-heal drill (cache refill by rich
+      ask + rehydration); USB adopt garden-wide (adoptable scan ->
+      recognized -> heard on the peer -> eject -> absence heard). THREE
+      findings harvested: self-ingest defect (fixed, 6566fad3),
+      MOSS_RUNTIME=docker needed for appliance default, adopt-vs-
+      point-of-restore permission posture (operator's call).
 
 Deliberately OUT of this epic: capture/checkpoint pipeline (ADR-0005 core,
 W7), Lantern, O3 adoption.
@@ -224,12 +232,7 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. Open S8 per epic map: cross-compile linux-x64 (existing installer/v1
-   Dockerfile), deploy to 3 stones (~/zen-v1/, plink), upgrade binaries.
-   PRE-FLEET CHECKLIST: S5.5 migration landed (yes); push is current (yes);
-   one moss per host discipline on the stones (stop old moss.exe before
-   replacing — file lock). One slice = one commit, gates green at every
-   commit. Then W6 witness (record in WITNESSES.md): plant on A visible
-   from B <= 1 interval; rev-heal drill; USB drive adopt ceremony
-   garden-wide (plug -> announced, unplug -> gone by announcement or
-   expiry).
+2. The epic is DONE. Pick the next arc per charter sequencing: M1 release
+   pipeline (main branch + tag->build->sign->publish), or W7's living-will
+   work (ADR-0005 capture/checkpoint/replant — the next epic candidate).
+   Re-run the deploy procedure for 192.168.1.82 when that stone returns.

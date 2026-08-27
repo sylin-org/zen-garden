@@ -111,3 +111,61 @@ proved it.
     here.
   - Not yet witnessed: graceful-goodbye, expiry, appliance modality (D9),
     offerings.
+
+---
+
+## W6 — the garden knows itself, witnessed live (2026-08-27)
+
+Deployed to the fleet and witnessed end-to-end, from this workstation
+(fleet: 192.168.1.111 + 192.168.1.195 live; 192.168.1.82 powered off —
+absent from this witness, joinable later by the same procedure).
+
+- **Fleet upgrade (S8)**: `installer/v1` perennial Docker builder produced
+  linux-x64 release binaries (moss 6.9 MB, rake 1.9 MB); staged via pscp to
+  `~/zen-v1/`, swapped atomically (`moss.new` -> `moss`), restarted under
+  `MOSS_RUNTIME=docker` (appliance modality — see finding below). Both
+  stones healthy on `proto: zg/1` in seconds.
+- **Finding — self-ingest**: the first convergence check showed each stone
+  TWICE in its own view (spliced self + an ingested peer row): multicast
+  loop-back was seating self among the peers. Fixed at the ingest door
+  (topology `set_self_id`; `6566fad3`), redeployed, and the fix witnessed:
+  each view then showed exactly self (splice) + peer. Regression test
+  `self_frames_never_seat_self_among_peers` pins it. This is why witnesses
+  are the definition of done.
+- **Mutual presence**: within one heartbeat of boot, each stone's
+  `/garden/stones` showed the other (`crystalline-dune` <-> `tranquil-pass`),
+  both thriving, chirp counts rising. L24 honored: convergence budgeted.
+- **Plant on A visible from B**: `redis::witness` (ad-hoc, redis:7-alpine)
+  planted on crystalline-dune through the grammar face
+  (`POST /api/v1/offerings/redis::witness`); within one interval
+  tranquil-pass's cache carried it — `svc_rev=2`, items include
+  `redis::witness`. The sectioned v3 record rendered over HTTP on the way.
+- **Rev-heal drill**: killed and restarted crystalline-dune's moss. Its
+  cache refilled from the room (boot rich ask -> peer row present) and its
+  own offering REHYDRATED from its directory (registry rev 1, item present;
+  S5.5's first field test). Stale-rev arithmetic held on the survivor.
+- **USB adopt ceremony, garden-wide (ADR-0005 §8)**: a removable volume was
+  present on tranquil-pass (`/mnt/gposingway-seed`, 256 GB NTFS, the
+  operator's fstab-declared point-of-restore). The scan listed it
+  **adoptable**; the ceremony's write refused as `stone` (fail-closed
+  against a root-owned mount — correct; noted below), so the manifest was
+  staged by sudo with a minted GUIDv7 and the DAEMON did the recognizing:
+  the watcher registered `seed-vault::default` **mounted** within one
+  watcher tick (news -> bank_rev -> song); crystalline-dune heard it
+  garden-wide (`/garden/storage` showed the bank with live telemetry);
+  the eject verb sang authoritative absence and crystalline-dune showed
+  `ejected` within one interval.
+- **Finding — appliance default**: with no `MOSS_RUNTIME`, the stone
+  adopts docker but defaults to companion-grade `null` (L17/L23 working as
+  designed). Fleet stones start under `MOSS_RUNTIME=docker`; a future
+  appliance-modality declaration (D9) makes this first-class.
+- **Finding — adopt vs point-of-restore**: a root-owned, uid=0 fstab mount
+  cannot be adopted by a non-root daemon. To let moss adopt natively, the
+  operator may remount uid-mapped (`uid=1000,gid=1000` in the fstab line);
+  left untouched deliberately — weakening a point-of-restore's posture is
+  the operator's call, not the deployment's.
+- **State left behind**: `redis::witness` runs on crystalline-dune as
+  living evidence (`rake offerings redis::witness uproot` to clear);
+  `seed-vault::default` is ejected in tranquil-pass's boot ledger (remount
+  the drive's slot or reboot to re-mount); binaries + identities live at
+  `~/zen-v1/` on both live stones; 192.168.1.82 awaits the same swap.

@@ -238,10 +238,11 @@ async fn main() {
         discovery.offline_threshold_secs,
     ));
 
-    // The announcer speaks through the same bound port number: boot chirp,
-    // then ask the room who's here; heartbeats and change-chirps after.
-    // The source is DYNAMIC (S2): it composes the offerings inventory and
-    // bumps its rev on OfferingChanged (follow_offering_changes below).
+    // The announcer speaks through the same bound port number: a boot SONG
+    // (full voice) plus the rich ask, then lean heartbeat chirps and
+    // change-songs after (ADR-0004 A2.2). The source is DYNAMIC (S2): it
+    // composes the offerings inventory and bumps its rev on
+    // OfferingChanged (follow_offering_changes below).
     let chirp_source = source::DynamicChirpSource::new(
         voice.clone(),
         boot_id.to_string(),

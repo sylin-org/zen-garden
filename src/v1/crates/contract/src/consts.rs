@@ -64,6 +64,12 @@ pub mod announcement {
     pub const STORAGE_BEACON: &str = "storage_beacon";
     pub const TOOLS_BEACON: &str = "tools_beacon";
 
+    /// The full-voice announcement (ADR-0004 A2.2): presence plus one or
+    /// more inventory domains, spoken on boot and on change. A v1
+    /// extension — NOT in `ALL_V0`; foreign-generation stones silently
+    /// ignore a kind they never defined.
+    pub const STONE_SONG: &str = "stone_song";
+
     /// All discriminators the v0 wire defines. A type not listed here is a
     /// v1 extension — v0 stones silently ignore it.
     pub const ALL_V0: [&str; 9] = [

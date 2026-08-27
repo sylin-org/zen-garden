@@ -1,15 +1,16 @@
 //! The daemon's voice: what this stone says when it chirps or sings.
 //!
-//! [`DynamicChirpSource`] speaks the registry's truth: `services` inventory
-//! composed from the aggregate, `rev` bumped on `OfferingChanged`, the
-//! announcer's version watch fired so change-chirps flow (L18 — the
-//! machinery existed since W1; this is the composer it waited for).
-//! Songs (full-voice, multi-domain) are quantized by the contract framer
-//! when S3+ wires them; heartbeats here are lean chirps with inventory.
+//! [`DynamicChirpSource`] speaks the registry's truth in TWO registers
+//! (ADR-0004 A2.1/A2.2): `body()` is the LEAN heartbeat — anchors plus a
+//! rev-only services block, because presence must not amortize inventory;
+//! `song_blocks()` is the full voice — the services inventory the framer
+//! quantizes into songs, spoken on boot and on `OfferingChanged` (the
+//! announcer's version watch fires; L18 — the machinery existed since W1;
+//! this is the composer it waited for).
 
 use garden_contract::chirp::{
     ChirpFrame, Inventory, InventoryMap, Moss, Network, PeerAddress, Presence, Reception,
-    ServiceEntry, Stone,
+    ServiceEntry, Stone, INVENTORY_CAP,
 };
 use garden_kernel::announce::ChirpSource;
 use std::net::IpAddr;
@@ -81,6 +82,17 @@ impl DynamicChirpSource {
             items,
         }
     }
+
+    /// The LEAN register (A2.1): heartbeats speak the rev, not the items.
+    /// A block present with a fresh rev is the truth "I know what I host;
+    /// ask me if you're behind."
+    fn lean_services(&self) -> Inventory<ServiceEntry> {
+        Inventory {
+            rev: Some(self.rev.load(std::sync::atomic::Ordering::Relaxed)),
+            total: None,
+            items: Vec::new(),
+        }
+    }
 }
 
 impl ChirpSource for DynamicChirpSource {
@@ -105,7 +117,7 @@ impl ChirpSource for DynamicChirpSource {
                 status: garden_glossary::presence::ONLINE.into(),
             },
             inventory: InventoryMap {
-                services: Some(self.services_block()),
+                services: Some(self.lean_services()),
                 ..Default::default()
             },
             meta: garden_contract::chirp::FrameMeta {
@@ -113,6 +125,25 @@ impl ChirpSource for DynamicChirpSource {
                 ..Default::default()
             },
             received: Reception { discovered_at: now, last_seen: now },
+        }
+    }
+
+    /// The full voice: the services block, whole (A2.3 — a block rides
+    /// entire or waits). The 24-item alphabetical cap is the LAST resort;
+    /// truncation is declared by `total`, never silent.
+    fn song_blocks(&self) -> Vec<(String, serde_json::Value)> {
+        let mut block = self.services_block();
+        if block.items.len() > INVENTORY_CAP {
+            block.items.sort_by(|a, b| a.name.cmp(&b.name));
+            block.total = Some(block.items.len() as u32);
+            block.items.truncate(INVENTORY_CAP);
+        }
+        match serde_json::to_value(block) {
+            Ok(v) => vec![(garden_contract::chirp::DOMAIN_SERVICES.into(), v)],
+            Err(e) => {
+                tracing::warn!(error = %e, "services block encode failed; singing silence");
+                Vec::new()
+            }
         }
     }
 
@@ -210,25 +241,54 @@ mod tests {
     }
 
     #[test]
-    fn body_speaks_the_registry_truth() {
+    fn body_is_lean_and_songs_carry_the_set() {
         let registry = registry_with(vec![planted("redis::default")]);
         let source = DynamicChirpSource::new(voice(), "boot-1".into(), Arc::clone(&registry));
 
+        // The heartbeat: anchors plus a rev-only block (A2.1).
         let frame = source.body();
         assert_eq!(frame.stone.id, "sid-1");
         assert_eq!(frame.meta.boot_id.as_deref(), Some("boot-1"));
+        let lean = frame.inventory.services.expect("services block present");
+        assert_eq!(lean.rev, Some(1), "boot snapshot = generation 1");
+        assert!(lean.items.is_empty(), "heartbeats speak revs, not items");
 
-        let inv = frame.inventory.services.expect("services block present");
-        assert_eq!(inv.items.len(), 1);
-        assert_eq!(inv.items[0].name, "redis::default");
-        assert_eq!(inv.items[0].stem, "redis");
-        assert_eq!(inv.items[0].state.status, "running");
-        assert_eq!(inv.items[0].ports["default"], 7300);
-        assert_eq!(inv.rev, Some(1), "boot snapshot = generation 1");
+        // The full voice: the same rev, the actual set (A2.2).
+        let blocks = source.song_blocks();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].0, garden_contract::chirp::DOMAIN_SERVICES);
+        let full: Inventory<ServiceEntry> = serde_json::from_value(blocks[0].1.clone())
+            .expect("services block decodes");
+        assert_eq!(full.items.len(), 1);
+        assert_eq!(full.items[0].name, "redis::default");
+        assert_eq!(full.items[0].stem, "redis");
+        assert_eq!(full.items[0].state.status, "running");
+        assert_eq!(full.items[0].ports["default"], 7300);
+        assert_eq!(full.rev, Some(1));
+    }
+
+    /// The wire cap is the last resort: past 24 items the song carries the
+    /// alphabetical head with `total` declared (ADR-0004 §1).
+    #[test]
+    fn oversized_sets_cap_alphabetically_and_declare_total() {
+        let items: Vec<Offering> =
+            (0..30).map(|i| planted(&format!("svc{:02}::default", i))).collect();
+        let registry = registry_with(items);
+        let source = DynamicChirpSource::new(voice(), "boot-1".into(), Arc::clone(&registry));
+
+        let full: Inventory<ServiceEntry> =
+            serde_json::from_value(source.song_blocks()[0].1.clone()).expect("decodes");
+        assert_eq!(full.items.len(), INVENTORY_CAP, "capped at the wire cap");
+        assert_eq!(full.total, Some(30), "truncation declared, never silent");
+        let names: Vec<&str> = full.items.iter().map(|e| e.name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(names, sorted, "the alphabetical head rides");
+        assert_eq!(names[0], "svc00::default");
     }
 
     /// The S2 heartbeat: a plant bumps the rev; the version watch fires so
-    /// the announcer's existing debounce turns it into a change chirp.
+    /// the announcer's existing debounce turns it into a song.
     #[tokio::test]
     async fn offering_change_bumps_rev_and_version() {
         let registry = registry_with(vec![]);
@@ -250,9 +310,15 @@ mod tests {
             .expect("watch alive");
         assert!(*version.borrow() > before, "version advanced");
 
-        let inv = source.body().inventory.services.expect("services block");
-        assert_eq!(inv.items.len(), 1, "recomposed from the registry");
-        assert_eq!(inv.rev, Some(2), "second generation");
+        let full: Inventory<ServiceEntry> =
+            serde_json::from_value(source.song_blocks()[0].1.clone()).expect("decodes");
+        assert_eq!(full.items.len(), 1, "recomposed from the registry");
+        assert_eq!(full.rev, Some(2), "second generation");
+        assert_eq!(
+            source.body().inventory.services.expect("lean block").rev,
+            Some(2),
+            "the lean register speaks the same generation"
+        );
     }
 
     /// Uproot also bumps: the SET changed even though a stone may now host
@@ -271,9 +337,10 @@ mod tests {
         registry.remove(&id);
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let inv = source.body().inventory.services.expect("block still present");
-        assert!(inv.items.is_empty(), "empty set is still a set");
-        assert_eq!(inv.rev, Some(2), "removal is a generation too");
+        let full: Inventory<ServiceEntry> =
+            serde_json::from_value(source.song_blocks()[0].1.clone()).expect("decodes");
+        assert!(full.items.is_empty(), "empty set is still a set");
+        assert_eq!(full.rev, Some(2), "removal is a generation too");
     }
 }
 

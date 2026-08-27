@@ -46,15 +46,29 @@ async fn answer(
     msg: Ingested,
 ) {
     // Every ask gets our card; a rich ask also gets our inventory
-    // (ADR-0004 §1 — the reply is the third depth). The ask's own depth
-    // decides: undecodable asks degrade to lean, never crash (R2.5).
+    // (ADR-0004 §1 — the reply is the third depth). Inventory comes from
+    // the source's full-voice blocks, never the lean heartbeat body; an
+    // undecodable ask degrades to lean, never crashes (R2.5).
     let rich = serde_json::from_value::<garden_contract::discovery::DiscoveryRequest>(
         msg.announcement.data,
     )
     .map(|req| req.rich)
     .unwrap_or(false);
     let body = source.body();
-    let services = rich.then(|| body.inventory.services.clone()).flatten();
+    let services = if rich {
+        source
+            .song_blocks()
+            .into_iter()
+            .find(|(domain, _)| domain == garden_contract::chirp::DOMAIN_SERVICES)
+            .and_then(|(_, block)| {
+                serde_json::from_value::<garden_contract::chirp::Inventory<
+                    garden_contract::chirp::ServiceEntry,
+                >>(block)
+                .ok()
+            })
+    } else {
+        None
+    };
     let response = DiscoveryResponse {
         stone: body.stone.clone(),
         lantern_endpoint: None,
@@ -121,24 +135,33 @@ mod tests {
                     health: garden_glossary::health::THRIVING.into(),
                     status: garden_glossary::presence::ONLINE.into(),
                 },
+                // Lean register (A2.1): rev-only block, no items.
                 inventory: garden_contract::chirp::InventoryMap {
-                    services: Some(Inventory {
-                        rev: Some(4),
-                        total: None,
-                        items: vec![ServiceEntry {
-                            offering_id: "oid-9".into(),
-                            name: "memcached::default".into(),
-                            stem: "memcached".into(),
-                            category: "data".into(),
-                            state: ServiceState { status: "running".into(), role: None },
-                            ports: Default::default(),
-                        }],
-                    }),
+                    services: Some(Inventory { rev: Some(4), total: None, items: Vec::new() }),
                     ..Default::default()
                 },
                 meta: Default::default(),
                 received: Reception { discovered_at: now, last_seen: now },
             }
+        }
+
+        fn song_blocks(&self) -> Vec<(String, serde_json::Value)> {
+            vec![(
+                garden_contract::chirp::DOMAIN_SERVICES.into(),
+                serde_json::to_value(Inventory {
+                    rev: Some(4),
+                    total: None,
+                    items: vec![ServiceEntry {
+                        offering_id: "oid-9".into(),
+                        name: "memcached::default".into(),
+                        stem: "memcached".into(),
+                        category: "data".into(),
+                        state: ServiceState { status: "running".into(), role: None },
+                        ports: Default::default(),
+                    }],
+                })
+                .unwrap(),
+            )]
         }
 
         fn version(&self) -> tokio::sync::watch::Receiver<u64> {

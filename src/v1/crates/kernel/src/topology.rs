@@ -100,6 +100,7 @@ impl Topology {
     /// handler queue until cancelled. One Topology, one puller.
     pub fn claim(self: &Arc<Self>, dispatcher: &Dispatcher, token: CancellationToken) {
         let mut chirps = dispatcher.claim(announcement::STONE_CHIRP);
+        let mut songs = dispatcher.claim(announcement::STONE_SONG);
         let mut goodbyes = dispatcher.claim(announcement::STONE_GOODBYE);
         let mut responses = dispatcher.claim(announcement::DISCOVERY_RESPONSE);
         let this = Arc::clone(self);
@@ -108,7 +109,11 @@ impl Topology {
                 tokio::select! {
                     _ = token.cancelled() => return,
                     msg = chirps.recv() => match msg {
-                        Some(m) => this.on_chirp(m).await,
+                        Some(m) => this.on_frame(m).await,
+                        None => return,
+                    },
+                    msg = songs.recv() => match msg {
+                        Some(m) => this.on_frame(m).await,
                         None => return,
                     },
                     msg = goodbyes.recv() => match msg {
@@ -124,7 +129,12 @@ impl Topology {
         });
     }
 
-    async fn on_chirp(self: &Arc<Self>, msg: Ingested) {
+    /// A chirp or a song — the frame shape is ONE (B1); the discriminator
+    /// is the mouth, not the meaning. Anchors are per-frame authoritative;
+    /// the inventory merges by per-domain rev (ADR-0004 §2), so a LEAN
+    /// heartbeat never wipes what a song taught and a stale song never
+    /// beats a fresh rev. Candidates and promotion remain S4's work.
+    async fn on_frame(self: &Arc<Self>, msg: Ingested) {
         let Ok(mut frame) = serde_json::from_value::<ChirpFrame>(msg.announcement.data) else {
             tracing::debug!(source = %msg.source, "chirp frame undecodable");
             return;
@@ -148,7 +158,12 @@ impl Topology {
                     });
                 entry.chirps += 1;
                 entry.last_seen = msg.received_at;
-                entry.body = frame.clone();
+                let fresh = &mut entry.body;
+                fresh.stone = frame.stone.clone();
+                fresh.presence = frame.presence.clone();
+                fresh.meta = frame.meta.clone();
+                fresh.inventory.merge_frame(&frame.inventory);
+                fresh.received.last_seen = msg.received_at;
                 TopologyEvent::Seen(Box::new(StoneView {
                     body: frame,
                     last_seen: entry.last_seen,
@@ -276,5 +291,147 @@ impl Topology {
         let _ = self.events_tx.send(event);
         let version = self.peers.lock().version;
         self.version_tx.send_replace(version);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use garden_contract::chirp::{
+        Inventory, Moss, Network, PeerAddress, Presence, Reception, ServiceEntry, ServiceState,
+        Stone,
+    };
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::time::Duration;
+
+    /// A frame for one stone, with an optional services block.
+    fn frame(id: &str, services: Option<Inventory<ServiceEntry>>) -> ChirpFrame {
+        let now = chrono::Utc::now();
+        ChirpFrame {
+            stone: Stone {
+                id: id.into(),
+                name: format!("stone-{id}"),
+                moss: Moss { version: "1.0.0".into() },
+                network: Network {
+                    address: PeerAddress {
+                        ip: IpAddr::from(Ipv4Addr::LOCALHOST),
+                        port: 7285,
+                        tls_port: None,
+                    },
+                    mac: None,
+                },
+            },
+            presence: Presence {
+                health: garden_glossary::health::THRIVING.into(),
+                status: garden_glossary::presence::ONLINE.into(),
+            },
+            inventory: garden_contract::chirp::InventoryMap {
+                services,
+                ..Default::default()
+            },
+            meta: garden_contract::chirp::FrameMeta {
+                proto: Some(garden_contract::consts::PROTO_V1.into()),
+                boot_id: Some("boot-1".into()),
+                ..Default::default()
+            },
+            received: Reception { discovered_at: now, last_seen: now },
+        }
+    }
+
+    fn one_item(rev: u64) -> Inventory<ServiceEntry> {
+        Inventory {
+            rev: Some(rev),
+            total: None,
+            items: vec![ServiceEntry {
+                offering_id: "oid-1".into(),
+                name: "redis::default".into(),
+                stem: "redis".into(),
+                category: "data".into(),
+                state: ServiceState { status: "running".into(), role: None },
+                ports: Default::default(),
+            }],
+        }
+    }
+
+    /// Speak one frame through the claim path and wait for the cache to
+    /// settle (the version watch bumps once per accepted frame).
+    async fn speak(
+        topology: &Arc<Topology>,
+        dispatcher: &Dispatcher,
+        kind: &str,
+        frame: ChirpFrame,
+    ) {
+        let mut version = topology.version();
+        let before = *version.borrow_and_update();
+        dispatcher
+            .ingest(Ingested {
+                announcement: garden_contract::wire::Announcement::new(
+                    kind,
+                    serde_json::to_value(&frame).unwrap(),
+                ),
+                source: SocketAddr::from((Ipv4Addr::LOCALHOST, 50000)),
+                received_at: chrono::Utc::now(),
+            })
+            .await;
+        tokio::time::timeout(Duration::from_secs(2), version.changed())
+            .await
+            .expect("cache must settle")
+            .expect("watch alive");
+        assert!(*version.borrow() > before, "version advanced");
+    }
+
+    /// The two-register promise: a song teaches the set, the lean
+    /// heartbeats that follow must NOT wipe it, and a genuinely newer
+    /// empty-set rev still defends its truth (ADR-0004 §2).
+    #[tokio::test]
+    async fn lean_heartbeat_never_wipes_what_a_song_taught() {
+        let (dispatcher, handle) = Dispatcher::new(16);
+        let topology = Arc::new(Topology::new());
+        let token = CancellationToken::new();
+        topology.claim(&dispatcher, token.clone());
+        tokio::spawn(handle.run(token.clone()));
+
+        speak(
+            &topology,
+            &dispatcher,
+            announcement::STONE_SONG,
+            frame("s1", Some(one_item(2))),
+        )
+        .await;
+        speak(
+            &topology,
+            &dispatcher,
+            announcement::STONE_CHIRP,
+            frame("s1", Some(Inventory { rev: Some(2), total: None, items: Vec::new() })),
+        )
+        .await;
+
+        let stored = topology
+            .snapshot()
+            .into_iter()
+            .find(|v| v.body.stone.id == "s1")
+            .expect("peer cached");
+        let inv = stored.body.inventory.services.expect("block kept");
+        assert_eq!(inv.items.len(), 1, "equal-rev heartbeat keeps song items");
+        assert_eq!(inv.rev, Some(2));
+
+        // A newer rev with an empty set is a fresh truth — it wins.
+        speak(
+            &topology,
+            &dispatcher,
+            announcement::STONE_SONG,
+            frame("s1", Some(Inventory { rev: Some(3), total: None, items: Vec::new() })),
+        )
+        .await;
+        let stored = topology
+            .snapshot()
+            .into_iter()
+            .find(|v| v.body.stone.id == "s1")
+            .expect("peer cached");
+        let inv = stored.body.inventory.services.expect("block kept");
+        assert!(inv.items.is_empty(), "newer empty set defends itself");
+        assert_eq!(inv.rev, Some(3));
+        token.cancel();
     }
 }

@@ -154,10 +154,10 @@ impl InventoryMap {
         map
     }
 
-    /// Insert one domain block: `"services"` decodes into the typed slot;
-    /// every other key is preserved verbatim in the passthrough map.
+    /// Insert one domain block: the services key decodes into the typed
+    /// slot; every other key is preserved verbatim in the passthrough map.
     pub fn insert(&mut self, key: String, value: serde_json::Value) {
-        if key == "services" {
+        if key == DOMAIN_SERVICES {
             let decoded = serde_json::from_value::<Inventory<ServiceEntry>>(value.clone());
             if let Ok(inv) = decoded {
                 self.services = Some(inv);
@@ -191,6 +191,10 @@ impl InventoryMap {
         }
     }
 }
+
+/// The services domain's inventory-map key (A2.1). Wire literal: changing
+/// it is a contract change and must fail the fixtures.
+pub const DOMAIN_SERVICES: &str = "services";
 
 /// Wire cap on inventory items per frame (ADR-0004 §1). Keeps the whole
 /// envelope safely inside the <4 KB budget with signature headroom.

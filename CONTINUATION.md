@@ -1,9 +1,9 @@
 # CONTINUATION — read me first, then delete me
 
 Written 2026-08-26 at a planned pause, mid-epic. Updated 2026-08-27: S3
-landed (rich ask/reply + the songs wire-up); resume at S4. Self-contained
-for a clean context. Verify everything against the tree — trust files over
-this document.
+landed (rich ask/reply + the songs wire-up), S4 landed (candidates pool);
+resume at S5. Self-contained for a clean context. Verify everything against
+the tree — trust files over this document.
 
 ## Project in one paragraph
 
@@ -113,9 +113,14 @@ part{n,of}} · received{discovered_at, last_seen}`.
       a lean heartbeat never wipes what a song taught (regression test
       pins this). S4's merge-on-ingest is thereby ABSORBED here; S4 keeps
       candidates pool + promotion.
-- [ ] S4 — topology cache: candidates pool + promotion (hearing-before-
-      meeting; ghost-pool idiom, 3rd use). The merge_frame-on-ingest half
-      landed with S3b (df3dfbe5).
+- [x] **S4 — candidates pool LANDED (af2ebe41).** Overheard rich answers
+      land as TTL'd `Candidate`s (id required; live truth ignores gossip;
+      first live frame retires the rumor; `CANDIDATE_TTL_SECS=300` in
+      contract consts — outlives the L24 querier window). Candidates are
+      NOT members: no snapshot rendering, no version bump, silent expiry.
+      The old on_response hint-entry behavior is gone (no more `starting`
+      phantoms in observe / no Expired events for stones never met).
+      merge_frame-on-ingest landed earlier with S3b. S4 complete.
 - [ ] S5 — URI grammar cut: `/api/v1` (manifest), `/stone`, `/stone/this`,
       `/stone/{ref}` (404 + Location redirect from topology),
       `/stone/posture` (move from /local/posture), `/garden/stones`
@@ -183,10 +188,13 @@ W7), Lantern, O3 adoption.
 
 ## Resume procedure
 
-1. Read this + `git log --oneline -5` + `git status` (expect clean tree).
-2. Open S4 per epic map: the topology cache's candidates pool —
-   query-backfilled knowledge ("who has X?" answers heard in passing)
-   lands as TTL'd `(source, seen_at)` candidates, always outranked by
-   chirp-borne truth, promoted to full entries on that stone's first live
-   frame (the offerings ghost-prevention pool, 3rd instantiation;
-   ADR-0004 §3). One slice = one commit, gates green at every commit.
+1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
+   dev pushed).
+2. Open S5 per epic map: the URI grammar cut (ADR-0004 §4) — `/api/v1`
+   front-door manifest, `/stone` + `/stone/this` + `/stone/{ref}` (404 +
+   Location redirect from topology), `/stone/posture` (from /local/posture),
+   `/garden/stones` (replaces /garden/observe), `/offerings[/{fqn}]`,
+   `/catalog`. SelfView splice: `/garden/stones` includes self (project
+   from source.body() + registry counts). Gate: route-manifest test also
+   forbids unadvertised emissions. Clean cut, no aliases. One slice = one
+   commit, gates green at every commit.

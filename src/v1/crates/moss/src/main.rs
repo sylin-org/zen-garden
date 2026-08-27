@@ -230,6 +230,9 @@ async fn main() {
     let (dispatcher, dispatcher_handle) = Dispatcher::new(INGRESS_QUEUE);
     let topology = Arc::new(Topology::new());
 
+    // Self is never ingested: the stone's own id bar its frames from the
+    // peers map (ADR-0004 §3) — declare it BEFORE any claim can fire.
+    topology.set_self_id(&identity.stone_id);
     // The topology cache claims its types from the dispatcher (R2.9, L22); expiry sweeps
     // on protocol time (the threshold IS the protocol — R2.8).
     topology.claim(&dispatcher, token.clone());

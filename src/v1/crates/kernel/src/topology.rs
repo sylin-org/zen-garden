@@ -73,6 +73,9 @@ struct Peers {
 pub struct Topology {
     peers: Arc<parking_lot::Mutex<Peers>>,
     candidates: Arc<parking_lot::Mutex<HashMap<String, Candidate>>>,
+    /// This stone's own id, once known: self is never ingested (ADR-0004
+    /// §3 — the splice is the projection's job, not the peers map's).
+    self_id: Arc<parking_lot::Mutex<Option<String>>>,
     events_tx: broadcast::Sender<TopologyEvent>,
     version_tx: watch::Sender<u64>,
     chirps_total: Arc<AtomicU64>,
@@ -91,10 +94,17 @@ impl Topology {
         Self {
             peers: Arc::new(parking_lot::Mutex::new(Peers::default())),
             candidates: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            self_id: Arc::new(parking_lot::Mutex::new(None)),
             events_tx,
             version_tx,
             chirps_total: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Declare this stone's id; frames speaking it are refused at ingest
+    /// (multicast loop-back would otherwise seat self among the peers).
+    pub fn set_self_id(&self, id: &str) {
+        *self.self_id.lock() = Some(id.to_string());
     }
 
     /// Subscribe to membership events (L18: events, not polls).
@@ -177,6 +187,11 @@ impl Topology {
             tracing::debug!(source = %msg.source, "chirp frame undecodable");
             return;
         };
+        // Self is never ingested (ADR-0004 §3): multicast loop-back echoes
+        // our own voice; the splice renders it, the peers map must not seat it.
+        if self.self_id.lock().as_deref() == Some(frame.stone.id.as_str()) {
+            return;
+        }
         // Reception facts are OURS: overwrite the placeholders the sender
         // emitted (first sight keeps discovered_at via or_insert below).
         frame.received.last_seen = msg.received_at;
@@ -426,6 +441,36 @@ mod tests {
             .expect("cache must settle")
             .expect("watch alive");
         assert!(*version.borrow() > before, "version advanced");
+    }
+
+    /// Self is never ingested (ADR-0004 §3): loop-back echoes of our own
+    /// voice must not seat us among the peers — the splice renders self.
+    #[tokio::test]
+    async fn self_frames_never_seat_self_among_peers() {
+        let (dispatcher, handle) = Dispatcher::new(16);
+        let topology = Arc::new(Topology::new());
+        topology.set_self_id("sid-self");
+        let token = CancellationToken::new();
+        topology.claim(&dispatcher, token.clone());
+        tokio::spawn(handle.run(token.clone()));
+
+        // Refused frames never bump the version — deliver and settle by time.
+        dispatcher
+            .ingest(Ingested {
+                announcement: garden_contract::wire::Announcement::new(
+                    announcement::STONE_CHIRP,
+                    serde_json::to_value(frame("sid-self", Some(one_item(1)))).unwrap(),
+                ),
+                source: SocketAddr::from((Ipv4Addr::LOCALHOST, 50002)),
+                received_at: chrono::Utc::now(),
+            })
+            .await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            topology.snapshot().is_empty(),
+            "our own voice must not seat us among the peers"
+        );
+        token.cancel();
     }
 
     /// The two-register promise: a song teaches the set, the lean

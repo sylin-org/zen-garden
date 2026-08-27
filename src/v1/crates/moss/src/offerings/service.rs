@@ -178,6 +178,24 @@ impl OfferingService {
         Ok(offering)
     }
 
+    /// Placed managed offerings with a TRUSTED declared will (ADR-0005):
+    /// the scheduler's capture set. Untrusted offerings are surfaced
+    /// honestly on their faces, never silently tarred here.
+    pub fn capture_targets(&self) -> Vec<(Offering, super::capture::CapturePolicy)> {
+        let mut out = Vec::new();
+        for o in self.registry.snapshot() {
+            if o.managed().is_none() {
+                continue;
+            }
+            if let Some(manifest) = self.catalog.get(&o.offering)
+                && let Some(policy) = &manifest.capture
+            {
+                out.push((o, policy.clone()));
+            }
+        }
+        out
+    }
+
     fn audit(&self, name: &str, kind: &str, details: serde_json::Value) {
         let log = EventLog::for_dir(&self.dirs_root.base, name);
         if let Err(e) = log.append(kind, details) {

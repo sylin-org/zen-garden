@@ -255,6 +255,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
 async fn posture(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let uptime = chrono::Utc::now() - state.started_at;
     let dispatch = state.dispatcher.stats();
+    let (capture_tracked, capture_failed) = state.capture.run_stats();
     Json(serde_json::json!({
         "data": {
             "asset": "moss",
@@ -282,6 +283,10 @@ async fn posture(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> 
                 "catalog": state.garden.catalog_size(),
             },
             "runtimes": state.garden.available_worlds(),
+            "capture": {
+                "tracked": capture_tracked,
+                "failed": capture_failed
+            },
         }
     }))
 }
@@ -488,8 +493,7 @@ async fn capture_offer(
     Path(name): Path<String>,
 ) -> ApiResult {
     use crate::offerings::capture::{readiness, Readiness};
-    use crate::offerings::capture_run::{RunInfo, Workload};
-    use crate::offerings::model::Status;
+    use crate::offerings::capture_run::RunInfo;
 
     let fqn = garden_glossary::fqn::canonicalize(&name)
         .map_err(|e| CommandError::Conflict(e.to_string()))?;
@@ -524,29 +528,8 @@ async fn capture_offer(
         .into())
     };
 
-    let dir = state.garden.dirs_root.dir_for(&offering.name).root;
-    let volumes = offering
-        .managed()
-        .map(|m| {
-            m.spec
-                .volumes
-                .iter()
-                .map(|v| {
-                    let name = std::path::Path::new(&v.host_path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| v.host_path.clone());
-                    (std::path::PathBuf::from(&v.host_path), name)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let workload = Workload {
-        dir,
-        volumes,
-        container: crate::offerings::docker::DockerRuntime::container_name(&offering.name),
-        running: offering.status == Status::Running,
-    };
+    let workload =
+        crate::offerings::capture_run::workload_for(&offering, &state.garden.dirs_root);
 
     let runner = Arc::clone(&state.capture);
     let policy = policy.clone();
@@ -765,11 +748,41 @@ async fn show_offering(
     let fqn = garden_glossary::fqn::canonicalize(&name)
         .map_err(|e| CommandError::Conflict(e.to_string()))?;
     match state.garden.placed(&fqn) {
-        Some(o) => Ok(Json(
-            serde_json::json!({ "data": { "offering": record_view(&o) } }),
-        )),
+        Some(o) => {
+            let capture = capture_view(&state, &o);
+            Ok(Json(
+                serde_json::json!({ "data": { "offering": record_view(&o), "capture": capture } }),
+            ))
+        }
         None => Err(CommandError::NotFound(fqn).into()),
     }
+}
+
+/// The living will's surfacing for one offering (L3: never silent).
+/// Readiness comes from the catalog manifest's declared policy; volumes
+/// without a will are UNTRUSTED and say so.
+fn capture_view(
+    state: &AppState,
+    offering: &crate::offerings::model::Offering,
+) -> serde_json::Value {
+    let manifest = state.garden.catalog.get(&offering.offering);
+    let declared = manifest.and_then(|m| m.capture.as_ref());
+    let readiness = match (declared, offering.managed()) {
+        (Some(_), _) => "trusted",
+        (None, Some(m)) if !m.spec.volumes.is_empty() => "untrusted",
+        _ => "nothing-to-preserve",
+    };
+    let mut v = serde_json::json!({ "readiness": readiness });
+    if let Some(policy) = declared {
+        v["mode"] = serde_json::json!(policy.mode.as_str());
+        if policy.mode == crate::offerings::capture::CaptureMode::LockAndCopy {
+            v["max_locked_s"] = serde_json::json!(policy.max_locked_s);
+        }
+    }
+    if let Some(run) = state.capture.last_run(&offering.name) {
+        v["last_run"] = serde_json::json!(run);
+    }
+    v
 }
 
 async fn rest_offering(State(state): State<Arc<AppState>>, Path(name): Path<String>) -> ApiResult {

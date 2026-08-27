@@ -275,6 +275,7 @@ async fn main() {
         Arc::clone(&storage),
         hook_runner,
     ));
+
     let announce_socket = ingress.socket();
     tokio::spawn(announce::run(
         Arc::clone(&announce_socket),
@@ -379,6 +380,15 @@ async fn main() {
         }
     })
     .await;
+
+    // The capture scheduler (ADR-0005 §3: five daily implies daily) walks
+    // the placed set against the catalog's declared wills.
+    tokio::spawn(offerings::capture_run::run_scheduler(
+        Arc::clone(&garden),
+        Arc::clone(&capture_runner),
+        std::time::Duration::from_secs(offerings::capture_run::CAPTURE_CADENCE_SECS),
+        token.clone(),
+    ));
 
     // HTTP surface, last: the garden answers once it can hear. The same
     // chirp source composes the SelfView — one identity, many mouths (B1).

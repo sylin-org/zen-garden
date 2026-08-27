@@ -244,6 +244,14 @@ impl Runner {
         Ok((count, final_hash))
     }
 
+    /// Run ledger statistics for posture (B3): how many offerings have
+    /// runs tracked, and how many of those last failed.
+    pub fn run_stats(&self) -> (usize, usize) {
+        let runs = self.runs.lock();
+        let failed = runs.values().filter(|r| r.phase == "failed").count();
+        (runs.len(), failed)
+    }
+
     /// Publish the caller-visible "accepted" record before the task starts.
     pub fn announce(&self, info: RunInfo) {
         self.record(info);
@@ -751,6 +759,79 @@ pub fn unpack_volumes(checkpoint: &Path, volumes_dir: &Path) -> Result<usize, St
     }
     Ok(count)
 }
+/// The capture cadence (§3: rotation keeps five DAILY checkpoints - the
+/// cadence is the protocol's own period, R2.8).
+pub const CAPTURE_CADENCE_SECS: u64 = 86_400;
+
+/// Build the imprint workload for a placed offering (shared by the HTTP
+/// face and the scheduler - one composer, many mouths, B1).
+pub fn workload_for(
+    offering: &super::model::Offering,
+    dirs_root: &super::directory::OfferingsRoot,
+) -> Workload {
+    let dir = dirs_root.dir_for(&offering.name).root;
+    let volumes = offering
+        .managed()
+        .map(|m| {
+            m.spec
+                .volumes
+                .iter()
+                .map(|v| {
+                    let name = std::path::Path::new(&v.host_path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| v.host_path.clone());
+                    (std::path::PathBuf::from(&v.host_path), name)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Workload {
+        dir,
+        volumes,
+        container: super::docker::DockerRuntime::container_name(&offering.name),
+        running: offering.status == super::model::Status::Running,
+    }
+}
+
+fn terminal(phase: &str) -> bool {
+    phase == "done" || phase == "failed"
+}
+
+/// The capture scheduler (§3's "five daily"): every cadence, every placed
+/// managed offering with a TRUSTED declared will runs it. Untrusted
+/// offerings are never silently tarred; in-flight runs are never doubled.
+pub async fn run_scheduler(
+    service: Arc<super::service::OfferingService>,
+    runner: Arc<Runner>,
+    cadence: Duration,
+    token: tokio_util::sync::CancellationToken,
+) {
+    let mut ticker = tokio::time::interval(cadence);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = token.cancelled() => return,
+            _ = ticker.tick() => {
+                for (offering, policy) in service.capture_targets() {
+                    if let Some(last) = runner.last_run(&offering.name)
+                        && !terminal(&last.phase)
+                    {
+                        continue; // a will already in flight is not doubled
+                    }
+                    let workload = workload_for(&offering, &service.dirs_root);
+                    let runner = Arc::clone(&runner);
+                    let fqn = offering.name.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = runner.execute_named(&fqn, &policy, &workload, &uuid::Uuid::now_v7().to_string()).await {
+                            tracing::warn!(offering = %fqn, error = %e, "scheduled capture failed");
+                        }
+                    });
+                }
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1027,6 +1108,85 @@ mod tests {
         );
         // The signature does NOT land here — volumes only; replant owns it.
         assert!(!fresh.join("record.json").exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The scheduler's promise: a placed offering with a TRUSTED declared
+    /// will runs it on the cadence; nothing else is silently tarred.
+    #[tokio::test]
+    async fn the_scheduler_runs_declared_wills() {
+        use crate::offerings::directory::OfferingsRoot;
+        use crate::offerings::manifest::Catalog;
+        use crate::offerings::registry::{MemorySnapshotStore, Registry};
+        use crate::offerings::runtime::{NullRuntime, RuntimeRegistry};
+        use crate::offerings::service::OfferingService;
+        use crate::offerings::{model::Location, model::ManagedData, model::ModeData, model::Offering, model::Status};
+
+        let tmp = std::env::temp_dir().join(format!("zg-sched-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let yaml = "kind: software
+name: db
+category: data
+description: x
+managed:
+  image: db:7
+capture:
+  mode: stateless
+";
+        let catalog = Catalog::embedded(vec![("db", yaml)]).unwrap();
+        let registry = Arc::new(Registry::new(Arc::new(MemorySnapshotStore::default())));
+        let worlds = Arc::new(RuntimeRegistry::build(vec![Arc::new(NullRuntime)]));
+        let service = Arc::new(OfferingService::new(
+            Arc::clone(&registry),
+            worlds,
+            "null".into(),
+            Arc::new(catalog),
+            Arc::new(crate::offerings::facts::Factsheet::empty()),
+            OfferingsRoot::new(tmp.join("offerings")),
+            crate::offerings::ports::Pool::default(),
+        ));
+        // A placed managed offering whose stem declares the will.
+        registry.register(Offering {
+            offering_id: uuid::Uuid::now_v7().to_string(),
+            name: "db::default".into(),
+            offering: "db".into(),
+            category: "data".into(),
+            status: Status::Running,
+            location: Location { host: "localhost".into(), port: 0, protocol: "http".into() },
+            mode_data: ModeData::Managed(ManagedData {
+                runtime_kind: "null".into(),
+                spec: Default::default(),
+                port_map: Default::default(),
+                plan: None,
+            }),
+            registered_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        });
+        assert_eq!(service.capture_targets().len(), 1, "the declared will is a target");
+
+        let (hooks, _) = Scripted::recording();
+        let runner = Arc::new(runner(&tmp, hooks));
+        let token = tokio_util::sync::CancellationToken::new();
+        tokio::spawn(run_scheduler(
+            Arc::clone(&service),
+            Arc::clone(&runner),
+            Duration::from_millis(100),
+            token.clone(),
+        ));
+
+        // The will executes on cadence: a committed checkpoint appears.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut committed = false;
+        while std::time::Instant::now() < deadline {
+            if latest_checkpoint(&tmp.join("checkpoints"), "db::default").is_some() {
+                committed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        token.cancel();
+        assert!(committed, "the scheduler ran the declared will");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

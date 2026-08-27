@@ -709,7 +709,8 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
             if cli.json {
                 return emit_pretty(&v);
             }
-            render_explain(&target, envelope(&v, "offering")?)
+            let data = envelope_plain(&v)?;
+            render_explain(&target, data["offering"].clone(), &data)
         }
         Command::Rest { name } => {
             let (_, v) = cli.stone_op("POST", paths::rest(name), None).await?;
@@ -1010,7 +1011,11 @@ fn describe_ports(container: &serde_json::Value, host: &serde_json::Value) -> St
 }
 
 /// §5.3's placed record rendered by hand — the delightful reference.
-fn render_explain(target: &Candidate, offering: serde_json::Value) -> Result<(), String> {
+fn render_explain(
+    target: &Candidate,
+    offering: serde_json::Value,
+    data: &serde_json::Value,
+) -> Result<(), String> {
     let name = display_name(offering["identity"]["name"].as_str().unwrap_or("(unnamed)"));
     let status = offering["state"]["status"].as_str().unwrap_or("?");
     let mode = offering["mode"]["mode"].as_str().unwrap_or("?");
@@ -1043,6 +1048,21 @@ fn render_explain(target: &Candidate, offering: serde_json::Value) -> Result<(),
         }
     } else {
         println!("  spec       ({mode}; no workload container)");
+    }
+
+    // The living will, surfaced honestly (L3: never silent about gaps).
+    if let Some(capture) = data.get("capture") {
+        let readiness = capture["readiness"].as_str().unwrap_or("?");
+        match readiness {
+            "trusted" => {
+                let mode = capture["mode"].as_str().unwrap_or("?");
+                println!("  capture    {mode} (trusted)");
+            }
+            "untrusted" => println!(
+                "  capture    UNTRUSTED - volumes exist but no will is declared;\n             raw copy would be a lie. Declare `capture:` in the manifest."
+            ),
+            _ => {}
+        }
     }
 
     match offering["mode"].get("plan") {
@@ -1257,7 +1277,7 @@ mod tests {
             "registered_at": "2026-08-26T00:00:00Z",
             "updated_at": "2026-08-26T00:00:00Z"
         });
-        render_explain(&pinned(), offering).unwrap();
+        render_explain(&pinned(), offering, &serde_json::json!({})).unwrap();
     }
 
     #[test]
@@ -1267,6 +1287,7 @@ mod tests {
         render_explain(
             &pinned(),
             serde_json::json!({ "mode": "adopted", "plan": { "decisions": [ {"rule": "r"} ] } }),
+            &serde_json::json!({}),
         )
         .unwrap();
         render_status("awake", &serde_json::json!({})).unwrap();

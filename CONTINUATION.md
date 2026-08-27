@@ -2,7 +2,7 @@
 
 Written 2026-08-26 at a planned pause, mid-epic. Updated 2026-08-27: S3
 (songs/rich ask), S4 (candidates), S5 (URI cut), S6 (rake sync), S5.5
-(persistence v3) all landed; resume at S7a. Self-contained for a clean
+(persistence v3), S7a (storage MVP) all landed; resume at S7b. Self-contained for a clean
 context. Verify everything against the tree — trust files over this doc.
 
 ## Project in one paragraph
@@ -151,16 +151,26 @@ part{n,of}} · received{discovered_at, last_seen}`.
       re-sectioned; idempotent; HTTP offerings faces render the SAME v3
       view (rake renderers updated). model::Offering's flat serde REMAINS
       as the legacy reader — that is the forever-compat surface (R0.5).
-- [ ] S7a — storage MVP local: `offerings/storage.rs` — Bank model
-      {fqn(BankId grammar), device_id, state(mounted/ejected), roles[],
-      capacity/used via sysinfo Disks}, scan of removable volumes,
-      **adopt ceremony**: `rake storage adopt <device> --name X` + POST
-      `/api/v1/storage/adopt` (writes `.zen-garden/manifest.json` per
-      STORAGE-0009 dotfolder law), mount watcher (sysinfo refresh or
-      windows events) bumps bank_rev → song.
-- [ ] S7b — storage wire: type the `banks` slot, cache rows via same
-      ingest, `/storage` + `/garden/storage` faces (grid law ADR-0004 §4),
-      eject verb (state bump, liveness inherited — ADR-0005 §8).
+- [x] **S7a — storage MVP LANDED (af0abed6).** `offerings/storage.rs`:
+      Bank {fqn (ADR-0003 grammar), device_id GUIDv7, state mounted|ejected
+      (glossary::bank), roles[], capacity/used TELEMETRY}; scan of
+      removable volumes (sysinfo); adopt ceremony writes
+      `.zen-garden/manifest.json` (STORAGE-0009) — `rake storage adopt` 1:1
+      with POST `/api/v1/storage/adopt` (operator's new standing law: every
+      CLI verb has its API face, recorded in MEMORY.md); `rake storage`
+      1:1 with GET `/api/v1/storage` (banks + adoptable). Mount watcher
+      (5s edge poll) reconciles: mount/eject bump, measurements ride.
+      **Pulled forward from S7b:** the contract `banks` slot is TYPED
+      (`Inventory<BankEntry>`, DOMAIN_BANKS const) and merge_frame
+      generalizes rev-merge to it — no interim passthrough debt. Source
+      composes banks in BOTH registers (lean rev-only, songs full);
+      follow_storage_changes wires storage bumps -> bank_rev -> song.
+- [ ] S7b — storage wire remainder: banks already typed + adopt/list faces
+      landed (S7a). REMAINING: `/garden/storage` face (garden-wide banks
+      from the topology cache, grid law ADR-0004 §4), eject verb (state
+      bump; liveness inherited — ADR-0005 §8) with its 1:1 `rake storage
+      eject`, cache rows verified end-to-end (peer songs -> topology -> rake
+      observe rendering shows foreign banks).
 - [ ] S8 — cross-compile linux-x64 (existing installer/v1 Dockerfile),
       deploy to 3 stones (~/zen-v1/, plink), upgrade binaries.
 - [ ] W6 witness (record in WITNESSES.md): plant on A visible from B ≤1
@@ -207,10 +217,6 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. Open S7a per epic map: storage MVP local — `offerings/storage.rs` Bank
-   model {fqn(BankId grammar), device_id, state(mounted/ejected), roles[],
-   capacity/used via sysinfo Disks}, scan of removable volumes, the ADOPT
-   CEREMONY (`rake storage adopt <device> --name X` + POST
-   `/api/v1/storage/adopt`, writes `.zen-garden/manifest.json` per
-   STORAGE-0009), mount watcher bumps bank_rev → song (ADR-0005 §8).
-   One slice = one commit, gates green at every commit.
+2. Open S7b per epic map: `/garden/storage` face + eject verb (API + rake,
+   1:1) + end-to-end cache verification of foreign banks. One slice = one
+   commit, gates green at every commit.

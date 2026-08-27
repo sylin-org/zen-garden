@@ -25,6 +25,9 @@ this file points at; state lives once, decisions live once.
 
 ## Standing preferences
 
+- **Every CLI action has a 1:1 API face** (operator ruling, 2026-08-27):
+  a rake verb lands only with its API counterpart in the same slice
+  (`rake storage adopt` <-> `POST /api/v1/storage/adopt`), and vice versa.
 - Trust files over summaries: re-verify against the tree at every session start
   (`git log --oneline`, workspace clippy/tests) before continuing prior work.
 - One task = one commit; commits follow existing style (`feat(v1): …`) and the

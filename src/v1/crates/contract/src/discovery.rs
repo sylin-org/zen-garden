@@ -16,6 +16,12 @@ pub struct DiscoveryRequest {
     pub request_id: String,
     /// Who is asking (a stone name or client label).
     pub requester: String,
+    /// Rich ask (ADR-0004 §1): responders include their service inventory
+    /// so a newcomer populates its cache in one exchange. Absent/false =
+    /// lean (legacy answer shape). Absent from the wire while false —
+    /// legacy request bytes stay identical.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rich: bool,
 }
 
 impl DiscoveryRequest {
@@ -25,12 +31,23 @@ impl DiscoveryRequest {
             discover: TARGET_MOSS.into(),
             request_id: uuid::Uuid::now_v7().to_string(),
             requester: requester.into(),
+            rich: false,
+        }
+    }
+
+    /// The newcomer's opening question, rich form: "who are you guys, and
+    /// what do you have?"
+    pub fn for_moss_rich(requester: impl Into<String>) -> Self {
+        Self {
+            rich: true,
+            ..Self::for_moss(requester)
         }
     }
 }
 
 /// Where a willing respondent lives. Lightweight on purpose: enough to
-/// open an HTTP conversation, no more.
+/// open an HTTP conversation, no more — UNLESS the ask was rich, in which
+/// case the inventory rides here and hearts beats confirm it later.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscoveryResponse {
     /// Responding stone's identity; absent on some v0 speakers.
@@ -43,6 +60,15 @@ pub struct DiscoveryResponse {
     /// Legacy Lantern registry endpoint (v0 field; v1 emits absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lantern_endpoint: Option<String>,
+    /// Rich answer payload (present iff the request carried rich:true):
+    /// the responder's own `services[]` projection + revision anchors,
+    /// identical shapes to [`crate::chirp::ChirpBody`] fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub services: Option<Vec<crate::chirp::ServiceEntry>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub svc_rev: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub svc_total: Option<u32>,
 }
 
 /// The `discover` value meaning "stones, answer me".

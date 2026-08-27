@@ -73,5 +73,7 @@ pub fn static_body(
         proto: None,
         boot_id: Some(boot_id),
         seq: None,
+        svc_rev: None,
+        svc_total: None,
     }
 }

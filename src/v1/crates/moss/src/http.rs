@@ -372,6 +372,8 @@ mod tests {
                 proto: Some(PROTO_V1.into()),
                 boot_id: None,
                 seq: Some(7),
+                svc_rev: Some(1),
+                svc_total: None,
             },
             last_seen: now,
             chirps: 3,

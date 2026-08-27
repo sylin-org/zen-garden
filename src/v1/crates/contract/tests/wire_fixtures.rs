@@ -38,6 +38,8 @@ fn sample_body() -> ChirpBody {
         proto: Some(consts::PROTO_V1.into()),
         boot_id: Some("0198e0c7-0000-7000-8000-0000000000bb".into()),
         seq: Some(42),
+        svc_rev: None,
+        svc_total: None,
     }
 }
 
@@ -140,6 +142,7 @@ fn discovery_request_shape_matches_v0() {
         discover: "moss".into(),
         request_id: "0198e0c7-0000-7000-8000-0000000000f1".into(),
         requester: "rake-cli".into(),
+        rich: false,
     };
     let v = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -150,6 +153,56 @@ fn discovery_request_shape_matches_v0() {
             "requester": "rake-cli",
         })
     );
+}
+
+/// ADR-0004 §1: rich asks flag themselves explicitly; lean requests stay
+/// byte-identical to their v0 ancestors.
+#[test]
+fn rich_request_flags_itself_and_lean_requests_stay_silent() {
+    let rich = garden_contract::discovery::DiscoveryRequest::for_moss_rich("newcomer");
+    let v = serde_json::to_value(&rich).unwrap();
+    assert_eq!(v["rich"], true);
+    let lean = garden_contract::discovery::DiscoveryRequest::for_moss("rake");
+    let v = serde_json::to_value(&lean).unwrap();
+    assert!(v.get("rich").is_none(), "lean must not emit the flag at all");
+}
+
+/// ADR-0004 §1: depth-tier anchors ride every frame when known, stay
+/// silent when unknown (v0 speakers), and truncation is declared.
+#[test]
+fn depth_tier_anchors_roundtrip_and_declare_truncation() {
+    let mut body = sample_body();
+    body.svc_rev = Some(7);
+    body.svc_total = Some(31);
+    let v = serde_json::to_value(&body).unwrap();
+    assert_eq!(v["svc_rev"], 7);
+    assert_eq!(v["svc_total"], 31);
+
+    // Rich discovery answer carries the same anchors + inventory.
+    let res = garden_contract::discovery::DiscoveryResponse {
+        stone_id: Some("sid".into()),
+        stone_name: "stone-rich".into(),
+        address: PeerAddress {
+            ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 9)),
+            port: 7285,
+            tls_port: None,
+        },
+        moss_version: "1.0.0".into(),
+        lantern_endpoint: None,
+        services: Some(vec![]),
+        svc_rev: Some(3),
+        svc_total: Some(24),
+    };
+    let v = serde_json::to_value(&res).unwrap();
+    assert_eq!(v["svc_rev"], 3);
+    assert!(v.get("services").is_some());
+}
+
+/// The wire cap is part of the protocol — pinned so nobody "improves" it
+/// without noticing envelopes grow past budget.
+#[test]
+fn services_cap_is_the_advertised_constant() {
+    assert_eq!(garden_contract::chirp::SERVICES_CAP, 24);
 }
 
 #[test]
@@ -165,6 +218,9 @@ fn discovery_response_omits_absent_options() {
         },
         moss_version: "1.0.0".into(),
         lantern_endpoint: None,
+        services: None,
+        svc_rev: None,
+        svc_total: None,
     };
     let v = serde_json::to_value(&res).unwrap();
     assert!(v.get("lantern_endpoint").is_none());

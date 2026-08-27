@@ -179,6 +179,8 @@ impl Topology {
                 proto: None,
                 boot_id: None,
                 seq: None,
+                svc_rev: None,
+                svc_total: None,
             };
             let event = {
                 let entry = peers.map.entry(hint_body.stone_id.clone()).or_insert_with(|| StoneView {

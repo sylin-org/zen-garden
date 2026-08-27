@@ -87,4 +87,18 @@ pub struct ChirpBody {
     /// Monotonic chirp counter for this boot — gap detection, ordering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<u64>,
+    // ---- depth-tier extensions (ADR-0004 §1): anchors ride EVERY frame ----
+    /// Monotonic generation of the offering set. Present even on lean
+    /// frames: rev comparison is the merge function; a mismatch heals by
+    /// rich ask within one interval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub svc_rev: Option<u64>,
+    /// Total offerings hosted when `services` below is truncated to the
+    /// wire cap; absent = everything fit (truncation declared, never silent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub svc_total: Option<u32>,
 }
+
+/// Wire cap on `services[]` per frame (ADR-0004 §1). ~24 × ~45 B keeps the
+/// whole envelope safely inside the <4 KB budget with signature headroom.
+pub const SERVICES_CAP: usize = 24;

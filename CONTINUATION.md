@@ -10,9 +10,16 @@ Lantern, O3 adoption, then the M-milestones.
 
 ## NEW EPIC OPEN (2026-08-27): the living will (ADR-0005, W7)
 
-Slices 1-3 LANDED — the capture grammar (`offerings/capture.rs`), the
-two-phase pipeline (`offerings/capture_run.rs`, `310a0522`), and
-checkpoint verify/unpack + sink-role declaration (`7993233a`):
+Slices 1-4 LANDED — the capture grammar (`offerings/capture.rs`), the
+two-phase pipeline (`offerings/capture_run.rs`, `310a0522`), checkpoint
+verify/unpack + sink-role declaration (`7993233a`), and REPLANT
+(`a3553e17`): Runner.select_checkpoint (local ledger + mounted sink
+banks), restore_into (fresh-target only - refuses to overwrite an
+incarnation), service.replant (place from the STORED spec, no catalog
+needed; audit chain opens Replanted{predecessor_offering_id,
+final_hash}); 1:1 faces POST `/api/v1/offerings/{fqn}/replant` {run?} +
+`rake replant {name} [--run]`; checkpoints now carry events.jsonl (the
+audit ledger rides the will):
 verify_checkpoint proves archive + per-file SHA-256 (tamper = loud
 refusal), unpack_volumes restores traversal-checked volumes fresh,
 latest_checkpoint selects (replant composes all three); Storage::set_roles
@@ -37,12 +44,12 @@ classifier (NothingToPreserve/Trusted/Untrusted) for honest surfaces;
 `capture` sits outside WorkloadSpec AND plan_hash (test-pinned: policy
 edits never flip plans). DEBT D15 opened: corpus capture coverage by RC0.
 
-NEXT SLICES (ADR-0005 §§2-6): (4, remainder) roles already declared 1:1 —
-remaining: adopt request may carry roles inline; (5) replant: signature+
-checkpoint -> directory -> place() -> Replanted audit event (composes
-latest_checkpoint + verify + unpack_volumes, all standing ready); (6) W7
-witness: kill the stone, watch the garden regrow it, connection string
-unchanged. Self-contained for a clean
+REMAINING: (5) capture/capture-status/replant surfaced in `explain` and
+posture (readiness classifier is ready for rendering); scheduled capture
+cadence (ADR-0005's "five daily" rotation implies a scheduler); adopt
+request carrying roles inline. THEN (6) W7 witness: kill a stone holding
+a captured offering, replant on another stone from the ferried sink
+checkpoint, connection string unchanged. Self-contained for a clean
 context. Verify everything against the tree — trust files over this doc.
 
 ## Project in one paragraph
@@ -268,8 +275,6 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. Continue the living-will epic: slice 4 per the map above — REPLANT
-   (`replant` verb pair: rake + POST /api/v1/offerings/{fqn}/replant,
-   composes select/verify/unpack with a fresh directory + place(); the
-   audit chain opens Replanted{predecessor_offering_id, final_hash}). One
+2. Continue the living-will epic: slice 5 per the map above — surface
+   readiness/capture state in explain + posture, then the scheduler. One
    slice = one commit, gates green at every commit.

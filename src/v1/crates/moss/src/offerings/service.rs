@@ -120,6 +120,64 @@ impl OfferingService {
     }
 
     /// Append to an offering's audit ledger; failures warn but never block.
+    /// Replant (ADR-0005 §6): bring a restored incarnation to life.
+    /// The offering arrives from a verified checkpoint's directory -
+    /// SAME FQN, SAME stored spec, SAME connection strings. Place runs
+    /// from the stored spec (no catalog needed: resurrection needs no
+    /// original request), allocations ride their ledgered homes, and the
+    /// audit chain opens with Replanted{predecessor, final_hash}.
+    pub async fn replant(
+        &self,
+        mut offering: Offering,
+        final_hash: &str,
+    ) -> Result<Offering, CommandError> {
+        let fqn = offering.name.clone();
+        if self.placed(&fqn).is_some() {
+            return Err(CommandError::Conflict(format!(
+                "'{fqn}' is already incarnate here - replant restores the dead, not the doubled"
+            )));
+        }
+        let ModeData::Managed(managed) = &offering.mode_data else {
+            return Err(CommandError::Conflict(format!(
+                "'{fqn}' is not a managed offering - only managed work replants"
+            )));
+        };
+        let kind = if managed.runtime_kind.is_empty() {
+            self.default_world.clone()
+        } else {
+            managed.runtime_kind.clone()
+        };
+        let rt = self.worlds.by_kind(&kind).map_err(CommandError::Conflict)?;
+        let placement = rt
+            .place(&fqn, &managed.spec)
+            .await
+            .map_err(CommandError::Runtime)?;
+
+        let now = chrono::Utc::now();
+        offering.status = Status::Running;
+        offering.location = Location {
+            host: "localhost".into(),
+            port: placement.named_host_ports.values().copied().next().unwrap_or(0),
+            protocol: "http".into(),
+        };
+        if let ModeData::Managed(m) = &mut offering.mode_data {
+            m.port_map = placement.named_host_ports;
+        }
+        offering.updated_at = now;
+        self.registry.register(offering.clone());
+        self.audit(
+            &fqn,
+            "Replanted",
+            serde_json::json!({
+                "predecessor_offering_id": offering.offering_id,
+                "final_hash": final_hash,
+                "world": kind,
+            }),
+        );
+        tracing::info!(offering = %fqn, world = %kind, "replanted from its checkpoint");
+        Ok(offering)
+    }
+
     fn audit(&self, name: &str, kind: &str, details: serde_json::Value) {
         let log = EventLog::for_dir(&self.dirs_root.base, name);
         if let Err(e) = log.append(kind, details) {

@@ -121,6 +121,15 @@ enum Command {
         #[arg(long)]
         last: bool,
     },
+    /// Replant an offering from its checkpoint: verify, restore, place.
+    /// Same FQN, same connection strings - the incarnation returns.
+    Replant {
+        /// The offering's name (FQN or bare stem).
+        name: String,
+        /// The checkpoint run; absent = the newest.
+        #[arg(long)]
+        run: Option<String>,
+    },
 }
 
 /// Storage verbs — each has its 1:1 API face (`/api/v1/storage*`).
@@ -506,9 +515,8 @@ async fn run(cli: &Cli) -> Result<(), String> {
             }
         }
         Command::Offer { .. } | Command::Explain { .. } | Command::Rest { .. }
-        | Command::Wake { .. } | Command::Uproot { .. } | Command::Capture { .. } => {
-            cmd_stone_op(cli).await
-        }
+        | Command::Wake { .. } | Command::Uproot { .. } | Command::Capture { .. }
+        | Command::Replant { .. } => cmd_stone_op(cli).await,
         Command::Storage { cmd } => cmd_storage(cli, cmd.as_ref()).await,
     }
 }
@@ -755,6 +763,35 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
             println!("  the will executes in the background; `rake capture {name} --last` reports progress");
             Ok(())
         }
+        Command::Replant { name, run } => {
+            let mut body = serde_json::Map::new();
+            if let Some(r) = run {
+                body.insert("run".into(), serde_json::json!(r));
+            }
+            let (_, v) = cli
+                .stone_op(
+                    "POST",
+                    paths::replant(name),
+                    Some(&serde_json::Value::Object(body)),
+                )
+                .await?;
+            if cli.json {
+                return emit_pretty(&v);
+            }
+            let o = envelope_plain(&v)?;
+            println!(
+                "{} replanted — {}",
+                display_name(name),
+                o["offering"]["status"].as_str().unwrap_or("?"),
+            );
+            if let Some(from) = o["offering"]["replanted_from"].as_str() {
+                println!("  from      {from}");
+            }
+            if let Some(h) = o["offering"]["final_hash"].as_str() {
+                println!("  hash      {h}");
+            }
+            Ok(())
+        }
         Command::Wake { name } => {
             let (_, v) = cli.stone_op("POST", paths::wake(name), None).await?;
             if cli.json {
@@ -812,6 +849,11 @@ mod paths {
     /// The last-run report face.
     pub fn capture_last(name: &str) -> String {
         format!("{OFFERINGS}/{name}/capture")
+    }
+
+    /// The replant face.
+    pub fn replant(name: &str) -> String {
+        format!("{OFFERINGS}/{name}/replant")
     }
 
     pub fn record(name: &str) -> String {

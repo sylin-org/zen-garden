@@ -135,6 +135,115 @@ impl Runner {
         self.runs.lock().insert(info.fqn.clone(), info);
     }
 
+    /// Select a checkpoint: the named run, or the newest across the local
+    /// ledger AND every mounted sink bank (ADR-0005 §5 - whichever stone
+    /// the bank sits on, the will can reach it).
+    pub fn select_checkpoint(
+        &self,
+        fqn: &str,
+        run: Option<&str>,
+    ) -> Result<PathBuf, String> {
+        let slug = super::directory::slug(fqn);
+        let mut roots = vec![self.checkpoints_root.join(&slug)];
+        for bank in self.storage.banks() {
+            if bank.roles.iter().any(|r| r == garden_glossary::bank::role::SINK)
+                && bank.state == garden_glossary::bank::MOUNTED
+            {
+                roots.push(
+                    Path::new(&bank.mount_point)
+                        .join(SINK_CHECKPOINT_DIR)
+                        .join(&slug),
+                );
+            }
+        }
+        if let Some(run) = run {
+            for root in &roots {
+                let p = root.join(run);
+                if p.is_dir() {
+                    return Ok(p);
+                }
+            }
+            return Err(format!("no checkpoint run '{run}' for '{fqn}' in the ledger or any mounted sink"));
+        }
+        // Newest across every root (names sort chronologically - GUIDv7).
+        let mut all: Vec<PathBuf> = Vec::new();
+        for root in &roots {
+            if let Ok(entries) = std::fs::read_dir(root) {
+                all.extend(
+                    entries
+                        .flatten()
+                        .map(|e| e.path())
+                        .filter(|p| p.is_dir() && !p.ends_with(".partial")),
+                );
+            }
+        }
+        all.sort();
+        all.pop().ok_or_else(|| {
+            format!("no checkpoint exists for '{fqn}' - nothing to replant from")
+        })
+    }
+
+    /// Restore a verified checkpoint into an offering directory (§6):
+    /// signature files land at the root, volumes under `volumes/`. The
+    /// target must be fresh - an existing record means the offering is
+    /// already incarnate here, and replant refuses to overwrite identity.
+    /// Returns (file count, the manifest's archive hash - the replant
+    /// event's final_hash).
+    pub fn restore_into(&self, checkpoint: &Path, dir: &Path) -> Result<(usize, String), String> {
+        let record = dir.join("record.json");
+        if record.exists() {
+            return Err(format!(
+                "{} already holds a record - replant refuses to overwrite an incarnation",
+                dir.display()
+            ));
+        }
+        let report = verify_checkpoint(checkpoint)?;
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(checkpoint.join("manifest.json"))
+                .map_err(|e| format!("manifest unreadable: {e}"))?,
+        )
+        .map_err(|e| format!("manifest unparsable: {e}"))?;
+        let archive_file = manifest["archive"]["file"]
+            .as_str()
+            .unwrap_or("checkpoint.tar.zst")
+            .to_string();
+        let final_hash = manifest["archive"]["sha256"]
+            .as_str()
+            .ok_or("manifest declares no archive hash")?
+            .to_string();
+        let archive_bytes = std::fs::read(checkpoint.join(&archive_file))
+            .map_err(|e| format!("archive unreadable: {e}"))?;
+        let tar_bytes = zstd::stream::decode_all(&archive_bytes[..])
+            .map_err(|e| format!("archive decompress: {e}"))?;
+        let mut archive = tar::Archive::new(&tar_bytes[..]);
+        let mut count = 0usize;
+        for entry in archive.entries().map_err(|e| format!("archive walk: {e}"))? {
+            let mut entry = entry.map_err(|e| format!("archive walk: {e}"))?;
+            let path = entry
+                .path()
+                .map_err(|e| format!("archive path: {e}"))?
+                .to_string_lossy()
+                .into_owned();
+            if path.contains("..") || path.starts_with('/') {
+                return Err(format!("checkpoint carries an unsafe path: '{path}' - refused"));
+            }
+            let target = dir.join(&path);
+            if entry.header().entry_type().is_dir() {
+                std::fs::create_dir_all(&target).map_err(|e| format!("{path}: {e}"))?;
+                continue;
+            }
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("{path}: {e}"))?;
+            }
+            entry
+                .unpack(&target)
+                .map_err(|e| format!("restore of '{path}' failed: {e}"))?;
+            count += 1;
+        }
+        let _ = report;
+        Ok((count, final_hash))
+    }
+
     /// Publish the caller-visible "accepted" record before the task starts.
     pub fn announce(&self, info: RunInfo) {
         self.record(info);
@@ -315,7 +424,7 @@ impl Runner {
     ) -> Result<PathBuf, String> {
         // Collect the file set: signature (record/plan/configs) + imprint.
         let mut files: Vec<(PathBuf, String)> = Vec::new(); // (abs, rel)
-        for entry in ["record.json", "candidate.json", "plan.json"] {
+        for entry in ["record.json", "candidate.json", "plan.json", "events.jsonl"] {
             let p = workload.dir.join(entry);
             if p.is_file() {
                 files.push((p, entry.to_string()));
@@ -966,4 +1075,143 @@ mod tests {
         assert!(ferried.join("manifest.json").is_file(), "the sink holds the will");
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+/// The W7 rehearsal, minus the live docker: capture a will, kill the
+/// offering (workload AND directory AND volumes), replant from the
+/// checkpoint - identity, spec, and volumes come home, and the checkpoint
+/// of a SINK BANK is a legal source (the dead stone's ledger is not the
+/// only witness).
+#[tokio::test]
+async fn replant_restores_the_incarnation_from_a_checkpoint() {
+    use crate::offerings::capture_run::Runner;
+    use crate::offerings::directory::{DirectoryStore, OfferingsRoot};
+    use crate::offerings::registry::Registry;
+    use crate::offerings::storage::VolumeFact;
+
+    let tmp = std::env::temp_dir().join(format!("zg-replant-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    // The stone: registry + directories + a mounted SINK bank.
+    let store = DirectoryStore::new(tmp.join("offerings"));
+    let registry = Arc::new(Registry::new(Arc::new(store)));
+    let storage = Arc::new(Storage::new());
+    let sink_mount = tmp.join("sink-bank");
+    let vol = VolumeFact {
+        mount_point: sink_mount.clone(),
+        device_id: Some("dev-sink".into()),
+        fqn: Some("seed-vault::default".into()),
+        capacity_bytes: 1_000_000,
+        available_bytes: 900_000,
+    };
+    std::fs::create_dir_all(&sink_mount).unwrap();
+    storage.reconcile(&[vol]);
+    storage
+        .set_roles(
+            "seed-vault::default",
+            vec![garden_glossary::bank::role::SINK.into()],
+        )
+        .unwrap()
+        .unwrap();
+
+    let (hooks, _calls) = Scripted::recording();
+    let runner = Runner::new(Arc::clone(&storage), hooks).with_roots(
+        tmp.join("workspace"),
+        tmp.join("checkpoints"),
+    );
+
+    // The offering's directory: a v3 record + a real volume with data.
+    let root = OfferingsRoot::new(tmp.join("offerings"));
+    let dir = root.dir_for("db::default");
+    std::fs::create_dir_all(dir.volumes().join("data")).unwrap();
+    std::fs::write(dir.volumes().join("data").join("data.bin"), b"precious").unwrap();
+    let record = crate::offerings::record::OfferingRecord {
+        identity: crate::offerings::record::Identity {
+            offering_id: "01a0dead-0000-7000-8000-0000000000ef".into(),
+            name: "db::default".into(),
+            stem: "db".into(),
+            category: "data".into(),
+        },
+        state: crate::offerings::record::State {
+            status: crate::offerings::model::Status::Running,
+        },
+        location: crate::offerings::model::Location {
+            host: "localhost".into(),
+            port: 7300,
+            protocol: "http".into(),
+        },
+        mode_data: crate::offerings::model::ModeData::Managed(
+            crate::offerings::model::ManagedData {
+                runtime_kind: "oci".into(),
+                spec: crate::offerings::model::WorkloadSpec {
+                    image: "db:7".into(),
+                    ..Default::default()
+                },
+                port_map: Default::default(),
+                plan: None,
+            },
+        ),
+        registered_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    std::fs::write(
+        dir.record_json(),
+        serde_json::to_vec_pretty(&record).unwrap(),
+    )
+    .unwrap();
+
+    // Capture the will (lock-and-copy: the volume imprint rides).
+    let workload = Workload {
+        dir: dir.root.clone(),
+        volumes: vec![(dir.volumes().join("data"), "data".into())],
+        container: "zen-offering-db__default".into(),
+        running: true,
+    };
+    let policy: CapturePolicy =
+        serde_json::from_value(serde_json::json!({
+            "mode": "lock-and-copy",
+            "quiesce": { "exec": ["quiesce"] },
+            "resume": { "exec": ["resume"] },
+            "max_locked_s": 30
+        }))
+        .unwrap();
+    runner.execute("db::default", &policy, &workload).await.unwrap();
+
+    // DEATH: the directory, volumes and registration vanish. The bank's
+    // ferried checkpoint survives (it was ferried during the run).
+    let _ = std::fs::remove_dir_all(&dir.root);
+    registry.remove(&record.identity.offering_id);
+    assert!(registry.get_by_name("db::default").is_none());
+
+    // REPLANT: select (the bank holds it), restore, and hand the record
+    // to the service's place-from-stored-spec path.
+    let checkpoint = runner
+        .select_checkpoint("db::default", None)
+        .expect("the will outlives the stone");
+    assert!(
+        checkpoint.starts_with(&sink_mount),
+        "the ferried sink copy is a legal source: {checkpoint:?}"
+    );
+    let (count, final_hash) = runner.restore_into(&checkpoint, &dir.root).unwrap();
+    assert!(count >= 2, "record + volume ride home: {count}");
+    assert_eq!(
+        std::fs::read(dir.volumes().join("data").join("data.bin")).unwrap(),
+        b"precious"
+    );
+
+    // The restored record parses and is handed to the service: placement
+    // itself is the runtime adapter's craft (W7 watches it live with docker).
+    let bytes = std::fs::read(dir.record_json()).unwrap();
+    let restored: crate::offerings::record::OfferingRecord =
+        serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(restored.identity.offering_id, record.identity.offering_id, "same identity");
+    assert!(
+        matches!(restored.mode_data, crate::offerings::model::ModeData::Managed(_)),
+        "the restored will is managed"
+    );
+    if let crate::offerings::model::ModeData::Managed(m) = &restored.mode_data {
+        assert_eq!(m.spec.image, "db:7", "the stored spec is complete");
+    }
+    let _ = (final_hash, count);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
 }

@@ -73,6 +73,8 @@ enum Face {
     OfferingCapture,
     /// The last capture run of an offering.
     OfferingCaptureLast,
+    /// Replant: restore an incarnation from its checkpoint (ADR-0005 §6).
+    OfferingReplant,
     /// The room's banks, projected from the cache (ADR-0004 §4 grid).
     GardenStorage,
     OfferingPlant,
@@ -83,7 +85,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 20] = [
+    const ALL: [Face; 21] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -99,6 +101,7 @@ impl Face {
         Face::GardenStorage,
         Face::OfferingCapture,
         Face::OfferingCaptureLast,
+        Face::OfferingReplant,
         Face::OfferingPlant,
         Face::OfferingShow,
         Face::OfferingRest,
@@ -120,7 +123,7 @@ impl Face {
             | Face::GardenStorage
             | Face::OfferingCaptureLast | Face::OfferingShow => "GET",
             | Face::StorageAdopt | Face::StorageEject | Face::StorageRoles
-            | Face::OfferingCapture => "POST",
+            | Face::OfferingCapture | Face::OfferingReplant => "POST",
             Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
             Face::OfferingUproot => "DELETE",
         }
@@ -147,6 +150,7 @@ impl Face {
             Face::OfferingCapture | Face::OfferingCaptureLast => {
                 "/api/v1/offerings/{fqn}/capture"
             }
+            Face::OfferingReplant => "/api/v1/offerings/{fqn}/replant",
             Face::OfferingRest => "/api/v1/offerings/{fqn}/rest",
             Face::OfferingWake => "/api/v1/offerings/{fqn}/wake",
         }
@@ -195,6 +199,9 @@ impl Face {
                 "Run this offering's declared will: Phase A imprint (quiesce -> copy -> resume), then pack, ferry, commit."
             }
             Face::OfferingCaptureLast => "The last capture run of this offering: phase, checkpoint, ferried sinks.",
+            Face::OfferingReplant => {
+                "Replant from a checkpoint {run?}: verify, restore the directory, place from the stored spec - same FQN, same connection strings (ADR-0005 §6)."
+            }
             Face::OfferingRest => {
                 "Rest a managed offering - stopped, and reconcile will keep it so."
             }
@@ -222,6 +229,7 @@ impl Face {
             Face::OfferingPlant => post(plant_offering),
             Face::OfferingCapture => post(capture_offer),
             Face::OfferingCaptureLast => get(capture_last),
+            Face::OfferingReplant => post(replant_offer),
             Face::OfferingShow => get(show_offering),
             Face::OfferingRest => post(rest_offering),
             Face::OfferingWake => post(wake_offering),
@@ -609,6 +617,58 @@ async fn storage_roles(
             "no bank '{fqn}' is adopted here - rake storage lists what this stone holds"
         )))?;
     Ok(Json(serde_json::json!({ "data": { "bank": bank } })))
+}
+
+#[derive(Debug, Deserialize)]
+struct ReplantRequest {
+    /// The checkpoint run to restore; absent = the newest.
+    #[serde(default)]
+    run: Option<String>,
+}
+
+/// Replant (1:1 with `rake replant`): select -> verify -> restore the
+/// directory -> place from the stored spec. The audit chain opens with
+/// Replanted{predecessor_offering_id, final_hash}.
+async fn replant_offer(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    body: Option<Json<ReplantRequest>>,
+) -> ApiResult {
+    let fqn = garden_glossary::fqn::canonicalize(&name)
+        .map_err(|e| CommandError::Conflict(e.to_string()))?;
+    let run = body.as_ref().and_then(|Json(req)| req.run.clone());
+    let checkpoint = state
+        .capture
+        .select_checkpoint(&fqn, run.as_deref())
+        .map_err(CommandError::NotFound)?;
+
+    let dir = state.garden.dirs_root.dir_for(&fqn);
+    let (count, final_hash) = state
+        .capture
+        .restore_into(&checkpoint, &dir.root)
+        .map_err(CommandError::Conflict)?;
+
+    // The restored record IS the identity: same offering_id, same spec,
+    // same connection strings as the predecessor.
+    let bytes = std::fs::read(dir.record_json())
+        .map_err(|e| CommandError::Conflict(format!("restored record unreadable: {e}")))?;
+    let record: crate::offerings::record::OfferingRecord =
+        serde_json::from_slice(&bytes).map_err(|e| {
+            CommandError::Conflict(format!("restored record unparsable: {e}"))
+        })?;
+    let offering = state
+        .garden
+        .replant(record.into_domain(), &final_hash)
+        .await?;
+    tracing::info!(offering = %fqn, from = %checkpoint.display(), files = count, "replanted");
+    Ok(Json(
+        serde_json::json!({ "data": { "offering": {
+            "name": offering.name,
+            "status": offering.status.as_str(),
+            "replanted_from": checkpoint.display().to_string(),
+            "final_hash": final_hash,
+        } } }),
+    ))
 }
 
 async fn front_door() -> Json<serde_json::Value> {

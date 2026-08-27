@@ -65,14 +65,16 @@ pub async fn send_goodbye(
 
 /// Ask the room who is here (the tell half of boot). The PoC's moss did
 /// this at startup so a newcomer converges in one round-trip instead of
-/// waiting out a heartbeat.
+/// waiting out a heartbeat. The boot ask is RICH (ADR-0004 §1): the
+/// newcomer's opening question is "who are you guys, and what do you
+/// have?" — one exchange seeds the whole map.
 pub async fn send_discovery_request(
     socket: &UdpSocket,
     group: std::net::Ipv4Addr,
     port: u16,
     requester: &str,
 ) -> std::io::Result<()> {
-    let req = garden_contract::discovery::DiscoveryRequest::for_moss(requester);
+    let req = garden_contract::discovery::DiscoveryRequest::for_moss_rich(requester);
     let ann = garden_contract::wire::Announcement::new(
         consts::announcement::DISCOVERY_REQUEST,
         serde_json::to_value(&req).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,

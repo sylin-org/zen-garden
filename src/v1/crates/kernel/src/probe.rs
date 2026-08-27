@@ -47,10 +47,31 @@ pub async fn ask_the_room(
     timeout: Duration,
     requester: &str,
 ) -> std::io::Result<Vec<DiscoveryResponse>> {
-    let socket = bind_ear(port, group).await?;
+    ask_with(DiscoveryRequest::for_moss(requester), port, group, timeout).await
+}
 
-    // The ask: one request, spoken to the room (or localhost in tests).
-    let req = DiscoveryRequest::for_moss(requester);
+/// The same walk, rich form (ADR-0004 §1): answers carry the
+/// respondents' service inventories, so the caller seeds its cache in
+/// one exchange. Costs the room a fat reply per stone — ask rich only
+/// when inventory is the point.
+pub async fn ask_the_room_rich(
+    port: u16,
+    group: Option<Ipv4Addr>,
+    timeout: Duration,
+    requester: &str,
+) -> std::io::Result<Vec<DiscoveryResponse>> {
+    ask_with(DiscoveryRequest::for_moss_rich(requester), port, group, timeout).await
+}
+
+/// One request, spoken to the room (or localhost in tests); every answer
+/// until the deadline.
+async fn ask_with(
+    req: DiscoveryRequest,
+    port: u16,
+    group: Option<Ipv4Addr>,
+    timeout: Duration,
+) -> std::io::Result<Vec<DiscoveryResponse>> {
+    let socket = bind_ear(port, group).await?;
     let ann = Announcement::new(
         announcement::DISCOVERY_REQUEST,
         serde_json::to_value(&req)
@@ -107,7 +128,7 @@ pub async fn ask_the_room(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     /// End-to-end over loopback unicast: a stone speaks first, the probe
@@ -171,5 +192,99 @@ mod tests {
             .await
             .unwrap();
         assert!(found.is_empty());
+    }
+
+    /// The rich ask declares its depth on the wire: a listener captures
+    /// the request datagram and reads `rich: true` (lean asks read false —
+    /// `skip_serializing_if` keeps the field absent).
+    #[tokio::test]
+    async fn rich_ask_declares_itself_on_the_wire() {
+        let capture = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let port = capture.local_addr().unwrap().port();
+
+        let listener = tokio::spawn(async move {
+            let mut buf = vec![0u8; 65_535];
+            let (n, _) = tokio::time::timeout(
+                Duration::from_secs(3),
+                capture.recv_from(&mut buf),
+            )
+            .await
+            .expect("ask must arrive")
+            .expect("recv ok");
+            let ann: Announcement = serde_json::from_slice(&buf[..n]).unwrap();
+            serde_json::from_value::<DiscoveryRequest>(ann.data).unwrap()
+        });
+
+        let _ = ask_the_room_rich(port, None, Duration::from_millis(150), "probe-test")
+            .await
+            .unwrap();
+
+        let req = listener.await.unwrap();
+        assert!(req.rich, "the rich variant must speak its depth");
+    }
+
+    /// A rich response's inventory survives the probe's parse-and-dedup
+    /// path intact (B1: the cache-feeding shape is the wire shape).
+    #[tokio::test]
+    async fn rich_answers_keep_their_inventory() {
+        let ear = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let ear_port = ear.local_addr().unwrap().port();
+        drop(ear);
+
+        let responder = tokio::spawn(async move {
+            let sock = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+            let mut resp = DiscoveryResponse {
+                stone: garden_contract::chirp::Stone {
+                    id: "id-rich".into(),
+                    name: "stone-rich".into(),
+                    moss: garden_contract::chirp::Moss { version: "0.1.0".into() },
+                    network: garden_contract::chirp::Network {
+                        address: garden_contract::chirp::PeerAddress {
+                            ip: IpAddr::from(Ipv4Addr::LOCALHOST),
+                            port: 7285,
+                            tls_port: None,
+                        },
+                        mac: None,
+                    },
+                },
+                lantern_endpoint: None,
+                services: None,
+            };
+            resp.services = Some(garden_contract::chirp::Inventory {
+                rev: Some(3),
+                total: None,
+                items: vec![garden_contract::chirp::ServiceEntry {
+                    offering_id: "oid-1".into(),
+                    name: "redis::default".into(),
+                    stem: "redis".into(),
+                    category: "data".into(),
+                    state: garden_contract::chirp::ServiceState {
+                        status: "running".into(),
+                        role: None,
+                    },
+                    ports: Default::default(),
+                }],
+            });
+            let ann = Announcement::new(
+                announcement::DISCOVERY_RESPONSE,
+                serde_json::to_value(&resp).unwrap(),
+            );
+            let bytes = serde_json::to_vec(&ann).unwrap();
+            let dst = SocketAddr::from((Ipv4Addr::LOCALHOST, ear_port));
+            for _ in 0..5 {
+                sock.send_to(&bytes, dst).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let found = ask_the_room_rich(ear_port, None, Duration::from_secs(3), "probe-test")
+            .await
+            .unwrap();
+        responder.await.unwrap();
+
+        let inv = found[0].services.as_ref().expect("rich answer carries inventory");
+        assert_eq!(inv.items[0].name, "redis::default");
+        assert_eq!(inv.rev, Some(3));
     }
 }

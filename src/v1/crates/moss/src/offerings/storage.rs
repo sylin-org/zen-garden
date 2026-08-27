@@ -62,6 +62,11 @@ pub struct Bank {
     pub capacity_bytes: Option<u64>,
     /// TELEMETRY: used bytes, when measured.
     pub used_bytes: Option<u64>,
+    /// Internal: the operator's eject holds for this slot until a true
+    /// re-plug (different mount) or a fresh boot. A mere vanish-eject
+    /// (yank/flake) does NOT hold — return means mounted again.
+    #[serde(skip)]
+    pub held_ejected: bool,
 }
 
 /// What the volume scan saw about one removable volume.
@@ -74,6 +79,27 @@ pub struct VolumeFact {
     pub fqn: Option<String>,
     pub capacity_bytes: u64,
     pub available_bytes: u64,
+}
+
+/// Why an eject refused (R3.3).
+#[derive(Debug)]
+pub enum EjectError {
+    /// No bank by that name is adopted on this stone.
+    UnknownBank(String),
+    /// The bank is already at rest.
+    AlreadyEjected(String),
+}
+
+impl std::fmt::Display for EjectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownBank(n) => write!(
+                f,
+                "no bank '{n}' is adopted here — rake storage lists what this stone holds"
+            ),
+            Self::AlreadyEjected(n) => write!(f, "'{n}' is already ejected"),
+        }
+    }
 }
 
 /// Why an adoption refused. Errors answer three questions (R3.3).
@@ -177,11 +203,37 @@ impl Storage {
             mount_point: vol.mount_point.display().to_string(),
             capacity_bytes: Some(vol.capacity_bytes),
             used_bytes: Some(vol.capacity_bytes.saturating_sub(vol.available_bytes)),
+            held_ejected: false,
         };
         self.banks.lock().insert(bank.fqn.clone(), bank.clone());
         self.bump();
         tracing::info!(bank = %bank.fqn, device = %bank.device_id, "bank adopted; the garden will hear it");
         Ok(bank)
+    }
+
+    /// The eject verb (ADR-0005 §8.3): announce authoritative absence.
+    /// The bank is marked ejected this boot and the news sings; the
+    /// reconciler respects the ruling — the same slot will not flip the
+    /// bank back to mounted until its volume is seen at a DIFFERENT mount
+    /// (a true re-plug). Physical removal stays the operator's hand; the
+    /// song is the "safe to pull" signal.
+    pub fn eject(&self, fqn: &str) -> Result<Bank, EjectError> {
+        let canonical = garden_glossary::fqn::canonicalize(fqn)
+            .map_err(|_| EjectError::UnknownBank(fqn.to_string()))?;
+        let mut banks = self.banks.lock();
+        let bank = banks
+            .get_mut(&canonical)
+            .ok_or_else(|| EjectError::UnknownBank(canonical.clone()))?;
+        if bank.state == vocab::EJECTED {
+            return Err(EjectError::AlreadyEjected(canonical));
+        }
+        bank.state = vocab::EJECTED.into();
+        bank.held_ejected = true;
+        let ejected = bank.clone();
+        drop(banks);
+        self.bump();
+        tracing::info!(bank = %ejected.fqn, "bank ejected; the garden hears authoritative absence");
+        Ok(ejected)
     }
 
     /// Reconcile current volume reality against the known banks — the
@@ -201,9 +253,16 @@ impl Storage {
                 let used = vol.capacity_bytes.saturating_sub(vol.available_bytes);
                 match banks.get_mut(fqn) {
                     Some(bank) => {
-                        if bank.state != vocab::MOUNTED {
+                        // An operator's eject holds for the same slot (the
+                        // boot's life); any other ejected bank that
+                        // reappears — yanked, flaked, re-plugged — mounts
+                        // anew. That is the L10 nourish-on-wake instinct.
+                        let holds = bank.held_ejected
+                            && bank.mount_point == vol.mount_point.display().to_string();
+                        if bank.state != vocab::MOUNTED && !holds {
                             bank.state = vocab::MOUNTED.into();
                             bank.mount_point = vol.mount_point.display().to_string();
+                            bank.held_ejected = false;
                             changed = true;
                         }
                         bank.capacity_bytes = Some(vol.capacity_bytes);
@@ -221,6 +280,7 @@ impl Storage {
                                 mount_point: vol.mount_point.display().to_string(),
                                 capacity_bytes: Some(vol.capacity_bytes),
                                 used_bytes: Some(used),
+                                held_ejected: false,
                             },
                         );
                         changed = true;
@@ -230,11 +290,17 @@ impl Storage {
             // Banks whose volume vanished eject — loudly here, expired
             // quietly in the garden (liveness is inherited, §8.3).
             for bank in banks.values_mut() {
-                if bank.state == vocab::MOUNTED && !seen.contains(&bank.fqn) {
+                if seen.contains(&bank.fqn) {
+                    continue;
+                }
+                if bank.state == vocab::MOUNTED {
                     tracing::info!(bank = %bank.fqn, "bank volume gone; state ejected");
                     bank.state = vocab::EJECTED.into();
                     changed = true;
                 }
+                // Physical absence releases an operator's hold: once the
+                // drive is out, the next appearance is a true return.
+                bank.held_ejected = false;
             }
         }
         if changed {
@@ -356,6 +422,45 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AdoptError::BadName(_)));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The eject laws: eject announces and holds the same slot; a vanish
+    /// does NOT hold (return remounts); a different slot is a true re-plug.
+    #[test]
+    fn eject_holds_until_a_true_replug() {
+        let storage = Storage::new();
+        storage.reconcile(&[vol("E:\\", true)]);
+        assert_eq!(storage.banks()[0].state, vocab::MOUNTED);
+
+        // The operator ejects: news.
+        let signal = storage.subscribe();
+        let before = *signal.borrow();
+        storage.eject("seed-vault").unwrap();
+        assert_ne!(*signal.borrow(), before);
+        assert_eq!(storage.banks()[0].state, vocab::EJECTED);
+
+        // Same slot still present: the ruling holds, no flip-flop.
+        let before = *signal.borrow();
+        storage.reconcile(&[vol("E:\\", true)]);
+        assert_eq!(*signal.borrow(), before, "no fight with the operator");
+        assert_eq!(storage.banks()[0].state, vocab::EJECTED);
+
+        // A vanish does not hold: return (same slot) remounts. The
+        // operator's hold was released by seeing the volume gone once.
+        storage.reconcile(&[]);
+        storage.reconcile(&[vol("E:\\", true)]);
+        assert_eq!(storage.banks()[0].state, vocab::MOUNTED);
+
+        // Refusals: ejecting a ghost or the already-at-rest.
+        assert!(matches!(
+            storage.eject("ghost::default"),
+            Err(EjectError::UnknownBank(_))
+        ));
+        storage.eject("seed-vault").unwrap();
+        assert!(matches!(
+            storage.eject("seed-vault"),
+            Err(EjectError::AlreadyEjected(_))
+        ));
     }
 
     /// The watcher's law in one test: mount→eject→mount are news (bumps);

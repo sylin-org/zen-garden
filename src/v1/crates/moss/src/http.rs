@@ -63,6 +63,10 @@ enum Face {
     StorageList,
     /// The adopt ceremony: claim a removable volume for the garden.
     StorageAdopt,
+    /// Authoritative absence: the eject verb (ADR-0005 §8.3).
+    StorageEject,
+    /// The room's banks, projected from the cache (ADR-0004 §4 grid).
+    GardenStorage,
     OfferingPlant,
     OfferingShow,
     OfferingRest,
@@ -71,7 +75,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 15] = [
+    const ALL: [Face; 17] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -82,6 +86,8 @@ impl Face {
         Face::Catalog,
         Face::StorageList,
         Face::StorageAdopt,
+        Face::StorageEject,
+        Face::GardenStorage,
         Face::OfferingPlant,
         Face::OfferingShow,
         Face::OfferingRest,
@@ -100,8 +106,9 @@ impl Face {
             | Face::GardenStones
             | Face::Catalog
             | Face::StorageList
+            | Face::GardenStorage
             | Face::OfferingShow => "GET",
-            Face::StorageAdopt => "POST",
+            Face::StorageAdopt | Face::StorageEject => "POST",
             Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
             Face::OfferingUproot => "DELETE",
         }
@@ -119,6 +126,8 @@ impl Face {
             Face::Catalog => "/api/v1/catalog",
             Face::StorageList => "/api/v1/storage",
             Face::StorageAdopt => "/api/v1/storage/adopt",
+            Face::StorageEject => "/api/v1/storage/{fqn}/eject",
+            Face::GardenStorage => "/api/v1/garden/storage",
             Face::OfferingPlant | Face::OfferingShow | Face::OfferingUproot => {
                 "/api/v1/offerings/{fqn}"
             }
@@ -152,6 +161,12 @@ impl Face {
             Face::StorageAdopt => {
                 "The adopt ceremony: {device: mount point, name: bank FQN} - writes the manifest onto the drive and sings the news (ADR-0005 sec 8)."
             }
+            Face::StorageEject => {
+                "Eject a bank by name: authoritative absence, sung to the room (ADR-0005 sec 8.3)."
+            }
+            Face::GardenStorage => {
+                "Garden data (L22): every bank in the room, self included, from the one cache."
+            }
             Face::OfferingPlant => {
                 "Plant a managed offering {image?, ports:{name:container}, runtime?, \
                  inputs?}; catalog name wins when one exists."
@@ -178,6 +193,8 @@ impl Face {
             Face::Catalog => get(catalog),
             Face::StorageList => get(storage_list),
             Face::StorageAdopt => post(storage_adopt),
+            Face::StorageEject => post(storage_eject),
+            Face::GardenStorage => get(garden_storage),
             Face::OfferingPlant => post(plant_offering),
             Face::OfferingShow => get(show_offering),
             Face::OfferingRest => post(rest_offering),
@@ -387,6 +404,46 @@ fn dirs_equal(a: &std::path::Path, b: &std::path::Path) -> bool {
         p.components().collect::<std::path::PathBuf>()
     };
     clean(a) == clean(b)
+}
+
+/// The eject verb's API face (1:1 with `rake storage eject`): mark the
+/// bank ejected, sing the authoritative absence.
+async fn storage_eject(
+    State(state): State<Arc<AppState>>,
+    Path(fqn): Path<String>,
+) -> ApiResult {
+    use crate::offerings::storage::EjectError;
+    let bank = state.storage.eject(&fqn).map_err(|e| match e {
+        EjectError::UnknownBank(_) => CommandError::NotFound(e.to_string()),
+        EjectError::AlreadyEjected(_) => CommandError::Conflict(e.to_string()),
+    })?;
+    Ok(Json(serde_json::json!({ "data": { "bank": bank } })))
+}
+
+/// The room's banks (ADR-0004 §4 grid): self spliced first, then every
+/// peer's banks from the one topology cache. Rows name the holding stone.
+async fn garden_storage(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    for bank in state.storage.banks() {
+        rows.push(serde_json::json!({
+            "self": true,
+            "stone": state.stone_name,
+            "bank": bank,
+        }));
+    }
+    for peer in state.topology.snapshot() {
+        let Some(banks) = &peer.body.inventory.banks else {
+            continue; // absent key: the stone says nothing about banks
+        };
+        for bank in &banks.items {
+            rows.push(serde_json::json!({
+                "stone": peer.body.stone.name,
+                "stone_id": peer.body.stone.id,
+                "bank": bank,
+            }));
+        }
+    }
+    Json(serde_json::json!({ "data": { "banks": rows } }))
 }
 
 async fn front_door() -> Json<serde_json::Value> {
@@ -792,6 +849,77 @@ mod tests {
         );
     }
 
+    /// The room's banks (ADR-0004 §4 grid): self spliced first, then the
+    /// peer's banks as the cache heard them — end-to-end from song merge
+    /// to surface.
+    #[tokio::test]
+    async fn garden_storage_projects_the_room() {
+        let state = test_state();
+        // Self holds a bank; the peer holds another (via its song frame).
+        state
+            .storage
+            .adopt(
+                &crate::offerings::storage::VolumeFact {
+                    mount_point: std::path::PathBuf::from("E:\\tmp-adopt"),
+                    device_id: None,
+                    fqn: None,
+                    capacity_bytes: 4000,
+                    available_bytes: 3000,
+                },
+                "local-vault",
+                "0198e0c7-0000-7000-8000-000000000001",
+            )
+            .unwrap();
+        wire_peer(&state.topology, sample_peer()).await;
+        let app = router(state);
+
+        let res = send(&app, "GET", "/api/v1/garden/storage").await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), 1_000_000).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let rows = v["data"]["banks"].as_array().expect("rows");
+        assert_eq!(rows.len(), 2, "self + peer");
+        assert_eq!(rows[0]["self"], true);
+        assert_eq!(rows[0]["bank"]["fqn"], "local-vault::default");
+        assert_eq!(rows[1]["stone"], "stone-peer");
+        assert_eq!(rows[1]["bank"]["fqn"], "seed-vault::default");
+        assert_eq!(rows[1]["bank"]["state"], "mounted");
+    }
+
+    /// The eject verb's happy path: adopted banks eject, the state sings,
+    /// and the refusal cases stay loud (R3.3).
+    #[tokio::test]
+    async fn eject_announces_authoritative_absence() {
+        let state = test_state();
+        state
+            .storage
+            .adopt(
+                &crate::offerings::storage::VolumeFact {
+                    mount_point: std::path::PathBuf::from("E:\\tmp-eject"),
+                    device_id: None,
+                    fqn: None,
+                    capacity_bytes: 1000,
+                    available_bytes: 900,
+                },
+                "seed-vault",
+                "0198e0c7-0000-7000-8000-000000000001",
+            )
+            .unwrap();
+        let app = router(state);
+
+        let res = send(&app, "POST", "/api/v1/storage/seed-vault/eject").await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), 100_000).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["data"]["bank"]["state"], "ejected");
+
+        // Ejecting twice is a conflict; ejecting a ghost is a 404.
+        let res = send(&app, "POST", "/api/v1/storage/seed-vault/eject").await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        let res = send(&app, "POST", "/api/v1/storage/nobody/eject").await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
     fn sample_peer() -> StoneView {
         use garden_contract::chirp::{
             Inventory, Moss, Network, PeerAddress, Presence, Reception, ServiceEntry, ServiceState,
@@ -828,6 +956,18 @@ mod tests {
                             category: "data".into(),
                             state: ServiceState { status: "running".into(), role: None },
                             ports: Default::default(),
+                        }],
+                    }),
+                    banks: Some(Inventory {
+                        rev: Some(2),
+                        total: None,
+                        items: vec![garden_contract::chirp::BankEntry {
+                            fqn: "seed-vault::default".into(),
+                            device_id: "dev-peer".into(),
+                            state: "mounted".into(),
+                            roles: vec![garden_glossary::bank::role::SINK.into()],
+                            capacity_bytes: Some(1_000_000),
+                            used_bytes: Some(10),
                         }],
                     }),
                     ..Default::default()

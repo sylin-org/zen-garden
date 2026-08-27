@@ -126,6 +126,14 @@ enum StorageCmd {
         #[arg(long)]
         name: String,
     },
+    /// Eject a bank: authoritative absence, sung to the room (§8.3).
+    /// Safe-to-pull is the song's promise.
+    Eject {
+        /// The bank's name (FQN or bare stem).
+        bank: String,
+    },
+    /// The room's banks — every stone's storage, from the one cache.
+    Garden,
 }
 
 /// Where a candidate endpoint came from — provenance drives recovery
@@ -496,6 +504,29 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
             }
             render_storage(&envelope_plain(&v)?)
         }
+        Some(StorageCmd::Garden) => {
+            let (_, v) = cli
+                .stone_op("GET", paths::STORAGE_GARDEN.to_string(), None)
+                .await?;
+            if cli.json {
+                return emit_pretty(&v);
+            }
+            render_garden_storage(&envelope_plain(&v)?)
+        }
+        Some(StorageCmd::Eject { bank }) => {
+            let (_, v) = cli
+                .stone_op("POST", paths::storage_eject(bank), None)
+                .await?;
+            if cli.json {
+                return emit_pretty(&v);
+            }
+            let b = envelope(&v, "bank")?;
+            println!(
+                "{} ejected — the garden hears the absence within one song",
+                display_name(b["fqn"].as_str().unwrap_or("(unnamed)"))
+            );
+            Ok(())
+        }
         Some(StorageCmd::Adopt { device, name }) => {
             let body = serde_json::json!({ "device": device, "name": name });
             let (_, v) = cli
@@ -535,6 +566,31 @@ fn human_bytes(n: u64) -> String {
     } else {
         format!("{value:.1} {}", units[unit])
     }
+}
+
+/// The room's banks: one row per (stone, bank), self marked.
+fn render_garden_storage(v: &serde_json::Value) -> Result<(), String> {
+    let rows = v["banks"].as_array();
+    match rows {
+        Some(r) if !r.is_empty() => {
+            println!("{:<22} {:<26} {:<10} CAPACITY", "STONE", "BANK", "STATE");
+            for row in r {
+                let marker = if row["self"] == true { " (me)" } else { "" };
+                println!(
+                    "{:<22} {:<26} {:<10} {}",
+                    format!("{}{}", row["stone"].as_str().unwrap_or("?"), marker),
+                    display_name(row["bank"]["fqn"].as_str().unwrap_or("?")),
+                    row["bank"]["state"].as_str().unwrap_or("?"),
+                    row["bank"]["capacity_bytes"]
+                        .as_u64()
+                        .map(human_bytes)
+                        .unwrap_or_else(|| "-".into()),
+                );
+            }
+        }
+        _ => println!("The garden holds no banks yet."),
+    }
+    Ok(())
 }
 
 /// The banks table: what this stone holds, and what it could adopt.
@@ -648,6 +704,12 @@ mod paths {
     pub const STORAGE: &str = "/api/v1/storage";
     /// The adopt ceremony's face.
     pub const STORAGE_ADOPT: &str = "/api/v1/storage/adopt";
+    /// The room's banks (grid law, ADR-0004 §4).
+    pub const STORAGE_GARDEN: &str = "/api/v1/garden/storage";
+    /// The eject verb's face.
+    pub fn storage_eject(bank: &str) -> String {
+        format!("{STORAGE}/{bank}/eject")
+    }
 
     pub fn record(name: &str) -> String {
         format!("{OFFERINGS}/{name}")
@@ -1063,6 +1125,13 @@ mod tests {
         )
         .unwrap();
         render_status("awake", &serde_json::json!({})).unwrap();
+        render_garden_storage(&serde_json::json!({})).unwrap();
+        render_garden_storage(&serde_json::json!({ "banks": [
+            { "stone": "stone-a", "self": true,
+              "bank": { "fqn": "seed-vault::default", "state": "mounted",
+                        "capacity_bytes": 5709041973811721503_u64 } }
+        ] }))
+        .unwrap();
         assert!(describe_ports(&serde_json::json!({}), &serde_json::json!({})).is_empty());
     }
 

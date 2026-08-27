@@ -1,7 +1,9 @@
 # CONTINUATION — read me first, then delete me
 
-Written 2026-08-26 at a planned pause, mid-epic. Self-contained for a clean
-context. Verify everything against the tree — trust files over this document.
+Written 2026-08-26 at a planned pause, mid-epic. Updated 2026-08-27: S3
+landed (rich ask/reply + the songs wire-up); resume at S4. Self-contained
+for a clean context. Verify everything against the tree — trust files over
+this document.
 
 ## Project in one paragraph
 
@@ -32,22 +34,20 @@ witness.
 ## Git state (branch `dev`; nothing pushed; no remote/main — decision pending)
 
 ```
-9df8c53b feat(v1): S2 - DynamicChirpSource speaks the registry's truth  ← S2 LANDED
-90d8ce65 docs: session continuation - S2 blocker root-caused
-0efa269f feat(v1): S1.6 - the inventory map, songs, and the framer
-2d9ea34f docs(v1): ADR-0004 A1 - records are paths; R3.9 codified
-5240773d refactor(v1)!: the canonical frame - records are paths
-f6d9393f feat(v1): wire anchors for the discovery envelope (superseded shape)
-59cb4929 docs(v1): ADR-0005 ext 8 - storage rides the discovery envelope
-8bf3d733 docs(v1): ADR-0005 - the living will
-c0994316 docs(v1): ADR-0004 - discovery envelope + URI grammar
-4c6a8399 feat(v1): reads refuse off-grammar names loudly
-24bbef47 feat(v1)!: ADR-0003 - FQN namespace, reserved default, moniker surfaces
+df3dfbe5 feat(v1): S3b - boots and changes sing, heartbeats chirp lean; the cache merges by rev  ← S3b
+7ebe96de feat(v1): S3a - rich ask, rich tell: probe speaks depth, responder answers with inventory ← S3a
+d2a496c7 docs(v1): dx & delight research - vocabulary tiers, tutorial gap, household register
+b0c76c1b chore(v1): lockfile records rake's garden-glossary dependency
+c4382ca1 docs: continuation updated - S2 landed, no open blockers, resume at S3
+9df8c53b feat(v1): S2 - DynamicChirpSource speaks the registry's truth
 ```
 
-Working tree is CLEAN (84 tests green, clippy -D warnings clean). The S2
-deadlock was FIXED before close: `send_modify` under one lock replaces the
-borrow-inside-send_replace pattern; a comment in source.rs guards the idiom.
+Working tree is CLEAN (91 tests green, clippy -D warnings clean). 2026-08-27
+also landed (before S3): R1.1 registers amendment, glossary metaphor
+glosses, `docs/v1/orientation.md`, root `CONTRIBUTING.md` (lightweight
+contributor path), `docs/v1/design/dx-delight-research.md` (one OPEN ruling
+recorded there: CLI register — session recommends keeping garden verbs;
+operator agreed in conversation, amendment not yet written).
 
 ## ~~⚠️ BLOCKER~~ RESOLVED (kept for the lesson)
 
@@ -72,11 +72,14 @@ part{n,of}} · received{discovered_at, last_seen}`.
   (absent key keeps, present block's rev speaks; unknown = last-write-wins).
 - `ServiceEntry{offering_id, name(FQN!), stem, category, state{status,
   role}, ports}`. `Offering::service_entry()` in model.rs produces it.
-- **Song vs chirp**: `stone_chirp` = lean heartbeat; `stone_song` (new
-  discriminator, not yet emitted by announcer) = full-voice.
+- **Song vs chirp**: `stone_chirp` = lean heartbeat (rev-only inventory
+  blocks since S3b); `stone_song` (`stone_song` discriminator, EMITTED by
+  the announcer since S3b on boot + change) = full-voice.
   `contract::song::frame_song(base, blocks, seq)` quantizes domain blocks
   whole against `FRAME_BUDGET_BYTES=3500`: biggest-first greedy,
   every frame re-anchored, `meta.part` informational, empty → no frames.
+  The composer caps songs alphabetically at INVENTORY_CAP=24 with `total`
+  declared; heartbeats speak revs, never items.
 - Fixtures (`contract/tests/wire_fixtures.rs`) pin the CANONICAL shape;
   v0-compat RETIRED (v1 owns its room). R3.9 law in CODE-RULES.
 - Discogs: lowercase discriminators (`announcement::*`) — pinned.
@@ -90,14 +93,21 @@ part{n,of}} · received{discovered_at, last_seen}`.
       version watch fires → announcer's existing debounce (L18) emits
       change-chirp. Interim: inventory rides plain chirps; songs wire-up
       lands in S3.
-- [ ] S3 — rich responders: probe `ask_the_room_rich` (for_moss_rich);
-      responder parses `rich` flag and answers with
-      `DiscoveryResponse{stone, services: Some(inventory)}`; moss boot ask
-      goes rich. Wire shapes already exist.
-- [ ] S4 — topology cache: ingest already stores frames; ADD
-      `InventoryMap::merge_frame` semantics on update (per-domain rev),
-      part-marker transparency (nothing to do — informational), candidates
-      pool + promotion (hearing-before-meeting; ghost-pool idiom, 3rd use).
+- [x] **S3 — rich responders + songs wire-up LANDED (7ebe96de, df3dfbe5).**
+      Probe `ask_the_room_rich`; responder parses `rich` and answers with
+      `DiscoveryResponse{stone, services: Some(inventory)}` from the
+      source's song blocks (undecodable ask → lean card, R2.5); moss boot
+      ask is rich. `ChirpSource` gained `song_blocks()`; body() is LEAN
+      (rev-only blocks); announcer sings `stone_song` (new discriminator,
+      contract consts) on boot + debounced change, quantized by the
+      framer, capped 24 alphabetical with `total`. Topology claims
+      `stone_song` and merges inventory by per-domain rev (merge_frame) —
+      a lean heartbeat never wipes what a song taught (regression test
+      pins this). S4's merge-on-ingest is thereby ABSORBED here; S4 keeps
+      candidates pool + promotion.
+- [ ] S4 — topology cache: candidates pool + promotion (hearing-before-
+      meeting; ghost-pool idiom, 3rd use). The merge_frame-on-ingest half
+      landed with S3b (df3dfbe5).
 - [ ] S5 — URI grammar cut: `/api/v1` (manifest), `/stone`, `/stone/this`,
       `/stone/{ref}` (404 + Location redirect from topology),
       `/stone/posture` (move from /local/posture), `/garden/stones`
@@ -166,8 +176,9 @@ W7), Lantern, O3 adoption.
 ## Resume procedure
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree).
-2. Open S3 per epic map: probe `ask_the_room_rich` variant +
-   `DiscoveryRequest::for_moss_rich` (exists), responder answers rich asks
-   with `DiscoveryResponse{stone, services: Some(source body inventory)}`,
-   moss boot ask goes rich. One slice = one commit, gates green at every
-   commit.
+2. Open S4 per epic map: the topology cache's candidates pool —
+   query-backfilled knowledge ("who has X?" answers heard in passing)
+   lands as TTL'd `(source, seen_at)` candidates, always outranked by
+   chirp-borne truth, promoted to full entries on that stone's first live
+   frame (the offerings ghost-prevention pool, 3rd instantiation;
+   ADR-0004 §3). One slice = one commit, gates green at every commit.

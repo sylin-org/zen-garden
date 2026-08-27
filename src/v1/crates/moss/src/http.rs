@@ -368,22 +368,26 @@ mod tests {
                     health: garden_glossary::health::THRIVING.into(),
                     status: garden_glossary::presence::ONLINE.into(),
                 },
-                services: Inventory {
-                    rev: Some(1),
-                    total: None,
-                    items: vec![ServiceEntry {
-                        offering_id: String::new(),
-                        name: "mongodb::default".into(),
-                        stem: "mongodb".into(),
-                        category: "data".into(),
-                        state: ServiceState { status: "running".into(), role: None },
-                        ports: Default::default(),
-                    }],
+                inventory: garden_contract::chirp::InventoryMap {
+                    services: Some(Inventory {
+                        rev: Some(1),
+                        total: None,
+                        items: vec![ServiceEntry {
+                            offering_id: String::new(),
+                            name: "mongodb::default".into(),
+                            stem: "mongodb".into(),
+                            category: "data".into(),
+                            state: ServiceState { status: "running".into(), role: None },
+                            ports: Default::default(),
+                        }],
+                    }),
+                    ..Default::default()
                 },
                 meta: garden_contract::chirp::FrameMeta {
                     proto: Some(PROTO_V1.into()),
                     boot_id: None,
                     seq: Some(7),
+                    part: None,
                 },
                 received: Reception { discovered_at: now, last_seen: now },
             },

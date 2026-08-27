@@ -1,36 +1,19 @@
-//! The daemon's voice: what this stone says when it chirps.
+//! The daemon's voice: what this stone says when it chirps or sings.
 //!
-//! M0 speaks a static body — identity, address, thriving, no offerings yet.
-//! When services exist, a source that bumps its version watch on change
-//! replaces this; the announcer already listens for it (L18).
+//! [`DynamicChirpSource`] speaks the registry's truth: `services` inventory
+//! composed from the aggregate, `rev` bumped on `OfferingChanged`, the
+//! announcer's version watch fired so change-chirps flow (L18 — the
+//! machinery existed since W1; this is the composer it waited for).
+//! Songs (full-voice, multi-domain) are quantized by the contract framer
+//! when S3+ wires them; heartbeats here are lean chirps with inventory.
 
-use garden_contract::chirp::{ChirpFrame, Network, PeerAddress, Presence, Reception, Stone};
+use garden_contract::chirp::{
+    ChirpFrame, Inventory, InventoryMap, Moss, Network, PeerAddress, Presence, Reception,
+    ServiceEntry, Stone,
+};
 use garden_kernel::announce::ChirpSource;
 use std::net::IpAddr;
 use std::sync::Arc;
-
-/// A chirp source whose body does not change. The version watch never fires.
-pub struct StaticChirpSource {
-    body: ChirpFrame,
-    version_tx: tokio::sync::watch::Sender<u64>,
-}
-
-impl StaticChirpSource {
-    pub fn new(body: ChirpFrame) -> Arc<Self> {
-        let (version_tx, _) = tokio::sync::watch::channel(0);
-        Arc::new(Self { body, version_tx })
-    }
-}
-
-impl ChirpSource for StaticChirpSource {
-    fn body(&self) -> ChirpFrame {
-        self.body.clone()
-    }
-
-    fn version(&self) -> tokio::sync::watch::Receiver<u64> {
-        self.version_tx.subscribe()
-    }
-}
 
 /// Best-effort LAN address for the chirp: first eligible non-loopback IPv4,
 /// loopback as honest fallback (a lone stone on a laptop still speaks).
@@ -47,38 +30,250 @@ pub fn local_lan_ip() -> IpAddr {
     IpAddr::from(std::net::Ipv4Addr::LOCALHOST)
 }
 
-/// Build the M0 frame: alive, thriving, offering nothing yet. `boot_id`
-/// distinguishes this boot's frames from a restart's; the announcer stamps
-/// `proto`/`seq` (meta is its section to fill).
-pub fn static_body(
-    stone_id: String,
-    stone_name: String,
+/// What a chirp source needs to speak for this stone. Clone freely.
+#[derive(Clone)]
+pub struct Voice {
+    pub stone_id: String,
+    pub stone_name: String,
+    pub http_port: u16,
+    pub moss_version: String,
+}
+
+/// A chirp source that speaks the registry's truth. `rev` starts at the
+/// boot snapshot's size (offerings loaded at boot are generation 1+) and
+/// climbs on every OfferingChanged — monotonic per boot, per ADR-0004.
+pub struct DynamicChirpSource {
+    voice: Voice,
     boot_id: String,
-    http_port: u16,
-    moss_version: String,
-) -> ChirpFrame {
-    use garden_glossary::{health, presence};
-    let now = chrono::Utc::now();
-    ChirpFrame {
-        stone: Stone {
-            id: stone_id,
-            name: stone_name,
-            moss: garden_contract::chirp::Moss { version: moss_version },
-            network: Network {
-                address: PeerAddress { ip: local_lan_ip(), port: http_port, tls_port: None },
-                mac: None,
-            },
-        },
-        presence: Presence {
-            health: health::THRIVING.into(),
-            status: presence::ONLINE.into(),
-        },
-        services: Default::default(),
-        meta: garden_contract::chirp::FrameMeta {
-            proto: None,
-            boot_id: Some(boot_id),
-            seq: None,
-        },
-        received: Reception { discovered_at: now, last_seen: now },
+    registry: Arc<crate::offerings::registry::Registry>,
+    rev: std::sync::atomic::AtomicU64,
+    version_tx: tokio::sync::watch::Sender<u64>,
+}
+
+impl DynamicChirpSource {
+    /// Start from the CURRENT registry snapshot and follow
+    /// OfferingChanged from here ([`follow_offering_changes`]).
+    pub fn new(
+        voice: Voice,
+        boot_id: String,
+        registry: Arc<crate::offerings::registry::Registry>,
+    ) -> Arc<Self> {
+        let initial = (registry.snapshot().len() as u64).max(1);
+        let (version_tx, _) = tokio::sync::watch::channel(0);
+        Arc::new(Self {
+            voice,
+            boot_id,
+            registry,
+            rev: std::sync::atomic::AtomicU64::new(initial),
+            version_tx,
+        })
+    }
+
+    /// The services inventory block, composed fresh from the aggregate.
+    fn services_block(&self) -> Inventory<ServiceEntry> {
+        let items: Vec<ServiceEntry> =
+            self.registry.snapshot().iter().map(|o| o.service_entry()).collect();
+        Inventory {
+            rev: Some(self.rev.load(std::sync::atomic::Ordering::Relaxed)),
+            // Cap truncation is the framer/cache's last resort (A2.3); the
+            // composer declares totals only when it actually truncates.
+            total: None,
+            items,
+        }
     }
 }
+
+impl ChirpSource for DynamicChirpSource {
+    fn body(&self) -> ChirpFrame {
+        let now = chrono::Utc::now();
+        ChirpFrame {
+            stone: Stone {
+                id: self.voice.stone_id.clone(),
+                name: self.voice.stone_name.clone(),
+                moss: Moss { version: self.voice.moss_version.clone() },
+                network: Network {
+                    address: PeerAddress {
+                        ip: local_lan_ip(),
+                        port: self.voice.http_port,
+                        tls_port: None,
+                    },
+                    mac: None,
+                },
+            },
+            presence: Presence {
+                health: garden_glossary::health::THRIVING.into(),
+                status: garden_glossary::presence::ONLINE.into(),
+            },
+            inventory: InventoryMap {
+                services: Some(self.services_block()),
+                ..Default::default()
+            },
+            meta: garden_contract::chirp::FrameMeta {
+                boot_id: Some(self.boot_id.clone()),
+                ..Default::default()
+            },
+            received: Reception { discovered_at: now, last_seen: now },
+        }
+    }
+
+    fn version(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.version_tx.subscribe()
+    }
+}
+
+/// Listen to the registry for the life of the stone: every OfferingChanged
+/// bumps the rev and fires the source's version watch (which the announcer
+/// debounces into a change chirp). Lagged events still bump once — the next
+/// body() recomposes the whole set anyway. Call once at startup.
+pub fn follow_offering_changes(
+    source: &Arc<DynamicChirpSource>,
+    registry: &Arc<crate::offerings::registry::Registry>,
+    token: tokio_util::sync::CancellationToken,
+) {
+    let mut events = registry.events();
+    let source = Arc::clone(source);
+    tokio::spawn(async move {
+        loop {
+            // NB: never `.borrow()` inside `send_replace` — the read guard
+            // alive across the write attempt deadlocks the watch (the S2
+            // blocker). `send_modify` runs under one lock.
+            let bump = || {
+                source.rev.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                source.version_tx.send_modify(|v| *v = v.wrapping_add(1));
+            };
+            tokio::select! {
+                _ = token.cancelled() => return,
+                changed = events.recv() => match changed {
+                    Ok(_) => bump(),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed = n, "offering events lagged; rev bumped once");
+                        bump();
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                },
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::offerings::registry::MemorySnapshotStore;
+    use crate::offerings::model::{
+        Location, ManagedData, ModeData, Offering, Status,
+    };
+    use std::collections::HashMap;
+
+    fn voice() -> Voice {
+        Voice {
+            stone_id: "sid-1".into(),
+            stone_name: "stone-test".into(),
+            http_port: 7285,
+            moss_version: "1.0.0".into(),
+        }
+    }
+
+    fn planted(name: &str) -> Offering {
+        let now = chrono::Utc::now();
+        Offering {
+            offering_id: uuid::Uuid::now_v7().to_string(),
+            name: name.to_string(),
+            offering: "redis".into(),
+            category: "data".into(),
+            status: Status::Running,
+            location: Location {
+                host: "localhost".into(),
+                port: 7300,
+                protocol: "http".into(),
+            },
+            mode_data: ModeData::Managed(ManagedData {
+                runtime_kind: "oci".into(),
+                spec: Default::default(),
+                port_map: HashMap::from([("default".to_string(), 7300u16)]),
+                plan: None,
+            }),
+            registered_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn registry_with(items: Vec<Offering>) -> Arc<crate::offerings::registry::Registry> {
+        let registry = Arc::new(crate::offerings::registry::Registry::new(Arc::new(
+            MemorySnapshotStore::default(),
+        )));
+        for o in items {
+            registry.register(o);
+        }
+        registry
+    }
+
+    #[test]
+    fn body_speaks_the_registry_truth() {
+        let registry = registry_with(vec![planted("redis::default")]);
+        let source = DynamicChirpSource::new(voice(), "boot-1".into(), Arc::clone(&registry));
+
+        let frame = source.body();
+        assert_eq!(frame.stone.id, "sid-1");
+        assert_eq!(frame.meta.boot_id.as_deref(), Some("boot-1"));
+
+        let inv = frame.inventory.services.expect("services block present");
+        assert_eq!(inv.items.len(), 1);
+        assert_eq!(inv.items[0].name, "redis::default");
+        assert_eq!(inv.items[0].stem, "redis");
+        assert_eq!(inv.items[0].state.status, "running");
+        assert_eq!(inv.items[0].ports["default"], 7300);
+        assert_eq!(inv.rev, Some(1), "boot snapshot = generation 1");
+    }
+
+    /// The S2 heartbeat: a plant bumps the rev; the version watch fires so
+    /// the announcer's existing debounce turns it into a change chirp.
+    #[tokio::test]
+    async fn offering_change_bumps_rev_and_version() {
+        let registry = registry_with(vec![]);
+        let source = DynamicChirpSource::new(voice(), "boot-1".into(), Arc::clone(&registry));
+        follow_offering_changes(
+            &Arc::clone(&source),
+            &Arc::clone(&registry),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        let mut version = source.version();
+        let before = *version.borrow_and_update();
+
+        registry.register(planted("redis::default"));
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), version.changed())
+            .await
+            .expect("version watch must fire on OfferingChanged")
+            .expect("watch alive");
+        assert!(*version.borrow() > before, "version advanced");
+
+        let inv = source.body().inventory.services.expect("services block");
+        assert_eq!(inv.items.len(), 1, "recomposed from the registry");
+        assert_eq!(inv.rev, Some(2), "second generation");
+    }
+
+    /// Uproot also bumps: the SET changed even though a stone may now host
+    /// nothing — a block with empty items and a fresh rev defends that truth.
+    #[tokio::test]
+    async fn removal_bumps_rev_and_empties_items() {
+        let registry = registry_with(vec![planted("redis::default")]);
+        let source = DynamicChirpSource::new(voice(), "boot-1".into(), Arc::clone(&registry));
+        let id = registry.snapshot()[0].offering_id.clone();
+        follow_offering_changes(
+            &Arc::clone(&source),
+            &Arc::clone(&registry),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        registry.remove(&id);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let inv = source.body().inventory.services.expect("block still present");
+        assert!(inv.items.is_empty(), "empty set is still a set");
+        assert_eq!(inv.rev, Some(2), "removal is a generation too");
+    }
+}
+

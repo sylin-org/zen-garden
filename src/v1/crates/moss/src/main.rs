@@ -99,14 +99,14 @@ async fn main() {
     })
     .await;
 
-    let chirp_body = source::static_body(
-        identity.stone_id.clone(),
-        identity.stone_name.clone(),
-        boot_id.to_string(),
+    // The stone's voice: identity + port + version. The chirp source that
+    // speaks it is built AFTER the offerings load (it composes inventory).
+    let voice = source::Voice {
+        stone_id: identity.stone_id.clone(),
+        stone_name: identity.stone_name.clone(),
         http_port,
-        env!("CARGO_PKG_VERSION").to_string(),
-    );
-    let chirp_source = source::StaticChirpSource::new(chirp_body.clone());
+        moss_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
 
     // The stone's offerings: loaded from disk via the store port, adopted
     // split to candidates (ghost prevention, OFFERINGS.md §2).
@@ -240,6 +240,14 @@ async fn main() {
 
     // The announcer speaks through the same bound port number: boot chirp,
     // then ask the room who's here; heartbeats and change-chirps after.
+    // The source is DYNAMIC (S2): it composes the offerings inventory and
+    // bumps its rev on OfferingChanged (follow_offering_changes below).
+    let chirp_source = source::DynamicChirpSource::new(
+        voice.clone(),
+        boot_id.to_string(),
+        Arc::clone(&offerings),
+    );
+    source::follow_offering_changes(&chirp_source, &offerings, token.clone());
     let announce_socket = ingress.socket();
     tokio::spawn(announce::run(
         Arc::clone(&announce_socket),

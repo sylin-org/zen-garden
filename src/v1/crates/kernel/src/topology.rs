@@ -196,7 +196,7 @@ impl Topology {
             );
             hint.stone.id = stone_id.clone();
             if let Some(inv) = resp.services {
-                hint.services = inv;
+                hint.inventory.services = Some(inv);
             }
             hint.received.discovered_at = now;
             let event = {

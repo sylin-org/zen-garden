@@ -31,15 +31,23 @@ witness.
    facts (gitignored): fleet IPs (.82/.111/.195, keys in plink), v1 room =
    UDP 7284 / group 239.255.42.199, HTTP 7285
 
-## Git state (branch `dev`; nothing pushed; no remote/main — decision pending)
+## Git state (branch `dev`, PUSHED to origin; `main` deferred to the release candidate)
+
+Remote: `git@github.com:sylin-org/zen-garden.git` (SSH — the HTTPS PAT
+lacks `workflow` scope and GitHub rejects pushes touching
+`.github/workflows/` over it). `dev` pushed 2026-08-27 (a73bf12a). Branch
+law: only `dev` (trunk) and, from the RC onward, `main`. Local branches
+were pruned to dev alone: the PoC lives only as tag `poc-final`; Pavilion
+is parked at tag `pavilion-parked` (charter B10 recovery). The two remote
+`ecc-tools/*` tool-branches were deleted.
 
 ```
-df3dfbe5 feat(v1): S3b - boots and changes sing, heartbeats chirp lean; the cache merges by rev  ← S3b
-7ebe96de feat(v1): S3a - rich ask, rich tell: probe speaks depth, responder answers with inventory ← S3a
-d2a496c7 docs(v1): dx & delight research - vocabulary tiers, tutorial gap, household register
-b0c76c1b chore(v1): lockfile records rake's garden-glossary dependency
-c4382ca1 docs: continuation updated - S2 landed, no open blockers, resume at S3
-9df8c53b feat(v1): S2 - DynamicChirpSource speaks the registry's truth
+a73bf12a docs: continuation updated - S3 landed (rich ask/reply + songs), resume at S4
+df3dfbe5 feat(v1): S3b - boots and changes sing, heartbeats chirp lean; the cache merges by rev
+7ebe96de feat(v1): S3a - rich ask, rich tell: probe speaks depth, responder answers with inventory
+fbf889cc docs: CONTRIBUTING - the lightweight contributor path
+f7b3a9b3 docs(v1): orientation - one datagram's life, boot to expiry
+ee607965 docs(v1): glossary speaks its metaphors - every garden word carries its standard-term gloss
 ```
 
 Working tree is CLEAN (91 tests green, clippy -D warnings clean). 2026-08-27

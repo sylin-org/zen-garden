@@ -45,6 +45,11 @@ this file points at; state lives once, decisions live once.
   `include_str!` or the Write tool over piped regex extraction.
 - Windows permits same-host port sharing via SO_REUSEADDR; Unix needs
   SO_REUSEPORT (tracked as D8). One moss per host by discipline meanwhile.
+- **Branch law (2026-08-27):** only `dev` (trunk, pushed) and — from the
+  release candidate — `main`. PoC lives only as tag `poc-final`; Pavilion
+  is parked at tag `pavilion-parked` (B10 recovery). Push channel is SSH:
+  the stored HTTPS PAT lacks `workflow` scope and GitHub rejects any push
+  touching `.github/workflows/` over it.
 - Compatibility-rule operands actually used by the corpus (census 2026-08-26):
   ram.total.mb(77), architecture(29), ai.runtime(16), cpu.pattern(5),
   gpu.vram.total.mb(5), cpu.features(4), gpu(1), os.family(1).
@@ -63,9 +68,10 @@ landing. The pointers below have no other home yet:
   `GET /api/v1/stone/offerings/{name}` before designing feed/stream posture.
 - **Graceful-goodbye witness** needs a console ctrl_c harness (Start-Process
   cannot send CTRL_C; GenerateConsoleCtrlEvent approach exists but untested).
-- **M1 release pipeline** ("stranger installs from public artifact") blocks on
-  a remote-push DECISION first — no remote exists yet; tag→build→sign→release
-  chain comes after that call.
+- **M1 release pipeline** ("stranger installs from a public artifact"):
+  the remote exists (github.com/sylin-org/zen-garden, SSH) and `dev` is
+  pushed; `main` is DEFERRED to the release candidate — M1 creates main +
+  the tag→build→sign→release chain.
 - **Hardware manifests (`hw/`)**: port dell wyse-5070 profile from PoC
   (identity/firmware/profile/bios sections); inverse compatibility lists;
   same grammar with `kind: hardware`.

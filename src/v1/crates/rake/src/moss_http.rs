@@ -309,7 +309,7 @@ mod tests {
             "POST",
             Ipv4Addr::LOCALHOST.into(),
             port,
-            "/api/v1/stone/offerings/redis",
+            "/api/v1/offerings/redis",
             Some(&body),
             Duration::from_secs(3),
         )
@@ -318,7 +318,7 @@ mod tests {
         let seen = server.await.unwrap();
 
         assert_eq!(v["data"]["ok"], 1);
-        assert!(seen.starts_with("POST /api/v1/stone/offerings/redis HTTP/1.1"));
+        assert!(seen.starts_with("POST /api/v1/offerings/redis HTTP/1.1"));
         assert!(seen.contains("Content-Type: application/json"));
         let clen: usize = seen
             .lines()

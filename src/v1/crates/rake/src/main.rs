@@ -146,13 +146,20 @@ impl Candidate {
 }
 
 /// What the attached moss reports about its garden (standard formats, L21).
-/// The canonical frame — sections and all — plus the reporter's reception
-/// count. One shape: wire, cache, HTTP, CLI.
+/// The canonical frame — sections and all. Peer rows carry the reporter's
+/// reception count; the spliced self row carries neither (it IS the chirp).
+/// One shape: wire, cache, HTTP, CLI.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct GardenStone {
     #[serde(flatten)]
     body: ChirpFrame,
-    chirps: u64,
+    /// True for the reporter's own splice (ADR-0004 §3 — self is a
+    /// projection, never a stored peer).
+    #[serde(default, rename = "self")]
+    is_self: bool,
+    /// Frames the reporter has accepted from this peer; absent on self.
+    #[serde(default)]
+    chirps: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +377,7 @@ impl Cli {
                 "no moss found: nothing pinned, nothing tended, nobody answered",
                 |cand| async move {
                     let v =
-                        moss_http::get_json(cand.ip, cand.http_port, "/api/v1/garden/observe", HTTP_TIMEOUT)
+                        moss_http::get_json(cand.ip, cand.http_port, "/api/v1/garden/stones", HTTP_TIMEOUT)
                             .await?;
                     parse_garden(&v).map_err(moss_http::AttachError::ProcessingError)
                 },
@@ -526,7 +533,7 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
 
 /// Request paths with their commands (R2.2): built where used, kept nowhere.
 mod paths {
-    pub const OFFERINGS: &str = "/api/v1/stone/offerings";
+    pub const OFFERINGS: &str = "/api/v1/offerings";
 
     pub fn record(name: &str) -> String {
         format!("{OFFERINGS}/{name}")
@@ -755,8 +762,23 @@ fn render_status(verb_past: &str, data: &serde_json::Value) -> Result<(), String
     Ok(())
 }
 
-fn print_row(stone: &str, health: &str, address: &str, version: &str) {
-    println!("{:<26} {:<12} {:<21} {}", stone, health, address, version);
+fn print_row(stone: &str, health: &str, address: &str, offerings: &str, version: &str) {
+    println!("{:<26} {:<12} {:<21} {:<10} {}", stone, health, address, offerings, version);
+}
+
+/// What the stone claims to host: the declared total when the song was
+/// capped, the visible items otherwise, silence when nothing is said.
+fn offerings_count(s: &GardenStone) -> String {
+    s.body
+        .inventory
+        .services
+        .as_ref()
+        .map(|svc| {
+            svc.total
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| svc.items.len().to_string())
+        })
+        .unwrap_or_else(|| "-".into())
 }
 
 fn print_table(stones: &[GardenStone]) {
@@ -764,12 +786,18 @@ fn print_table(stones: &[GardenStone]) {
         println!("The garden is quiet - the moss sees nobody.");
         return;
     }
-    print_row("STONE", "HEALTH", "ADDRESS", "VERSION");
+    print_row("STONE", "HEALTH", "ADDRESS", "OFFERINGS", "VERSION");
     for s in stones {
+        let name = if s.is_self {
+            format!("{} (me)", s.body.stone.name)
+        } else {
+            s.body.stone.name.clone()
+        };
         print_row(
-            &s.body.stone.name,
+            &name,
             &s.body.presence.health,
             &format!("{}:{}", s.body.stone.network.address.ip, s.body.stone.network.address.port),
+            &offerings_count(s),
             &s.body.stone.moss.version,
         );
     }
@@ -851,7 +879,36 @@ mod tests {
         let stones = parse_garden(&v).unwrap();
         assert_eq!(stones[0].body.stone.name, "stone-a");
         assert_eq!(stones[0].body.stone.network.address.port, 7285);
-        assert_eq!(stones[0].chirps, 3);
+        assert_eq!(stones[0].chirps, Some(3));
+        assert!(!stones[0].is_self);
+    }
+
+    /// The spliced self row (ADR-0004 §3): `"self": true`, no chirp count,
+    /// same canonical frame. Rake marks it and renders it among peers.
+    #[test]
+    fn garden_parse_accepts_the_self_splice() {
+        let v = serde_json::json!({
+            "data": { "stones": [ {
+                "self": true,
+                "stone": {
+                    "id": "0198e0c7-0000-7000-8000-000000000001",
+                    "name": "stone-a",
+                    "moss": { "version": "1.0.0" },
+                    "network": { "address": { "ip": "192.168.1.9", "port": 7285 } }
+                },
+                "presence": { "health": "thriving", "status": "online" },
+                "inventory": { "services": { "rev": 4, "items": [] } },
+                "meta": { "proto": "zg/1" },
+                "received": {
+                    "discovered_at": "2026-08-26T00:00:00Z",
+                    "last_seen": "2026-08-26T00:00:00Z"
+                }
+            } ] }
+        });
+        let stones = parse_garden(&v).unwrap();
+        assert!(stones[0].is_self, "the splice is marked");
+        assert_eq!(stones[0].chirps, None, "self does not count chirps");
+        assert_eq!(stones[0].body.inventory.services.as_ref().and_then(|s| s.rev), Some(4));
     }
 
     /// §5.3's promise: explain renders the decision log from the plan the

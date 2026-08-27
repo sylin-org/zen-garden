@@ -1,0 +1,206 @@
+# CONTINUATION — read me first, then delete me
+
+Written 2026-08-26 at a planned pause, mid-epic. Self-contained for a clean
+context. Verify everything against the tree — trust files over this document.
+
+## Project in one paragraph
+
+Zen Garden: self-hosted service orchestration on repurposed hardware
+("stones"). Services outlive machines. The PoC (`src/poc/`, branch `poc`,
+tag `poc-final`) is the frozen oracle. v1 is being built in `src/v1/` under
+an accepted constitution. Current epic: **the garden that knows itself** —
+ADR-0004 discovery envelope (chirp/song, inventory map, topology cache) +
+storage MVP with the USB adoption ceremony, ending in fleet deploy + W6
+witness.
+
+## Authority (read in order; conflicts resolve downward)
+
+1. `docs/v1/lessons.md` — L1–L26 normative
+2. `docs/v1/CHARTER.md` — accepted, amended; bets B1–B11
+3. `docs/v1/CODE-RULES.md` — P0–P5; **R3.9 "records are paths" is new**
+4. `docs/v1/OFFERINGS.md` — offerings law (§5.1 layered catalogs, FQN
+   namespace, named installations)
+5. `docs/v1/decisions/ADR-0001..0005` — directory, ports, FQN namespace,
+   discovery envelope (A1 records-are-paths, A2 inventory-map/songs/framer),
+   living will (capture/checkpoints/replant + §8 storage-on-envelope)
+6. `src/v1/DEBT.md` (D1–D14; D14 closes on W5/W6 work), `src/v1/WITNESSES.md`
+   (W1–W4 recorded)
+7. `docs/MEMORY.md` — durable memory index; `local/NOTES.md` — machine
+   facts (gitignored): fleet IPs (.82/.111/.195, keys in plink), v1 room =
+   UDP 7284 / group 239.255.42.199, HTTP 7285
+
+## Git state (branch `dev`; nothing pushed; no remote/main — decision pending)
+
+```
+0efa269f feat(v1): S1.6 - the inventory map, songs, and the framer
+2d9ea34f docs(v1): ADR-0004 A1 - records are paths; R3.9 codified
+5240773d refactor(v1)!: the canonical frame - records are paths
+f6d9393f feat(v1): wire anchors for the discovery envelope (superseded shape)
+59cb4929 docs(v1): ADR-0005 ext 8 - storage rides the discovery envelope
+8bf3d733 docs(v1): ADR-0005 - the living will
+c0994316 docs(v1): ADR-0004 - discovery envelope + URI grammar
+4c6a8399 feat(v1): reads refuse off-grammar names loudly
+24bbef47 feat(v1)!: ADR-0003 - FQN namespace, reserved default, moniker surfaces
+```
+
+**UNCOMMITTED (working tree carries S2, do not lose):**
+- `crates/moss/src/source.rs` — REWRITTEN: `DynamicChirpSource` +
+  `follow_offering_changes` + 3 tests. **Contains a deadlock (see BLOCKER).**
+- `crates/moss/src/main.rs` — wired: `source::Voice` struct (replaces
+  static_body), DynamicChirpSource built AFTER offerings-load, follower
+  spawned with token; goodbye uses `chirp_source.body()`.
+- `crates/kernel/src/topology.rs` — on_response now fills
+  `hint.inventory.services` (was `hint.services`).
+- `crates/moss/src/http.rs` — sample_peer uses InventoryMap.
+- Cargo.locks — churn.
+All of it compiles clean (`clippy --workspace --all-targets -D warnings`
+passed); the failure is RUNTIME ONLY, in two new tests.
+
+## ⚠️ BLOCKER: S2 test hang — root cause found, fix is one line
+
+Symptom: `offering_change_bumps_rev_and_version` and
+`removal_bumps_rev_and_empties_items` hang >60s ("has been running for over
+60 seconds"), every other test green.
+
+Root cause (confirmed by reading): in `follow_offering_changes`
+(`crates/moss/src/source.rs`, the spawned task's `bump` closure):
+
+```rust
+source
+    .version_tx
+    .send_replace(source.version_tx.borrow().wrapping_add(1));
+```
+
+tokio's `watch::Sender::borrow()` takes a read lock; the guard is ALIVE
+while `send_replace` demands the write lock → deadlock on the
+current-thread `#[tokio::test]` runtime.
+
+**Fix (pick one):**
+```rust
+let next = source.version_tx.borrow().wrapping_add(1);
+source.version_tx.send_replace(next);
+// — or cleaner —
+source.version_tx.send_modify(|v| *v = v.wrapping_add(1));
+```
+Then: `cargo test -p garden-moss` (all 3 source tests + full suite), commit
+as `feat(v1): S2 - DynamicChirpSource ...`.
+
+## The canonical shape (S1.5/S1.6 — MEMORIZE before touching wire code)
+
+`ChirpFrame` (contract/src/chirp.rs), sections per R3.9:
+`stone{id, name, moss.version, network{address{ip,port,tls_port}, mac}} ·
+presence{health, status} · inventory{...} · meta{proto, boot_id, seq,
+part{n,of}} · received{discovered_at, last_seen}`.
+
+- `inventory: InventoryMap` — closed rootspace. Typed knowns:
+  `services: Option<Inventory<ServiceEntry>>`; `banks` claimed slot
+  (`_banks_slot: Option<serde_json::Value>` — type it in S7b);
+  `extra: Map` passthrough round-trips unknown domains losslessly.
+- `InventoryMap::insert("services", v)` decodes typed, preserves verbatim
+  if undecodable; `from_pairs` builder; `merge_frame` = per-domain rev rule
+  (absent key keeps, present block's rev speaks; unknown = last-write-wins).
+- `ServiceEntry{offering_id, name(FQN!), stem, category, state{status,
+  role}, ports}`. `Offering::service_entry()` in model.rs produces it.
+- **Song vs chirp**: `stone_chirp` = lean heartbeat; `stone_song` (new
+  discriminator, not yet emitted by announcer) = full-voice.
+  `contract::song::frame_song(base, blocks, seq)` quantizes domain blocks
+  whole against `FRAME_BUDGET_BYTES=3500`: biggest-first greedy,
+  every frame re-anchored, `meta.part` informational, empty → no frames.
+- Fixtures (`contract/tests/wire_fixtures.rs`) pin the CANONICAL shape;
+  v0-compat RETIRED (v1 owns its room). R3.9 law in CODE-RULES.
+- Discogs: lowercase discriminators (`announcement::*`) — pinned.
+
+## Epic map (todowrite list mirrors this)
+
+- [x] S1/S1.5/S1.6 — wire anchors, canonical frame, A1+A2 amendments,
+      inventory map, song+framer (committed)
+- [~] **S2 — DynamicChirpSource: code complete, ONE-LINE FIX + tests green
+      + commit REMAINING** (see BLOCKER). Design: rev starts at
+      max(snapshot.len(),1); bumps on OfferingChanged (lagged bumps once);
+      version watch fires → announcer's existing debounce (L18) emits
+      change-chirp. Announcer untouched — it already had version-watch
+      machinery. Interim: inventory rides plain chirps; songs wire-up can
+      land in S3.
+- [ ] S3 — rich responders: probe `ask_the_room_rich` (for_moss_rich);
+      responder parses `rich` flag and answers with
+      `DiscoveryResponse{stone, services: Some(inventory)}`; moss boot ask
+      goes rich. Wire shapes already exist.
+- [ ] S4 — topology cache: ingest already stores frames; ADD
+      `InventoryMap::merge_frame` semantics on update (per-domain rev),
+      part-marker transparency (nothing to do — informational), candidates
+      pool + promotion (hearing-before-meeting; ghost-pool idiom, 3rd use).
+- [ ] S5 — URI grammar cut: `/api/v1` (manifest), `/stone`, `/stone/this`,
+      `/stone/{ref}` (404 + Location redirect from topology),
+      `/stone/posture` (move from /local/posture), `/garden/stones`
+      (replace /garden/observe), `/offerings[/{fqn}][/rest|/wake]`,
+      `/catalog`. SelfView splice: `/garden/stones` includes self (project
+      from source.body() + registry counts). Gate: route-manifest test also
+      forbids unadvertised emissions. Clean cut, no aliases.
+- [ ] S5.5 — persistence v3: record.json/plan.json sectioned schema
+      (identity/state/location/mode per R3.9) + auto-migration
+      (`.migrated` pattern; pre-fleet, MUST land before S8).
+- [ ] S6 — rake sync: GardenStone flatten already works; update observe
+      rendering to sectioned frame (stone.name, presence.health,
+      inventory.services.items).
+- [ ] S7a — storage MVP local: `offerings/storage.rs` — Bank model
+      {fqn(BankId grammar), device_id, state(mounted/ejected), roles[],
+      capacity/used via sysinfo Disks}, scan of removable volumes,
+      **adopt ceremony**: `rake storage adopt <device> --name X` + POST
+      `/api/v1/storage/adopt` (writes `.zen-garden/manifest.json` per
+      STORAGE-0009 dotfolder law), mount watcher (sysinfo refresh or
+      windows events) bumps bank_rev → song.
+- [ ] S7b — storage wire: type the `banks` slot, cache rows via same
+      ingest, `/storage` + `/garden/storage` faces (grid law ADR-0004 §4),
+      eject verb (state bump, liveness inherited — ADR-0005 §8).
+- [ ] S8 — cross-compile linux-x64 (existing installer/v1 Dockerfile),
+      deploy to 3 stones (~/zen-v1/, plink), upgrade binaries.
+- [ ] W6 witness (record in WITNESSES.md): plant on A visible from B ≤1
+      interval; rev-heal drill; **USB drive adopt ceremony garden-wide**
+      (plug → announced, unplug → gone by announcement or expiry).
+
+Deliberately OUT of this epic: capture/checkpoint pipeline (ADR-0005 core,
+W7), Lantern, O3 adoption.
+
+## Conventions & gotchas (new since last continuation)
+
+- **tokio watch deadlock**: never `.borrow()` inside `send_replace` args.
+  Prefer `send_modify`.
+- `#[tokio::test]` = current_thread runtime; spawned tasks interleave at
+  awaits — hangs above looked like "watch never fires", were lock deadlock.
+- `expect_used` is deny in prod code: test modules need
+  `#![allow(clippy::unwrap_used, clippy::expect_used)]`.
+- Witness/ADR convention: once Accepted, ADRs get AMENDMENT sections (A1,
+  A2…), never edits. todowrite list mirrors the epic slices.
+- The full workspace `cargo test` timed out at 600s during the hang — after
+  the fix, run per-crate first (`-p garden-moss --bin moss source::`),
+  then full suite.
+- Old continuation's gotchas still valid: `gen` reserved; tokio interval
+  first-tick; rg+PS quoting; SO_REUSEADDR (D8); one moss per host while
+  developing (stop old moss.exe before rebuilding — file lock).
+
+## Key file locations
+
+| What | Where |
+|---|---|
+| Frame/inventory/song/framer | src/v1/crates/contract/src/{chirp,discovery,song}.rs |
+| Wire fixtures (canonical pins) | src/v1/crates/contract/tests/wire_fixtures.rs |
+| Announcer (chirp on change, heartbeats) | src/v1/crates/kernel/src/announce.rs |
+| Topology cache | src/v1/crates/kernel/src/topology.rs |
+| Probe/responder (ask/tell) | src/v1/crates/kernel/src/{probe,responder}.rs |
+| **S2 source (BLOCKER here)** | src/v1/crates/moss/src/source.rs |
+| moss wiring | src/v1/crates/moss/src/main.rs |
+| HTTP surface | src/v1/crates/moss/src/http.rs |
+| rake | src/v1/crates/rake/src/main.rs |
+| Offerings stack | src/v1/crates/moss/src/offerings/ |
+| ADRs | docs/v1/decisions/ADR-0001..0005 |
+
+## Resume procedure
+
+1. Read this + `git log --oneline -5` + `git status` (expect the 5 modified
+   files above; if missing, recover from this description).
+2. Apply the BLOCKER fix in source.rs.
+3. `cargo test -p garden-moss --bin moss source::` → 3 green.
+4. Full gates: `cargo clippy --workspace --all-targets -- -D warnings &&
+   cargo test --workspace` (81+ tests green before S2's 3 new ones).
+5. Commit S2. Proceed S3 per epic map. One slice = one commit, gates green
+   at every commit.

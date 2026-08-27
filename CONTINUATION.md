@@ -1,9 +1,9 @@
 # CONTINUATION — read me first, then delete me
 
 Written 2026-08-26 at a planned pause, mid-epic. Updated 2026-08-27: S3
-(rich ask/reply + songs), S4 (candidates pool), S5 (URI grammar cut), S6
-(rake sync) all landed; resume at S5.5. Self-contained for a clean context.
-Verify everything against the tree — trust files over this document.
+(songs/rich ask), S4 (candidates), S5 (URI cut), S6 (rake sync), S5.5
+(persistence v3) all landed; resume at S7a. Self-contained for a clean
+context. Verify everything against the tree — trust files over this doc.
 
 ## Project in one paragraph
 
@@ -140,9 +140,17 @@ part{n,of}} · received{discovered_at, last_seen}`.
       `chirps: Option`); observe table gained an OFFERINGS column
       (declared total or visible items, `-` when silent) and a `(me)`
       marker on the spliced self row. Rake speaks the new grammar.
-- [ ] S5.5 — persistence v3: record.json/plan.json sectioned schema
-      (identity/state/location/mode per R3.9) + auto-migration
-      (`.migrated` pattern; pre-fleet, MUST land before S8).
+- [x] **S5.5 — persistence v3 LANDED (6f1e72bf).** record.json/candidate.json
+      render the sectioned v3 view (`record.rs`: identity{offering_id,
+      name, stem, category} · state{status} · location · mode ·
+      registered_at/updated_at); plan scalars re-homed under `meta`
+      (PlacementPlan{workload, decisions, meta{plan_hash,
+      facts_generation}}) — record embed AND plan.json sidecar speak one
+      shape. Load auto-migrates v2 flats: source renamed
+      `*.json.migrated`, sectioned truth written fresh, embedded plan
+      re-sectioned; idempotent; HTTP offerings faces render the SAME v3
+      view (rake renderers updated). model::Offering's flat serde REMAINS
+      as the legacy reader — that is the forever-compat surface (R0.5).
 - [ ] S7a — storage MVP local: `offerings/storage.rs` — Bank model
       {fqn(BankId grammar), device_id, state(mounted/ejected), roles[],
       capacity/used via sysinfo Disks}, scan of removable volumes,
@@ -199,7 +207,10 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. Open S5.5 per epic map: persistence v3 — sectioned record.json/plan.json
-   (identity/state/location/mode per R3.9) with auto-migration (`.migrated`
-   pattern). Pre-fleet, MUST land before S8. One slice = one commit, gates
-   green at every commit.
+2. Open S7a per epic map: storage MVP local — `offerings/storage.rs` Bank
+   model {fqn(BankId grammar), device_id, state(mounted/ejected), roles[],
+   capacity/used via sysinfo Disks}, scan of removable volumes, the ADOPT
+   CEREMONY (`rake storage adopt <device> --name X` + POST
+   `/api/v1/storage/adopt`, writes `.zen-garden/manifest.json` per
+   STORAGE-0009), mount watcher bumps bank_rev → song (ADR-0005 §8).
+   One slice = one commit, gates green at every commit.

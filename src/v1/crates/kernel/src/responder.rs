@@ -45,18 +45,13 @@ async fn answer(
     source: &dyn ChirpSource,
     msg: Ingested,
 ) {
-    // We do not parse the request beyond its type: any ask gets our card.
-    // (Rich asks carry inventory in slice 3; anchors stay None until then.)
+    // Any ask gets our card. The rich flag rides the request but the
+    // inventory attachment lands in slice 3 — anchors speak for now.
     let body = source.body();
     let response = DiscoveryResponse {
-        stone_id: Some(body.stone_id.clone()),
-        stone_name: body.stone_name.clone(),
-        address: body.address.clone(),
-        moss_version: body.moss_version.clone(),
+        stone: body.stone.clone(),
         lantern_endpoint: None,
         services: None,
-        svc_rev: None,
-        svc_total: None,
     };
     let ann = garden_contract::wire::Announcement::new(
         announcement::DISCOVERY_RESPONSE,

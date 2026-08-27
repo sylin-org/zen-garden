@@ -121,7 +121,7 @@ async fn poetic_mint(port: u16, group: Ipv4Addr) -> String {
         .await
         .unwrap_or_default()
         .iter()
-        .any(|r| r.stone_name == candidate);
+        .any(|r| r.stone.name == candidate);
 
         if !taken {
             return candidate;

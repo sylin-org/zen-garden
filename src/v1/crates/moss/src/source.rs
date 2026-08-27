@@ -4,26 +4,26 @@
 //! When services exist, a source that bumps its version watch on change
 //! replaces this; the announcer already listens for it (L18).
 
-use garden_contract::chirp::{ChirpBody, PeerAddress};
+use garden_contract::chirp::{ChirpFrame, Network, PeerAddress, Presence, Reception, Stone};
 use garden_kernel::announce::ChirpSource;
 use std::net::IpAddr;
 use std::sync::Arc;
 
 /// A chirp source whose body does not change. The version watch never fires.
 pub struct StaticChirpSource {
-    body: ChirpBody,
+    body: ChirpFrame,
     version_tx: tokio::sync::watch::Sender<u64>,
 }
 
 impl StaticChirpSource {
-    pub fn new(body: ChirpBody) -> Arc<Self> {
+    pub fn new(body: ChirpFrame) -> Arc<Self> {
         let (version_tx, _) = tokio::sync::watch::channel(0);
         Arc::new(Self { body, version_tx })
     }
 }
 
 impl ChirpSource for StaticChirpSource {
-    fn body(&self) -> ChirpBody {
+    fn body(&self) -> ChirpFrame {
         self.body.clone()
     }
 
@@ -47,33 +47,38 @@ pub fn local_lan_ip() -> IpAddr {
     IpAddr::from(std::net::Ipv4Addr::LOCALHOST)
 }
 
-/// Build the M0 chirp body: alive, thriving, offering nothing yet.
-/// `boot_id` distinguishes this boot's chirps from a restart's (peers can
-/// tell resurrection from heartbeat); the announcer stamps `proto`/`seq`.
+/// Build the M0 frame: alive, thriving, offering nothing yet. `boot_id`
+/// distinguishes this boot's frames from a restart's; the announcer stamps
+/// `proto`/`seq` (meta is its section to fill).
 pub fn static_body(
     stone_id: String,
     stone_name: String,
     boot_id: String,
     http_port: u16,
     moss_version: String,
-) -> ChirpBody {
+) -> ChirpFrame {
     use garden_glossary::{health, presence};
     let now = chrono::Utc::now();
-    ChirpBody {
-        stone_id,
-        stone_name,
-        address: PeerAddress { ip: local_lan_ip(), port: http_port, tls_port: None },
-        moss_version,
-        services: Vec::new(),
-        health: health::THRIVING.into(),
-        status: presence::ONLINE.into(),
-        discovered_at: now,
-        last_seen: now,
-        mac: None,
-        proto: None,
-        boot_id: Some(boot_id),
-        seq: None,
-        svc_rev: None,
-        svc_total: None,
+    ChirpFrame {
+        stone: Stone {
+            id: stone_id,
+            name: stone_name,
+            moss: garden_contract::chirp::Moss { version: moss_version },
+            network: Network {
+                address: PeerAddress { ip: local_lan_ip(), port: http_port, tls_port: None },
+                mac: None,
+            },
+        },
+        presence: Presence {
+            health: health::THRIVING.into(),
+            status: presence::ONLINE.into(),
+        },
+        services: Default::default(),
+        meta: garden_contract::chirp::FrameMeta {
+            proto: None,
+            boot_id: Some(boot_id),
+            seq: None,
+        },
+        received: Reception { discovered_at: now, last_seen: now },
     }
 }

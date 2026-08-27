@@ -4,7 +4,7 @@
 //! the PoC's `announce_if_changed` machinery, actually implemented this
 //! time. The source is a port: the daemon decides what a chirp says.
 
-use garden_contract::chirp::ChirpBody;
+use garden_contract::chirp::ChirpFrame;
 use garden_contract::consts;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
@@ -13,23 +13,24 @@ use tokio_util::sync::CancellationToken;
 /// Where chirp content comes from. The kernel never invents identity.
 pub trait ChirpSource: Send + Sync {
     /// The body to speak right now.
-    fn body(&self) -> ChirpBody;
+    fn body(&self) -> ChirpFrame;
     /// Bumps whenever the body's meaning changes (services, health, address).
     fn version(&self) -> tokio::sync::watch::Receiver<u64>;
 }
 
-/// Speak `body` as a `STONE_CHIRP` to the multicast group.
+/// Speak `body` as a `STONE_CHIRP` to the multicast group. Meta sections
+/// are the ANNOUNCER's to stamp: schema marker, liveness, ordering.
 pub async fn send_chirp(
     socket: &UdpSocket,
     group: std::net::Ipv4Addr,
     port: u16,
-    mut body: ChirpBody,
+    mut body: ChirpFrame,
     seq: u64,
 ) -> std::io::Result<()> {
-    body.status = garden_glossary::presence::ONLINE.into();
-    body.last_seen = chrono::Utc::now();
-    body.seq = Some(seq);
-    body.proto = Some(consts::PROTO_V1.into());
+    body.presence.status = garden_glossary::presence::ONLINE.into();
+    body.meta.seq = Some(seq);
+    body.meta.proto = Some(consts::PROTO_V1.into());
+    body.received.last_seen = chrono::Utc::now();
     let ann = garden_contract::wire::Announcement::new(
         consts::announcement::STONE_CHIRP,
         serde_json::to_value(&body).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
@@ -46,7 +47,7 @@ pub async fn send_goodbye(
     socket: &UdpSocket,
     group: std::net::Ipv4Addr,
     port: u16,
-    body: ChirpBody,
+    body: ChirpFrame,
 ) -> std::io::Result<()> {
     let ann = garden_contract::wire::Announcement::new(
         consts::announcement::STONE_GOODBYE,

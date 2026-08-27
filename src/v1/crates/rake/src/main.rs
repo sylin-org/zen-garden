@@ -21,7 +21,7 @@ mod moss_http;
 mod tending;
 
 use clap::{Parser, Subcommand};
-use garden_contract::chirp::ChirpBody;
+use garden_contract::chirp::ChirpFrame;
 use garden_contract::consts;
 use garden_kernel::probe;
 use moss_http::AttachError;
@@ -146,10 +146,12 @@ impl Candidate {
 }
 
 /// What the attached moss reports about its garden (standard formats, L21).
+/// The canonical frame — sections and all — plus the reporter's reception
+/// count. One shape: wire, cache, HTTP, CLI.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct GardenStone {
     #[serde(flatten)]
-    body: ChirpBody,
+    body: ChirpFrame,
     chirps: u64,
 }
 
@@ -225,9 +227,9 @@ impl Cli {
         {
             for s in sightings {
                 out.push(Candidate {
-                    ip: s.address.ip,
-                    http_port: s.address.port,
-                    name_hint: Some(s.stone_name),
+                    ip: s.stone.network.address.ip,
+                    http_port: s.stone.network.address.port,
+                    name_hint: Some(s.stone.name),
                     origin: Origin::Discovered,
                 });
             }
@@ -441,7 +443,7 @@ async fn run(cli: &Cli) -> Result<(), String> {
         Command::Find { pattern } => {
             let needle = pattern.to_lowercase();
             let mut stones = cli.garden_view().await?;
-            stones.retain(|s| s.body.stone_name.to_lowercase().contains(&needle));
+            stones.retain(|s| s.body.stone.name.to_lowercase().contains(&needle));
             if cli.json {
                 let arr = serde_json::to_value(&stones)
                     .map_err(|e| format!("could not render json: {e}"))?;
@@ -595,8 +597,8 @@ fn remember_attachment(cand: &Candidate, stones: &[GardenStone]) {
     }
     let name = stones
         .iter()
-        .find(|s| s.body.address.ip == cand.ip && s.body.address.port == cand.http_port)
-        .map(|s| s.body.stone_name.clone())
+        .find(|s| s.body.stone.network.address.ip == cand.ip && s.body.stone.network.address.port == cand.http_port)
+        .map(|s| s.body.stone.name.clone())
         .or_else(|| cand.name_hint.clone())
         .unwrap_or_else(|| "unknown".into());
     if let Some(path) = tending::default_path() {
@@ -765,10 +767,10 @@ fn print_table(stones: &[GardenStone]) {
     print_row("STONE", "HEALTH", "ADDRESS", "VERSION");
     for s in stones {
         print_row(
-            &s.body.stone_name,
-            &s.body.health,
-            &format!("{}:{}", s.body.address.ip, s.body.address.port),
-            &s.body.moss_version,
+            &s.body.stone.name,
+            &s.body.presence.health,
+            &format!("{}:{}", s.body.stone.network.address.ip, s.body.stone.network.address.port),
+            &s.body.stone.moss.version,
         );
     }
 }
@@ -827,23 +829,28 @@ mod tests {
     }
 
     #[test]
-    fn garden_parse_accepts_flattened_standard_format() {
+    fn garden_parse_accepts_the_canonical_frame() {
         let v = serde_json::json!({
             "data": { "stones": [ {
-                "stone_id": "0198e0c7-0000-7000-8000-000000000001",
-                "stone_name": "stone-a",
-                "address": { "ip": "192.168.1.9", "port": 7285, "tls_port": null },
-                "moss_version": "0.1.0",
-                "services": [],
-                "health": "thriving",
-                "status": "online",
-                "discovered_at": "2026-08-26T00:00:00Z",
-                "last_seen": "2026-08-26T00:00:00Z",
+                "stone": {
+                    "id": "0198e0c7-0000-7000-8000-000000000001",
+                    "name": "stone-a",
+                    "moss": { "version": "0.1.0" },
+                    "network": { "address": { "ip": "192.168.1.9", "port": 7285 } }
+                },
+                "presence": { "health": "thriving", "status": "online" },
+                "services": { "rev": 1, "items": [] },
+                "meta": { "proto": "zg/1", "seq": 7 },
+                "received": {
+                    "discovered_at": "2026-08-26T00:00:00Z",
+                    "last_seen": "2026-08-26T00:00:00Z"
+                },
                 "chirps": 3
             } ] }
         });
         let stones = parse_garden(&v).unwrap();
-        assert_eq!(stones[0].body.stone_name, "stone-a");
+        assert_eq!(stones[0].body.stone.name, "stone-a");
+        assert_eq!(stones[0].body.stone.network.address.port, 7285);
         assert_eq!(stones[0].chirps, 3);
     }
 
@@ -886,3 +893,4 @@ mod tests {
         assert_eq!(s, "default → 63001");
     }
 }
+

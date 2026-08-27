@@ -67,7 +67,11 @@ pub async fn ask_the_room(
     // The listen: every answer until the deadline.
     let mut seen: Vec<DiscoveryResponse> = Vec::new();
     let key = |r: &DiscoveryResponse| {
-        r.stone_id.clone().unwrap_or_else(|| r.stone_name.clone())
+        if r.stone.id.is_empty() {
+            r.stone.name.clone()
+        } else {
+            r.stone.id.clone()
+        }
     };
     let mut msg_ids: HashSet<uuid::Uuid> = HashSet::new();
     let deadline = Instant::now() + timeout;
@@ -97,7 +101,7 @@ pub async fn ask_the_room(
             }
         }
     }
-    seen.sort_by(|a, b| a.stone_name.cmp(&b.stone_name));
+    seen.sort_by(|a, b| a.stone.name.cmp(&b.stone.name));
     Ok(seen)
 }
 
@@ -118,15 +122,21 @@ mod tests {
         let responder = tokio::spawn(async move {
             let sock = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
             let resp = DiscoveryResponse {
-                stone_id: Some("id-loopback".into()),
-                stone_name: "stone-echo".into(),
-                address: garden_contract::chirp::PeerAddress {
-                    ip: IpAddr::from(Ipv4Addr::LOCALHOST),
-                    port: 7285,
-                    tls_port: None,
+                stone: garden_contract::chirp::Stone {
+                    id: "id-loopback".into(),
+                    name: "stone-echo".into(),
+                    moss: garden_contract::chirp::Moss { version: "0.1.0".into() },
+                    network: garden_contract::chirp::Network {
+                        address: garden_contract::chirp::PeerAddress {
+                            ip: IpAddr::from(Ipv4Addr::LOCALHOST),
+                            port: 7285,
+                            tls_port: None,
+                        },
+                        mac: None,
+                    },
                 },
-                moss_version: "0.1.0".into(),
                 lantern_endpoint: None,
+                services: None,
             };
             let ann = Announcement::new(
                 announcement::DISCOVERY_RESPONSE,
@@ -148,8 +158,8 @@ mod tests {
         responder.await.unwrap();
 
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].stone_name, "stone-echo");
-        assert_eq!(found[0].stone_id.as_deref(), Some("id-loopback"));
+        assert_eq!(found[0].stone.name, "stone-echo");
+        assert_eq!(found[0].stone.id, "id-loopback");
     }
 
     #[tokio::test]

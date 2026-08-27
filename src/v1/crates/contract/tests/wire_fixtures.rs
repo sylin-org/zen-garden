@@ -1,243 +1,193 @@
-//! Wire fixtures — R0.5 as tests. These pin the v0-compatible shape of v1
-//! chirps and the envelope. If any of these fail, the fleet migration story
-//! is broken; stop and fix the wire, not the test.
+//! Wire fixtures — R0.5 as tests, pinned to the CANONICAL frame (ADR-0004
+//! amendment: records are paths). The v0-compat story is RETIRED — v1 owns
+//! its room (own group/port/namespace; PoC fleet frozen at `poc-final`);
+//! these fixtures now guard the one shape spoken across wire, cache, HTTP,
+//! and rake. If these fail, the canonical-shape contract is broken; stop
+//! and fix the wire, not the test.
 
 // R4.1: unwrap_used is denied in domain code but sanctioned in tests.
 #![allow(clippy::unwrap_used)]
 
-use garden_contract::chirp::{ChirpBody, PeerAddress, ServiceEntry};
+use garden_contract::chirp::{
+    ChirpFrame, Inventory, Moss, Network, PeerAddress, Presence, Reception, ServiceEntry,
+    ServiceState, Stone, INVENTORY_CAP,
+};
 use garden_contract::consts::{self, announcement};
 use garden_contract::wire::Announcement;
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr};
 
-fn sample_body() -> ChirpBody {
-    ChirpBody {
-        stone_id: "0198e0c7-0000-7000-8000-000000000001".into(),
-        stone_name: "stone-proto".into(),
-        address: PeerAddress {
-            ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 137)),
-            port: 7285,
-            tls_port: None,
+/// The canonical frame, composed section by section (construction-site
+/// ergonomics: Default + struct-update — the flat-field-zoo era is gone).
+fn sample_frame() -> ChirpFrame {
+    ChirpFrame {
+        stone: Stone {
+            id: "0198e0c7-0000-7000-8000-000000000001".into(),
+            name: "stone-proto".into(),
+            moss: Moss { version: "1.0.0-alpha".into() },
+            network: Network {
+                address: PeerAddress {
+                    ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 137)),
+                    port: 7285,
+                    tls_port: None,
+                },
+                mac: None,
+            },
         },
-        moss_version: "1.0.0-alpha".into(),
-        services: vec![ServiceEntry {
-            offering_id: "0198e0c7-0000-7000-8000-0000000000aa".into(),
-            name: "mongodb".into(),
-            offering: "mongodb".into(),
-            category: "data".into(),
-            status: "running".into(),
-            role: None,
-            ports: Default::default(),
-        }],
-        health: garden_glossary::health::THRIVING.into(),
-        status: garden_glossary::presence::ONLINE.into(),
-        discovered_at: chrono::Utc::now(),
-        last_seen: chrono::Utc::now(),
-        mac: None,
-        proto: Some(consts::PROTO_V1.into()),
-        boot_id: Some("0198e0c7-0000-7000-8000-0000000000bb".into()),
-        seq: Some(42),
-        svc_rev: None,
-        svc_total: None,
+        presence: Presence {
+            health: garden_glossary::health::THRIVING.into(),
+            status: garden_glossary::presence::ONLINE.into(),
+        },
+        services: Inventory {
+            rev: Some(7),
+            total: None,
+            items: vec![ServiceEntry {
+                offering_id: "0198e0c7-0000-7000-8000-0000000000aa".into(),
+                name: "memcached::default".into(),
+                stem: "memcached".into(),
+                category: "cache".into(),
+                state: ServiceState { status: "running".into(), role: None },
+                ports: Default::default(),
+            }],
+        },
+        meta: garden_contract::chirp::FrameMeta {
+            proto: Some(consts::PROTO_V1.into()),
+            boot_id: Some("0198e0c7-0000-7000-8000-0000000000bb".into()),
+            seq: Some(42),
+        },
+        received: Reception {
+            discovered_at: chrono::Utc::now(),
+            last_seen: chrono::Utc::now(),
+        },
     }
 }
 
+/// Section spelling on the wire: rootspace holds sections, sections hold
+/// facts, and every nesting level is a nameable noun.
 #[test]
-fn v0_required_keys_are_present_on_the_wire() {
-    let body = sample_body();
-    let v = serde_json::to_value(&body).unwrap();
-    for key in [
-        "stone_id",
-        "stone_name",
-        "address",
-        "moss_version",
-        "services",
-        "health",
-        "status",
-        "discovered_at",
-        "last_seen",
-    ] {
-        assert!(v.get(key).is_some(), "v0-required key `{key}` missing");
+fn canonical_sections_are_present_on_the_wire() {
+    let v = serde_json::to_value(sample_frame()).unwrap();
+    for section in ["stone", "presence", "services", "meta", "received"] {
+        assert!(v.get(section).is_some(), "canonical section `{section}` missing");
     }
-    let addr = v.get("address").unwrap();
-    assert!(addr.get("ip").is_some() && addr.get("port").is_some());
+    // Paths, not underscores: identity nests; the frame speaks FQNs.
+    assert_eq!(v["stone"]["id"], "0198e0c7-0000-7000-8000-000000000001");
+    assert_eq!(v["stone"]["network"]["address"]["port"], 7285);
+    assert_eq!(v["stone"]["moss"]["version"], "1.0.0-alpha");
+    assert_eq!(v["services"]["items"][0]["name"], "memcached::default");
+    assert_eq!(v["services"]["items"][0]["stem"], "memcached");
+    assert_eq!(v["services"]["rev"], 7);
 }
 
+/// Optional-noise discipline: None options must not emit; the frame stays
+/// as small as its facts.
 #[test]
-fn v0_optional_keys_are_absent_when_none() {
-    let v = serde_json::to_value(sample_body()).unwrap();
-    assert!(v.get("tls_port").is_none(), "None options must not emit");
-    assert!(v.get("mac").is_none());
+fn absent_options_do_not_emit() {
+    let v = serde_json::to_value(sample_frame()).unwrap();
+    assert!(v.get("tls_port").is_none());
+    assert!(v["stone"]["network"].get("mac").is_none());
+    assert!(v["services"].get("total").is_none(), "undeclared total = no truncation");
+    assert!(v["services"]["items"][0]["state"].get("role").is_none());
 }
 
-#[test]
-fn parses_a_v0_shaped_chirp() {
-    // Shape mirrors the PoC's chirp: v0-required core, no v1 extensions,
-    // plus a capabilities field v1 does not model — unknown to us, ignored.
-    let v0 = json!({
-        "stone_id": "8f94010a-1071-52ba-b223-702eeedb0501",
-        "stone_name": "stone-emerald-vale",
-        "address": { "ip": "192.168.1.82", "port": 7185 },
-        "moss_version": "0.2.0.202606101315",
-        "services": [ { "name": "mongodb", "offering": "mongodb",
-                        "category": "data", "status": "running" } ],
-        "health": "thriving",
-        "status": "online",
-        "discovered_at": "2026-08-25T01:09:28.648917114Z",
-        "last_seen": "2026-08-25T01:09:28.648917114Z",
-        "capabilities": null,
-        "tags": []
-    });
-    let body: ChirpBody = serde_json::from_value(v0).unwrap();
-    assert_eq!(body.stone_name, "stone-emerald-vale");
-    assert_eq!(body.services.len(), 1);
-    assert!(body.proto.is_none(), "v0 chirps carry no proto marker");
-}
-
-#[test]
-fn unknown_future_fields_are_ignored() {
-    let mut body = sample_body();
-    let mut v = serde_json::to_value(&body).unwrap();
-    v["future_thing"] = json!({ "watts": 5 });
-    body = serde_json::from_value(v).unwrap();
-    assert_eq!(body.seq, Some(42));
-}
-
+/// Envelope discipline: same discriminator, msg_id for dedup, sectioned
+/// payload inside.
 #[test]
 fn envelope_roundtrip_preserves_discriminator() {
     let ann = Announcement::new(
         announcement::STONE_CHIRP,
-        serde_json::to_value(sample_body()).unwrap(),
+        serde_json::to_value(sample_frame()).unwrap(),
     );
     let wire = serde_json::to_string(&ann).unwrap();
     let back: Announcement = serde_json::from_str(&wire).unwrap();
     assert_eq!(back.kind, announcement::STONE_CHIRP);
     assert!(back.msg_id.is_some(), "v1 always carries msg_id for dedup");
-    assert_eq!(back.data["stone_name"], "stone-proto");
+    assert_eq!(back.data["stone"]["name"], "stone-proto");
 }
 
-/// R0.5 pin: discriminators are LOWERCASE on the v0 wire — transcribed
-/// from poc/common/src/infra/communications/announcement_types.rs. A
-/// capitalized variant would be silently ignored by every PoC stone.
+/// Unknown future fields are ignored — forward compatibility is tolerance,
+/// not shape-locking.
 #[test]
-fn announcement_discriminators_match_the_poc_wire() {
-    assert_eq!(announcement::STONE_CHIRP, "stone_chirp");
-    assert_eq!(announcement::STONE_GOODBYE, "stone_goodbye");
-    assert_eq!(announcement::DISCOVERY_REQUEST, "discovery_request");
-    assert_eq!(announcement::DISCOVERY_RESPONSE, "discovery_response");
-    assert_eq!(announcement::ELECTION_REQUEST, "election_request");
-    assert_eq!(announcement::ELECTION_CANDIDATE, "election_candidate");
-    assert_eq!(announcement::ELECTION_RESULT, "election_result");
-    assert_eq!(announcement::STORAGE_BEACON, "storage_beacon");
-    assert_eq!(announcement::TOOLS_BEACON, "tools_beacon");
-    assert_eq!(announcement::ALL_V0.len(), 9);
+fn unknown_future_fields_are_ignored() {
+    let mut v = serde_json::to_value(sample_frame()).unwrap();
+    v["future_thing"] = json!({ "watts": 5 });
+    let frame: ChirpFrame = serde_json::from_value(v).unwrap();
+    assert_eq!(frame.meta.seq, Some(42));
 }
 
-/// R0.5 pin: the ask/tell shapes, transcribed from
-/// poc/common/src/types/discovery.rs.
+/// A frame that merely ANSWERED an ask carries the starting-health hint
+/// (W1 precedent) and no inventory of its own.
 #[test]
-fn discovery_request_shape_matches_v0() {
-    let req = garden_contract::discovery::DiscoveryRequest {
-        discover: "moss".into(),
-        request_id: "0198e0c7-0000-7000-8000-0000000000f1".into(),
-        requester: "rake-cli".into(),
-        rich: false,
-    };
-    let v = serde_json::to_value(&req).unwrap();
-    assert_eq!(
-        v,
-        json!({
-            "discover": "moss",
-            "request_id": "0198e0c7-0000-7000-8000-0000000000f1",
-            "requester": "rake-cli",
-        })
-    );
-}
-
-/// ADR-0004 §1: rich asks flag themselves explicitly; lean requests stay
-/// byte-identical to their v0 ancestors.
-#[test]
-fn rich_request_flags_itself_and_lean_requests_stay_silent() {
-    let rich = garden_contract::discovery::DiscoveryRequest::for_moss_rich("newcomer");
-    let v = serde_json::to_value(&rich).unwrap();
-    assert_eq!(v["rich"], true);
-    let lean = garden_contract::discovery::DiscoveryRequest::for_moss("rake");
-    let v = serde_json::to_value(&lean).unwrap();
-    assert!(v.get("rich").is_none(), "lean must not emit the flag at all");
-}
-
-/// ADR-0004 §1: depth-tier anchors ride every frame when known, stay
-/// silent when unknown (v0 speakers), and truncation is declared.
-#[test]
-fn depth_tier_anchors_roundtrip_and_declare_truncation() {
-    let mut body = sample_body();
-    body.svc_rev = Some(7);
-    body.svc_total = Some(31);
-    let v = serde_json::to_value(&body).unwrap();
-    assert_eq!(v["svc_rev"], 7);
-    assert_eq!(v["svc_total"], 31);
-
-    // Rich discovery answer carries the same anchors + inventory.
-    let res = garden_contract::discovery::DiscoveryResponse {
-        stone_id: Some("sid".into()),
-        stone_name: "stone-rich".into(),
-        address: PeerAddress {
+fn answered_frames_hint_health_and_carry_no_inventory() {
+    let f = ChirpFrame::answered(
+        "stone-echo",
+        PeerAddress {
             ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 9)),
             port: 7285,
             tls_port: None,
         },
-        moss_version: "1.0.0".into(),
+        "1.0.0",
+    );
+    assert_eq!(f.presence.health, "starting");
+    assert!(f.services.items.is_empty());
+    assert!(f.services.rev.is_none());
+}
+
+/// R0.5 pin: discriminators are LOWERCASE on the wire — transcribed from
+/// poc announcement_types.rs. Capitalized variants would be silently
+/// ignored by every garden speaker.
+#[test]
+fn announcement_discriminators_are_lowercase() {
+    assert_eq!(announcement::STONE_CHIRP, "stone_chirp");
+    assert_eq!(announcement::STONE_GOODBYE, "stone_goodbye");
+    assert_eq!(announcement::DISCOVERY_REQUEST, "discovery_request");
+    assert_eq!(announcement::DISCOVERY_RESPONSE, "discovery_response");
+}
+
+/// The ask/tell grammar: rich asks flag themselves; lean asks stay silent
+/// on the wire; rich answers carry the same inventory block as the frame.
+#[test]
+fn discovery_grammar_rich_and_lean() {
+    let lean = garden_contract::discovery::DiscoveryRequest::for_moss("rake");
+    let v = serde_json::to_value(&lean).unwrap();
+    assert!(v.get("rich").is_none(), "lean must not emit the flag at all");
+
+    let rich = garden_contract::discovery::DiscoveryRequest::for_moss_rich("newcomer");
+    let v = serde_json::to_value(&rich).unwrap();
+    assert_eq!(v["rich"], true);
+
+    let res = garden_contract::discovery::DiscoveryResponse {
+        stone: Stone {
+            id: "sid".into(),
+            name: "stone-rich".into(),
+            moss: Moss { version: "1.0.0".into() },
+            network: Network {
+                address: PeerAddress {
+                    ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 9)),
+                    port: 7285,
+                    tls_port: None,
+                },
+                mac: None,
+            },
+        },
         lantern_endpoint: None,
-        services: Some(vec![]),
-        svc_rev: Some(3),
-        svc_total: Some(24),
+        services: Some(Inventory { rev: Some(3), total: Some(24), items: vec![] }),
     };
     let v = serde_json::to_value(&res).unwrap();
-    assert_eq!(v["svc_rev"], 3);
-    assert!(v.get("services").is_some());
+    assert_eq!(v["stone"]["name"], "stone-rich");
+    assert_eq!(v["services"]["rev"], 3);
+    assert_eq!(v["services"]["total"], 24);
 }
 
 /// The wire cap is part of the protocol — pinned so nobody "improves" it
 /// without noticing envelopes grow past budget.
 #[test]
-fn services_cap_is_the_advertised_constant() {
-    assert_eq!(garden_contract::chirp::SERVICES_CAP, 24);
-}
-
-#[test]
-fn discovery_response_omits_absent_options() {
-    use std::net::IpAddr;
-    let res = garden_contract::discovery::DiscoveryResponse {
-        stone_id: Some("sid".into()),
-        stone_name: "stone-x".into(),
-        address: garden_contract::chirp::PeerAddress {
-            ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 9)),
-            port: 7285,
-            tls_port: None,
-        },
-        moss_version: "1.0.0".into(),
-        lantern_endpoint: None,
-        services: None,
-        svc_rev: None,
-        svc_total: None,
-    };
-    let v = serde_json::to_value(&res).unwrap();
-    assert!(v.get("lantern_endpoint").is_none());
-    assert_eq!(v["stone_name"], "stone-x");
-    // stone_id present when Some, absent when None
-    assert_eq!(v["stone_id"], "sid");
-    let bare = garden_contract::discovery::DiscoveryResponse {
-        stone_id: None,
-        ..res
-    };
-    let v = serde_json::to_value(&bare).unwrap();
-    assert!(v.get("stone_id").is_none());
+fn inventory_cap_is_the_advertised_constant() {
+    assert_eq!(INVENTORY_CAP, 24);
 }
 
 /// R1.7/R0.5 pin: the typed multicast groups equal their historical dotted
-/// forms — one truth per room, the other pinned. The PoC group is legacy
-/// reference only; the v1 group is the default room.
+/// forms — one truth per room, the other pinned.
 #[test]
 fn multicast_group_consts_match_historical_dotted_forms() {
     assert_eq!(consts::MULTICAST_GROUP_V1.to_string(), consts::MULTICAST_GROUP_V1_STR);

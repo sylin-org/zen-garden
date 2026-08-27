@@ -3,10 +3,15 @@
 //! A handler that claims `STONE_CHIRP` and `STONE_GOODBYE`, keeps the
 //! peer map, and publishes changes on a broadcast channel plus a version
 //! watch. Readers take snapshots; nobody polls anyone.
+//!
+//! The cache stores the CANONICAL frame (one shape: wire == cache == HTTP,
+//! charter bet B1). Its `received` section is the listener's own reception
+//! record — senders emit placeholders; here they are overwritten, first
+//! sight keeps `discovered_at`, every frame refreshes `last_seen`.
 
 use crate::dispatch::Dispatcher;
 use crate::ingress::Ingested;
-use garden_contract::chirp::ChirpBody;
+use garden_contract::chirp::ChirpFrame;
 use garden_contract::consts::announcement;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 /// What Topology saw. The domain event stream for the garden's membership.
 /// `Seen` boxes its payload: this travels a broadcast channel to every
-/// subscriber, and the chirp body is the one heavyweight thing we copy.
+/// subscriber, and the frame is the one heavyweight thing we copy.
 #[derive(Debug, Clone)]
 pub enum TopologyEvent {
     /// A peer chirped (new or updated).
@@ -27,11 +32,15 @@ pub enum TopologyEvent {
     Expired { stone_id: String, stone_name: String },
 }
 
-/// A peer as the garden currently sees it.
+/// A peer as the garden currently sees it: its announced frame plus OUR
+/// reception facts about the relationship.
 #[derive(Debug, Clone)]
 pub struct StoneView {
-    pub body: ChirpBody,
+    /// The stone's own announced truth (identity, presence, inventory).
+    pub body: ChirpFrame,
+    /// When we last heard from it.
     pub last_seen: chrono::DateTime<chrono::Utc>,
+    /// How many frames we've accepted.
     pub chirps: u64,
 }
 
@@ -116,82 +125,32 @@ impl Topology {
     }
 
     async fn on_chirp(self: &Arc<Self>, msg: Ingested) {
-        let Ok(body) = serde_json::from_value::<ChirpBody>(msg.announcement.data) else {
-            tracing::debug!(source = %msg.source, "chirp body undecodable");
+        let Ok(mut frame) = serde_json::from_value::<ChirpFrame>(msg.announcement.data) else {
+            tracing::debug!(source = %msg.source, "chirp frame undecodable");
             return;
         };
+        // Reception facts are OURS: overwrite the placeholders the sender
+        // emitted (first sight keeps discovered_at via or_insert below).
+        frame.received.last_seen = msg.received_at;
         self.chirps_total.fetch_add(1, Ordering::Relaxed);
         let event = {
             let mut peers = self.peers.lock();
             let event = {
                 let entry =
-                    peers.map.entry(body.stone_id.clone()).or_insert_with(|| StoneView {
-                        body: body.clone(),
+                    peers.map.entry(frame.stone.id.clone()).or_insert_with(|| StoneView {
+                        body: {
+                            let mut f = frame.clone();
+                            f.received.discovered_at = msg.received_at;
+                            f
+                        },
                         last_seen: msg.received_at,
                         chirps: 0,
                     });
                 entry.chirps += 1;
                 entry.last_seen = msg.received_at;
-                entry.body = body.clone();
+                entry.body = frame.clone();
                 TopologyEvent::Seen(Box::new(StoneView {
-                    body,
-                    last_seen: entry.last_seen,
-                    chirps: entry.chirps,
-                }))
-            };
-            peers.version += 1;
-            event
-        };
-        self.publish(event);
-    }
-    /// A discovery response is a hint, not a chirp: we know a stone exists
-    /// at an address but nothing of its offerings or health. Record it as
-    /// `starting` so observe shows it immediately; the stone's own next
-    /// chirp overwrites this entry with the full truth.
-    async fn on_response(self: &Arc<Self>, msg: Ingested) {
-        use garden_glossary::{health, presence};
-        let Ok(resp) = serde_json::from_value::<garden_contract::discovery::DiscoveryResponse>(
-            msg.announcement.data,
-        ) else {
-            tracing::debug!(source = %msg.source, "discovery response undecodable");
-            return;
-        };
-        let now = chrono::Utc::now();
-        let event = {
-            let mut peers = self.peers.lock();
-            let stone_id = resp.stone_id.clone().unwrap_or_else(|| resp.stone_name.clone());
-            // A real chirp (proto stamped) already told us more than any
-            // hint can; never downgrade it.
-            if peers.map.get(&stone_id).is_some_and(|p| p.body.proto.is_some()) {
-                return;
-            }
-            let hint_body = ChirpBody {
-                stone_id,
-                stone_name: resp.stone_name,
-                address: resp.address,
-                moss_version: resp.moss_version,
-                services: Vec::new(),
-                health: health::STARTING.into(),
-                status: presence::ONLINE.into(),
-                discovered_at: now,
-                last_seen: now,
-                mac: None,
-                proto: None,
-                boot_id: None,
-                seq: None,
-                svc_rev: None,
-                svc_total: None,
-            };
-            let event = {
-                let entry = peers.map.entry(hint_body.stone_id.clone()).or_insert_with(|| StoneView {
-                    body: hint_body.clone(),
-                    last_seen: now,
-                    chirps: 0,
-                });
-                entry.last_seen = now;
-                entry.body = hint_body;
-                TopologyEvent::Seen(Box::new(StoneView {
-                    body: entry.body.clone(),
+                    body: frame,
                     last_seen: entry.last_seen,
                     chirps: entry.chirps,
                 }))
@@ -202,15 +161,77 @@ impl Topology {
         self.publish(event);
     }
 
-    async fn on_goodbye(self: &Arc<Self>, msg: Ingested) {        // The PoC goodbye body is the chirp body; fall back to name-only.
-        let Ok(body) = serde_json::from_value::<ChirpBody>(msg.announcement.data) else {
+    /// A discovery response is a hint, not a chirp: we know a stone exists
+    /// at an address but nothing of its offerings beyond what a rich answer
+    /// carried. Record it as `starting` so observe shows it immediately; the
+    /// stone's own next chirp overwrites this entry with the full truth.
+    async fn on_response(self: &Arc<Self>, msg: Ingested) {
+        let Ok(resp) = serde_json::from_value::<garden_contract::discovery::DiscoveryResponse>(
+            msg.announcement.data,
+        ) else {
+            tracing::debug!(source = %msg.source, "discovery response undecodable");
+            return;
+        };
+        let now = chrono::Utc::now();
+        let event = {
+            let mut peers = self.peers.lock();
+            let stone_id = if resp.stone.id.is_empty() {
+                resp.stone.name.clone()
+            } else {
+                resp.stone.id.clone()
+            };
+            // A real frame (proto stamped) already told us more than any
+            // hint can; never downgrade it.
+            if peers
+                .map
+                .get(&stone_id)
+                .is_some_and(|p| p.body.meta.proto.is_some())
+            {
+                return;
+            }
+            let mut hint = ChirpFrame::answered(
+                resp.stone.name.clone(),
+                resp.stone.network.address.clone(),
+                resp.stone.moss.version.clone(),
+            );
+            hint.stone.id = stone_id.clone();
+            if let Some(inv) = resp.services {
+                hint.services = inv;
+            }
+            hint.received.discovered_at = now;
+            let event = {
+                let entry = peers.map.entry(stone_id).or_insert_with(|| StoneView {
+                    body: hint.clone(),
+                    last_seen: now,
+                    chirps: 0,
+                });
+                entry.last_seen = now;
+                entry.body = hint.clone();
+                TopologyEvent::Seen(Box::new(StoneView {
+                    body: hint,
+                    last_seen: entry.last_seen,
+                    chirps: entry.chirps,
+                }))
+            };
+            peers.version += 1;
+            event
+        };
+        self.publish(event);
+    }
+
+    async fn on_goodbye(self: &Arc<Self>, msg: Ingested) {
+        // The goodbye payload is the frame; fall back to name-keyed removal.
+        let Ok(frame) = serde_json::from_value::<ChirpFrame>(msg.announcement.data) else {
             return;
         };
         let event = {
             let mut peers = self.peers.lock();
-            peers.map.remove(&body.stone_id);
+            peers.map.remove(&frame.stone.id);
             peers.version += 1;
-            TopologyEvent::Goodbye { stone_id: body.stone_id, stone_name: body.stone_name }
+            TopologyEvent::Goodbye {
+                stone_id: frame.stone.id,
+                stone_name: frame.stone.name,
+            }
         };
         self.publish(event);
     }
@@ -229,12 +250,11 @@ impl Topology {
                     let now = chrono::Utc::now();
                     let expired: Vec<(String, String)> = {
                         let mut peers = self.peers.lock();
-                        let before = peers.map.len();
                         let expired: Vec<(String, String)> = peers
                             .map
                             .iter()
                             .filter(|(_, p)| now - p.last_seen > cutoff)
-                            .map(|(id, p)| (id.clone(), p.body.stone_name.clone()))
+                            .map(|(id, p)| (id.clone(), p.body.stone.name.clone()))
                             .collect();
                         for (id, _) in &expired {
                             peers.map.remove(id);
@@ -242,7 +262,6 @@ impl Topology {
                         if !expired.is_empty() {
                             peers.version += 1;
                         }
-                        let _ = before;
                         expired
                     };
                     for (stone_id, stone_name) in expired {

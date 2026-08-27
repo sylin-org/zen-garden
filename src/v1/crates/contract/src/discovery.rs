@@ -1,11 +1,14 @@
 //! The ask/tell pair: how a newcomer learns who is here, fast.
 //!
-//! Wire-compatible with the PoC's `DiscoveryRequest`/`DiscoveryResponse`
-//! (transcribed from `poc/common/src/types/discovery.rs`). The response is
-//! deliberately lightweight — an endpoint to talk to, not a full chirp;
-//! the full picture arrives by heartbeat.
+//! Grammar follows the frame law (CODE-RULES P3): sections hold facts.
+//! The request declares its DEPTH; the response carries a `stone:` block
+//! always and an inventory block when the ask was rich. Rich shapes are
+//! IDENTICAL to the chirp frame's (one canonical shape, many mouths — B1).
 
 use serde::{Deserialize, Serialize};
+
+/// The `discover` value meaning "stones, answer me".
+pub const TARGET_MOSS: &str = "moss";
 
 /// What a discovery request asks for. `"moss"` finds stones ([`TARGET_MOSS`]).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -17,9 +20,8 @@ pub struct DiscoveryRequest {
     /// Who is asking (a stone name or client label).
     pub requester: String,
     /// Rich ask (ADR-0004 §1): responders include their service inventory
-    /// so a newcomer populates its cache in one exchange. Absent/false =
-    /// lean (legacy answer shape). Absent from the wire while false —
-    /// legacy request bytes stay identical.
+    /// so a newcomer populates its cache in one exchange. Absent from the
+    /// wire while false — legacy request bytes stay lean.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rich: bool,
 }
@@ -45,31 +47,17 @@ impl DiscoveryRequest {
     }
 }
 
-/// Where a willing respondent lives. Lightweight on purpose: enough to
-/// open an HTTP conversation, no more — UNLESS the ask was rich, in which
-/// case the inventory rides here and hearts beats confirm it later.
+/// Where a willing respondent lives, and (when the ask was rich) what it
+/// hosts. The `stone:` block always answers "who are you"; the inventory
+/// answers "what do you have" — identical shapes to the chirp frame's.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscoveryResponse {
-    /// Responding stone's identity; absent on some v0 speakers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stone_id: Option<String>,
-    pub stone_name: String,
-    /// Network address of the responding stone.
-    pub address: crate::chirp::PeerAddress,
-    pub moss_version: String,
+    /// WHO answered: identity and reachability (frame's `stone:` block).
+    pub stone: crate::chirp::Stone,
     /// Legacy Lantern registry endpoint (v0 field; v1 emits absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lantern_endpoint: Option<String>,
-    /// Rich answer payload (present iff the request carried rich:true):
-    /// the responder's own `services[]` projection + revision anchors,
-    /// identical shapes to [`crate::chirp::ChirpBody`] fields.
+    /// Inventory present iff the request carried rich:true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub services: Option<Vec<crate::chirp::ServiceEntry>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub svc_rev: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub svc_total: Option<u32>,
+    pub services: Option<crate::chirp::Inventory<crate::chirp::ServiceEntry>>,
 }
-
-/// The `discover` value meaning "stones, answer me".
-pub const TARGET_MOSS: &str = "moss";

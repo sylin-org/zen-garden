@@ -140,11 +140,12 @@ async fn garden_observe(State(state): State<Arc<AppState>>) -> Json<serde_json::
         .snapshot()
         .iter()
         .map(|peer| {
-            // Flattened: consumers read one shape, not a wrapped one (B1/L1).
+            // The canonical frame, flattened: consumers read one shape, not
+            // a wrapped one — and its `received` section IS our reception
+            // record, so the JSON stays honest without extra wrapping.
             let mut v = serde_json::to_value(&peer.body).unwrap_or_default();
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("chirps".into(), serde_json::json!(peer.chirps));
-                obj.insert("seen_at".into(), serde_json::json!(peer.last_seen));
             }
             v
         })
@@ -279,7 +280,7 @@ mod tests {
     use super::*;
     use crate::offerings::registry::{MemorySnapshotStore, Registry};
     use crate::offerings::runtime::{NullRuntime, RuntimeRegistry};
-    use garden_contract::chirp::ChirpBody;
+    use garden_contract::chirp::ChirpFrame;
     use garden_kernel::topology::StoneView;
 
     fn test_state() -> Arc<AppState> {
@@ -343,52 +344,64 @@ mod tests {
     }
 
     fn sample_peer() -> StoneView {
-        use garden_contract::chirp::{PeerAddress, ServiceEntry};
+        use garden_contract::chirp::{
+            Inventory, Moss, Network, PeerAddress, Presence, Reception, ServiceEntry, ServiceState,
+            Stone,
+        };
         let now = chrono::Utc::now();
         StoneView {
-            body: ChirpBody {
-                stone_id: "0198e0c7-0000-7000-8000-0000000000ef".into(),
-                stone_name: "stone-peer".into(),
-                address: PeerAddress {
-                    ip: std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 50)),
-                    port: 7285,
-                    tls_port: None,
+            body: ChirpFrame {
+                stone: Stone {
+                    id: "0198e0c7-0000-7000-8000-0000000000ef".into(),
+                    name: "stone-peer".into(),
+                    moss: Moss { version: "0.1.0".into() },
+                    network: Network {
+                        address: PeerAddress {
+                            ip: std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 50)),
+                            port: 7285,
+                            tls_port: None,
+                        },
+                        mac: None,
+                    },
                 },
-                moss_version: "0.1.0".into(),
-                services: vec![ServiceEntry {
-                    offering_id: String::new(),
-                    name: "mongodb".into(),
-                    offering: "mongodb".into(),
-                    category: "data".into(),
-                    status: "running".into(),
-                    role: None,
-                    ports: Default::default(),
-                }],
-                health: garden_glossary::health::THRIVING.into(),
-                status: garden_glossary::presence::ONLINE.into(),
-                discovered_at: now,
-                last_seen: now,
-                mac: None,
-                proto: Some(PROTO_V1.into()),
-                boot_id: None,
-                seq: Some(7),
-                svc_rev: Some(1),
-                svc_total: None,
+                presence: Presence {
+                    health: garden_glossary::health::THRIVING.into(),
+                    status: garden_glossary::presence::ONLINE.into(),
+                },
+                services: Inventory {
+                    rev: Some(1),
+                    total: None,
+                    items: vec![ServiceEntry {
+                        offering_id: String::new(),
+                        name: "mongodb::default".into(),
+                        stem: "mongodb".into(),
+                        category: "data".into(),
+                        state: ServiceState { status: "running".into(), role: None },
+                        ports: Default::default(),
+                    }],
+                },
+                meta: garden_contract::chirp::FrameMeta {
+                    proto: Some(PROTO_V1.into()),
+                    boot_id: None,
+                    seq: Some(7),
+                },
+                received: Reception { discovered_at: now, last_seen: now },
             },
             last_seen: now,
             chirps: 3,
         }
     }
 
-    /// B1/L1: observe hoists the peer's chirp fields to the top level —
-    /// consumers read one flat shape, not a wrapped one.
+    /// B1: the cache, HTTP, and the wire render ONE canonical shape — the
+    /// sectioned frame — with reception facts filled by the listener.
     #[test]
-    fn observe_stone_flattens_chirp_body() {
+    fn observe_stone_renders_the_canonical_shape() {
         let peer = sample_peer();
         let mut v = serde_json::to_value(&peer.body).unwrap();
         v.as_object_mut().unwrap().insert("chirps".into(), serde_json::json!(3));
-        assert_eq!(v["stone_name"], "stone-peer");
-        assert_eq!(v["proto"], PROTO_V1);
+        assert_eq!(v["stone"]["name"], "stone-peer");
+        assert_eq!(v["stone"]["network"]["address"]["port"], 7285);
+        assert_eq!(v["meta"]["proto"], PROTO_V1);
         assert_eq!(v["chirps"], 3);
     }
 }

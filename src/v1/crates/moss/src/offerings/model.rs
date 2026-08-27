@@ -255,7 +255,8 @@ impl Offering {
     }
 
     /// Wire shape for chirps (contract::chirp::ServiceEntry), PORT-0001 map
-    /// included only where remapped (R0.5).
+    /// included only where remapped (R0.5). The canonical sectioned shape:
+    /// identity (fqn/stem/category) + state + ports.
     pub fn service_entry(&self) -> garden_contract::chirp::ServiceEntry {
         let ports = match &self.mode_data {
             ModeData::Managed(m) => m.port_map.clone(),
@@ -264,10 +265,12 @@ impl Offering {
         garden_contract::chirp::ServiceEntry {
             offering_id: self.offering_id.clone(),
             name: self.name.clone(),
-            offering: self.offering.clone(),
+            stem: self.offering.clone(),
             category: self.category.clone(),
-            status: self.status.as_str().into(),
-            role: None,
+            state: garden_contract::chirp::ServiceState {
+                status: self.status.as_str().into(),
+                role: None,
+            },
             ports,
         }
     }

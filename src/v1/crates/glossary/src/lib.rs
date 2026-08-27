@@ -81,6 +81,9 @@ pub mod bank {
     /// §4: backup semantics, never in the converge path).
     pub mod role {
         pub const SINK: &str = "sink";
+        /// Every role the garden knows. Declaring an unknown role is a
+        /// loud error (L12: one vocabulary, spoken everywhere).
+        pub const ALL: [&str; 1] = [SINK];
     }
 }
 

@@ -172,17 +172,26 @@ impl Storage {
     }
 
     /// Declare a bank's roles (§4: sink today; the set grows with the
-    /// tiers). Role news is state news - it bumps. #[cfg(test)] until the
-    /// sink-role declaration slice surfaces it on the API/rake pair.
-    #[cfg(test)]
-    pub fn set_roles(&self, fqn: &str, roles: Vec<String>) -> Option<Bank> {
+    /// tiers). Role news is state news - it bumps. Unknown roles refuse
+    /// loudly (L12 - the glossary speaks once, everywhere).
+    pub fn set_roles(&self, fqn: &str, roles: Vec<String>) -> Result<Option<Bank>, String> {
+        for r in &roles {
+            if !garden_glossary::bank::role::ALL.contains(&r.as_str()) {
+                return Err(format!(
+                    "unknown bank role '{r}' - the garden knows: {}",
+                    garden_glossary::bank::role::ALL.join(", ")
+                ));
+            }
+        }
         let mut banks = self.banks.lock();
-        let bank = banks.get_mut(fqn)?;
+        let Some(bank) = banks.get_mut(fqn) else {
+            return Ok(None);
+        };
         bank.roles = roles;
         let updated = bank.clone();
         drop(banks);
         self.bump();
-        Some(updated)
+        Ok(Some(updated))
     }
 
     /// The adopt ceremony (ADR-0005): write the manifest onto the device,
@@ -436,6 +445,27 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AdoptError::BadName(_)));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn role_declarations_refuse_the_unknown_and_sing_the_known() {
+        let storage = Storage::new();
+        storage.reconcile(&[vol("E:\\", true)]);
+
+        let signal = storage.subscribe();
+        let before = *signal.borrow();
+        let err = storage
+            .set_roles("seed-vault::default", vec!["warden".into()])
+            .unwrap_err();
+        assert!(err.contains("unknown bank role"), "{err}");
+        assert_eq!(*signal.borrow(), before, "a refusal is not news");
+
+        let bank = storage
+            .set_roles("seed-vault::default", vec![garden_glossary::bank::role::SINK.into()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(bank.roles, vec![garden_glossary::bank::role::SINK]);
+        assert_ne!(*signal.borrow(), before, "role news is state news");
     }
 
     /// The eject laws: eject announces and holds the same slot; a vanish

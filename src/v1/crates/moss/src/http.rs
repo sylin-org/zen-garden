@@ -67,6 +67,8 @@ enum Face {
     StorageAdopt,
     /// Authoritative absence: the eject verb (ADR-0005 §8.3).
     StorageEject,
+    /// Declare a bank's roles (sink today; ADR-0005 §4).
+    StorageRoles,
     /// Run a will: the capture pipeline (ADR-0005 §2).
     OfferingCapture,
     /// The last capture run of an offering.
@@ -81,7 +83,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 19] = [
+    const ALL: [Face; 20] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -93,6 +95,7 @@ impl Face {
         Face::StorageList,
         Face::StorageAdopt,
         Face::StorageEject,
+        Face::StorageRoles,
         Face::GardenStorage,
         Face::OfferingCapture,
         Face::OfferingCaptureLast,
@@ -116,7 +119,8 @@ impl Face {
             | Face::StorageList
             | Face::GardenStorage
             | Face::OfferingCaptureLast | Face::OfferingShow => "GET",
-            Face::StorageAdopt | Face::StorageEject | Face::OfferingCapture => "POST",
+            | Face::StorageAdopt | Face::StorageEject | Face::StorageRoles
+            | Face::OfferingCapture => "POST",
             Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
             Face::OfferingUproot => "DELETE",
         }
@@ -134,6 +138,7 @@ impl Face {
             Face::Catalog => "/api/v1/catalog",
             Face::StorageList => "/api/v1/storage",
             Face::StorageAdopt => "/api/v1/storage/adopt",
+            Face::StorageRoles => "/api/v1/storage/{fqn}/roles",
             Face::StorageEject => "/api/v1/storage/{fqn}/eject",
             Face::GardenStorage => "/api/v1/garden/storage",
             Face::OfferingPlant | Face::OfferingShow | Face::OfferingUproot => {
@@ -175,6 +180,9 @@ impl Face {
             Face::StorageEject => {
                 "Eject a bank by name: authoritative absence, sung to the room (ADR-0005 sec 8.3)."
             }
+            Face::StorageRoles => {
+                "Declare a bank's roles: {roles: [sink]} - a sink receives checkpoints (ADR-0005 sec 4)."
+            }
             Face::GardenStorage => {
                 "Garden data (L22): every bank in the room, self included, from the one cache."
             }
@@ -208,6 +216,7 @@ impl Face {
             Face::Catalog => get(catalog),
             Face::StorageList => get(storage_list),
             Face::StorageAdopt => post(storage_adopt),
+            Face::StorageRoles => post(storage_roles),
             Face::StorageEject => post(storage_eject),
             Face::GardenStorage => get(garden_storage),
             Face::OfferingPlant => post(plant_offering),
@@ -577,6 +586,29 @@ async fn capture_last(
         ))
         .into()),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct RolesRequest {
+    /// The complete role set for this bank (sink today).
+    roles: Vec<String>,
+}
+
+/// Declare a bank's roles (1:1 with `rake storage roles`): a sink receives
+/// checkpoints; role news is state news and sings.
+async fn storage_roles(
+    State(state): State<Arc<AppState>>,
+    Path(fqn): Path<String>,
+    Json(req): Json<RolesRequest>,
+) -> ApiResult {
+    let bank = state
+        .storage
+        .set_roles(&fqn, req.roles)
+        .map_err(CommandError::Conflict)?
+        .ok_or(CommandError::NotFound(format!(
+            "no bank '{fqn}' is adopted here - rake storage lists what this stone holds"
+        )))?;
+    Ok(Json(serde_json::json!({ "data": { "bank": bank } })))
 }
 
 async fn front_door() -> Json<serde_json::Value> {

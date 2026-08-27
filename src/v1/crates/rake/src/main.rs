@@ -141,6 +141,15 @@ enum StorageCmd {
         /// The bank's name (FQN or bare stem).
         bank: String,
     },
+    /// Declare a bank's roles (ADR-0005 §4): `--role sink` makes it a
+    /// checkpoint sink - the will ferries to it.
+    Roles {
+        /// The bank's name (FQN or bare stem).
+        bank: String,
+        /// The complete role set, repeatable.
+        #[arg(long = "role")]
+        roles: Vec<String>,
+    },
     /// The room's banks — every stone's storage, from the one cache.
     Garden,
 }
@@ -515,6 +524,29 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
             }
             render_storage(&envelope_plain(&v)?)
         }
+        Some(StorageCmd::Roles { bank, roles }) => {
+            let body = serde_json::json!({ "roles": roles });
+            let (_, v) = cli
+                .stone_op("POST", paths::storage_roles(bank), Some(&body))
+                .await?;
+            if cli.json {
+                return emit_pretty(&v);
+            }
+            let b = envelope(&v, "bank")?;
+            println!(
+                "{} now holds: {}",
+                display_name(b["fqn"].as_str().unwrap_or("(unnamed)")),
+                b["roles"]
+                    .as_array()
+                    .map(|r| r
+                        .iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "))
+                    .unwrap_or_else(|| "(none)".into()),
+            );
+            Ok(())
+        }
         Some(StorageCmd::Garden) => {
             let (_, v) = cli
                 .stone_op("GET", paths::STORAGE_GARDEN.to_string(), None)
@@ -765,6 +797,11 @@ mod paths {
     /// The eject verb's face.
     pub fn storage_eject(bank: &str) -> String {
         format!("{STORAGE}/{bank}/eject")
+    }
+
+    /// The roles declaration's face.
+    pub fn storage_roles(bank: &str) -> String {
+        format!("{STORAGE}/{bank}/roles")
     }
 
     /// The living will's faces (ADR-0005 §2).

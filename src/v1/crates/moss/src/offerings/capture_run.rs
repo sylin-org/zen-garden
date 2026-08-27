@@ -473,11 +473,13 @@ fn collect_files(root: &Path, rel_root: &Path, out: &mut Vec<(PathBuf, String)>)
         if p.is_dir() {
             collect_files(&p, rel_root, out)?;
         } else {
+            // Forward slashes always: the manifest's paths must match the
+            // tar's on every platform (B1 - one shape, many mouths).
             let rel = p
                 .strip_prefix(rel_root)
                 .unwrap_or(&p)
                 .to_string_lossy()
-                .into_owned();
+                .replace(std::path::MAIN_SEPARATOR.to_string().as_str(), "/");
             out.push((p.clone(), rel));
         }
     }
@@ -486,6 +488,159 @@ fn collect_files(root: &Path, rel_root: &Path, out: &mut Vec<(PathBuf, String)>)
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+/// What verifying a checkpoint found.
+// Consumed by the restore/replant faces (slice 5); tests exercise it now.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct VerifyReport {
+    pub files: usize,
+    pub bytes: u64,
+}
+
+/// The newest committed checkpoint of an offering, if any (§3 select).
+/// Replant's slice gives this its consumer (fetch latest -> verify ->
+/// unpack -> place); until then it is exercised by tests only.
+#[cfg(test)]
+pub fn latest_checkpoint(checkpoints_root: &Path, fqn: &str) -> Option<PathBuf> {
+    let dir = checkpoints_root.join(super::directory::slug(fqn));
+    let mut runs: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir() && !p.ends_with(".partial"))
+        .collect();
+    runs.sort();
+    runs.pop()
+}
+
+/// Verify a checkpoint against its embedded manifest (§3): the archive's
+/// own hash, then every file's hash. A checkpoint that cannot prove itself
+/// is not a checkpoint — refuse loudly, restore nothing.
+#[allow(dead_code)]
+pub fn verify_checkpoint(checkpoint: &Path) -> Result<VerifyReport, String> {
+    let manifest_path = checkpoint.join("manifest.json");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path)
+            .map_err(|e| format!("manifest unreadable: {e}"))?,
+    )
+    .map_err(|e| format!("manifest unparsable: {e}"))?;
+
+    let archive_file = manifest["archive"]["file"]
+        .as_str()
+        .unwrap_or("checkpoint.tar.zst")
+        .to_string();
+    let want_archive = manifest["archive"]["sha256"]
+        .as_str()
+        .ok_or("manifest declares no archive hash")?
+        .to_string();
+    let archive_bytes = std::fs::read(checkpoint.join(&archive_file))
+        .map_err(|e| format!("archive unreadable: {e}"))?;
+    // The manifest hashes the TAR (pack hashed it before compressing):
+    // decode first, then prove the decoded bytes.
+    let tar_bytes = zstd::stream::decode_all(&archive_bytes[..])
+        .map_err(|e| format!("archive decompress: {e}"))?;
+    let mut h = Sha256::new();
+    h.update(&tar_bytes);
+    let got = hex(&h.finalize());
+    if got != want_archive {
+        return Err(format!(
+            "archive hash mismatch: manifest says {want_archive}, archive proves {got}"
+        ));
+    }
+
+    // The expected file set, by path -> hash.
+    let mut expected: HashMap<String, String> = HashMap::new();
+    for f in manifest["files"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        if let (Some(p), Some(s)) = (f["path"].as_str(), f["sha256"].as_str()) {
+            expected.insert(p.to_string(), s.to_string());
+        }
+    }
+
+    let mut archive = tar::Archive::new(&tar_bytes[..]);
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    for entry in archive.entries().map_err(|e| format!("archive walk: {e}"))? {
+        let mut entry = entry.map_err(|e| format!("archive walk: {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("archive path: {e}"))?
+            .to_string_lossy()
+            .into_owned();
+        let mut h = Sha256::new();
+        let n = std::io::copy(&mut entry, &mut h).map_err(|e| format!("{path}: {e}"))?;
+        bytes += n;
+        let got = hex(&h.finalize());
+        match expected.get(&path) {
+            Some(want) if want == &got => {}
+            Some(want) => {
+                return Err(format!("file hash mismatch for '{path}': manifest says {want}, archive proves {got}"))
+            }
+            None => return Err(format!("archive carries '{path}' which the manifest never declared")),
+        }
+        files += 1;
+    }
+    if files != expected.len() {
+        return Err(format!(
+            "manifest declares {} files but the archive held {files}",
+            expected.len()
+        ));
+    }
+    Ok(VerifyReport { files, bytes })
+}
+
+/// Unpack a verified checkpoint's volumes into a fresh volumes directory
+/// (§3 restore: select -> verify -> unpack; replant composes on top).
+/// Returns the file count. Entry paths are traversal-checked: a
+/// checkpoint that tries to escape is refused, loudly.
+#[allow(dead_code)]
+pub fn unpack_volumes(checkpoint: &Path, volumes_dir: &Path) -> Result<usize, String> {
+    verify_checkpoint(checkpoint)?;
+    let manifest_path = checkpoint.join("manifest.json");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path).map_err(|e| format!("manifest unreadable: {e}"))?,
+    )
+    .map_err(|e| format!("manifest unparsable: {e}"))?;
+    let archive_file = manifest["archive"]["file"]
+        .as_str()
+        .unwrap_or("checkpoint.tar.zst")
+        .to_string();
+    let archive_bytes = std::fs::read(checkpoint.join(&archive_file))
+        .map_err(|e| format!("archive unreadable: {e}"))?;
+    let tar_bytes = zstd::stream::decode_all(&archive_bytes[..])
+        .map_err(|e| format!("archive decompress: {e}"))?;
+    let mut archive = tar::Archive::new(&tar_bytes[..]);
+    let mut count = 0usize;
+    for entry in archive.entries().map_err(|e| format!("archive walk: {e}"))? {
+        let mut entry = entry.map_err(|e| format!("archive walk: {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("archive path: {e}"))?
+            .to_string_lossy()
+            .into_owned();
+        if path.contains("..") || path.starts_with('/') {
+            return Err(format!("checkpoint carries an unsafe path: '{path}' — refused"));
+        }
+        let Some(rel) = path.strip_prefix("volumes/") else {
+            continue; // only volumes restore here; the signature is already home
+        };
+        if rel.is_empty() {
+            continue;
+        }
+        let target = volumes_dir.join(rel);
+        if entry.header().entry_type().is_dir() {
+            std::fs::create_dir_all(&target).map_err(|e| format!("{rel}: {e}"))?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{rel}: {e}"))?;
+        }
+        entry
+            .unpack(&target)
+            .map_err(|e| format!("restore of '{rel}' failed: {e}"))?;
+        count += 1;
+    }
+    Ok(count)
 }
 
 #[cfg(test)]
@@ -709,6 +864,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verify_passes_an_honest_checkpoint_and_catches_tampering() {
+        let tmp = std::env::temp_dir().join(format!("zg-cap-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let (hooks, _) = Scripted::recording();
+        let runner = runner(&tmp, hooks);
+        let w = workload(&tmp, true, true);
+
+        let checkpoint = runner
+            .execute("db::default", &lock_copy(), &w)
+            .await
+            .unwrap();
+
+        // An honest checkpoint proves itself.
+        let report = verify_checkpoint(&checkpoint).unwrap();
+        assert!(report.files >= 2, "signature + imprint: {report:?}");
+
+        // A tampered archive is refused: rewrite the manifest to expect a
+        // hash no honest archive could carry.
+        let manifest_path = checkpoint.join("manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["archive"]["sha256"] = serde_json::json!(format!("{:064x}", 0u128));
+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let err = verify_checkpoint(&checkpoint).unwrap_err();
+        assert!(err.contains("archive hash mismatch"), "{err}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn unpack_restores_volumes_fresh() {
+        let tmp = std::env::temp_dir().join(format!("zg-cap-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let (hooks, _) = Scripted::recording();
+        let runner = runner(&tmp, hooks);
+        let w = workload(&tmp, true, true);
+
+        runner
+            .execute("db::default", &lock_copy(), &w)
+            .await
+            .unwrap();
+
+        // Select the newest, then restore into a FRESH volumes directory
+        // (the replant contract's physical half; select -> verify -> unpack).
+        let checkpoint = latest_checkpoint(&runner.checkpoints_root, "db::default")
+            .expect("the run committed a checkpoint");
+        let fresh = tmp.join("fresh-volumes");
+        let restored = unpack_volumes(&checkpoint, &fresh).unwrap();
+        assert!(restored >= 1, "the volume's files came home");
+        assert_eq!(
+            std::fs::read(fresh.join("data").join("data.bin")).unwrap(),
+            b"precious"
+        );
+        // The signature does NOT land here — volumes only; replant owns it.
+        assert!(!fresh.join("record.json").exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
     async fn ferry_reaches_mounted_sink_banks() {
         let tmp = std::env::temp_dir().join(format!("zg-cap-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&tmp).unwrap();
@@ -725,7 +938,11 @@ mod tests {
         std::fs::create_dir_all(&vol.mount_point).unwrap();
         storage.reconcile(&[vol]);
         storage
-            .set_roles("seed-vault::default", vec![garden_glossary::bank::role::SINK.into()])
+            .set_roles(
+                "seed-vault::default",
+                vec![garden_glossary::bank::role::SINK.into()],
+            )
+            .unwrap()
             .unwrap();
 
         let runner = Runner::new(Arc::clone(&storage), hooks).with_roots(

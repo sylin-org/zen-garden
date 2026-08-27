@@ -4,6 +4,11 @@
 //! Zero dependencies — this crate is the leaf everything shares. If a name
 //! is not here, either it is not a domain concept, or it belongs here and
 //! the code is wrong.
+//!
+//! Every garden word carries its gloss: the nearest standard term, and how
+//! the garden word differs — the difference is the feature, so the gloss
+//! names it. Household surfaces translate through the plain register
+//! (R1.1 as amended 2026-08-27), never reusing operator nouns untranslated.
 
 /// Health vocabulary — a stone's self-assessed vitality.
 pub mod health {
@@ -39,9 +44,13 @@ pub mod offering {
     pub const INSTALLING: &str = "installing";
     /// Serving.
     pub const RUNNING: &str = "running";
-    /// At rest — reconcile will not auto-start it (OFFERINGS.md §3.2).
+    /// At rest — a desired state, not an event: reconcile will not
+    /// auto-start it (OFFERINGS.md §3.2). The wire word is the PoC's
+    /// byte-compat spelling; rake's verb is `rest` (≈ `stop`, but it
+    /// stays stopped across reboots).
     pub const STOPPED: &str = "stopped";
-    /// Scheduling fence; no runtime action implied.
+    /// Cordoned — a fence around the bed: nothing new is scheduled in,
+    /// nothing running is touched (≈ taint, in the k8s sense, per-offering).
     pub const CORDONED: &str = "cordoned";
     /// Nourish/upgrade in flight.
     pub const MAINTENANCE: &str = "maintenance";
@@ -64,14 +73,31 @@ pub mod fqn;
 pub mod naming;
 
 /// Domain verbs — CLI words, API words, function words. One spelling each.
+/// Glosses give the nearest standard term first, then the divergence:
+/// the garden verb earns its keep precisely where it is NOT the standard
+/// term (OFFERINGS.md §1 pairs them the same way).
 pub mod verbs {
+    /// Walk the room: the whole garden as the attached moss sees it.
     pub const OBSERVE: &str = "observe";
+    /// Search by name pattern — `grep`, over stones and offerings.
     pub const FIND: &str = "find";
+    /// Plant new work from catalog or image — desired state from birth,
+    /// not a one-shot `run` (ports, inputs, and the ledger ride along).
     pub const OFFER: &str = "offer";
+    /// Take out of service as a *state* (≈ `stop`, but it stays stopped
+    /// across reboots; wake reverses it).
     pub const REST: &str = "rest";
+    /// Raise a rested offering (≈ `start`, plus identity: resurrects
+    /// from the stored spec — same FQN, same connection string).
     pub const WAKE: &str = "wake";
+    /// Carry a planted offering to another stone (`migrate`, with the
+    /// directory and ledger coming along).
     pub const MOVE: &str = "move";
+    /// Tend what is planted — nourish/upgrade, canary rings first (J3)
+    /// (`update`, but the garden drives and can revert it).
     pub const NOURISH: &str = "nourish";
+    /// Render the placed record by hand: what runs and WHY it decided
+    /// so (`describe`, in the k8s sense).
     pub const EXPLAIN: &str = "explain";
 }
 

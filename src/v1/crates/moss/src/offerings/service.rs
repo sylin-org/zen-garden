@@ -232,6 +232,11 @@ impl OfferingService {
         self.registry.snapshot()
     }
 
+    /// Subscribe to OfferingChanged (L18) - the pulse surface's offering leg.
+    pub fn events(&self) -> tokio::sync::broadcast::Receiver<super::registry::OfferingChanged> {
+        self.registry.events()
+    }
+
     pub fn counts(&self) -> Counts {
         Counts {
             active: self.registry.snapshot().len(),

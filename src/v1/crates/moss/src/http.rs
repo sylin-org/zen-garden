@@ -79,6 +79,10 @@ enum Face {
     Portrait,
     /// The root lands on the portrait.
     Root,
+    /// The live page: the room, as events happen.
+    PulsePage,
+    /// The SSE firehose: topology + offering events, one stream.
+    PulseStream,
     /// The room's banks, projected from the cache (ADR-0004 §4 grid).
     GardenStorage,
     OfferingList,
@@ -90,7 +94,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 24] = [
+    const ALL: [Face; 26] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -109,6 +113,8 @@ impl Face {
         Face::OfferingReplant,
         Face::Portrait,
         Face::Root,
+        Face::PulsePage,
+        Face::PulseStream,
         Face::OfferingList,
         Face::OfferingPlant,
         Face::OfferingShow,
@@ -130,7 +136,7 @@ impl Face {
             | Face::StorageList
             | Face::GardenStorage
             | Face::OfferingCaptureLast | Face::OfferingList | Face::OfferingShow
-            | Face::Portrait | Face::Root => "GET",
+            | Face::Portrait | Face::Root | Face::PulsePage | Face::PulseStream => "GET",
             | Face::StorageAdopt | Face::StorageEject | Face::StorageRoles
             | Face::OfferingCapture | Face::OfferingReplant => "POST",
             Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
@@ -163,6 +169,8 @@ impl Face {
             Face::OfferingReplant => "/api/v1/offerings/{fqn}/replant",
             Face::Portrait => "/portrait",
             Face::Root => "/",
+            Face::PulsePage => "/pulse",
+            Face::PulseStream => "/pulse/stream",
             Face::OfferingRest => "/api/v1/offerings/{fqn}/rest",
             Face::OfferingWake => "/api/v1/offerings/{fqn}/wake",
         }
@@ -219,6 +227,12 @@ impl Face {
                 "This stone's living landing page: identity, offerings, banks, the room."
             }
             Face::Root => "Lands on the portrait.",
+            Face::PulsePage => {
+                "The live page: stones, offerings, and the event ring as they happen."
+            }
+            Face::PulseStream => {
+                "SSE firehose: topology events (seen/goodbye/expired) and offering changes."
+            }
             Face::OfferingRest => {
                 "Rest a managed offering - stopped, and reconcile will keep it so."
             }
@@ -250,6 +264,8 @@ impl Face {
             Face::OfferingReplant => post(replant_offer),
             Face::Portrait => get(portrait),
             Face::Root => get(root),
+            Face::PulsePage => get(pulse_page),
+            Face::PulseStream => get(pulse_stream),
             Face::OfferingShow => get(show_offering),
             Face::OfferingRest => post(rest_offering),
             Face::OfferingWake => post(wake_offering),
@@ -767,6 +783,90 @@ fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// The pulse page: the live view. Connects to /pulse/stream, seeds itself
+/// from /garden/stones.
+async fn pulse_page() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../assets/pulse.html"))
+}
+
+/// The SSE firehose (L18 at the edge): topology events and offering
+/// changes, merged into one stream. Each connection holds its own
+/// receivers; events are JSON, keep-alives keep proxies honest.
+async fn pulse_stream(
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    let mut topology = state.topology.events();
+    let mut offerings = state.garden.events();
+
+    let stream = futures::stream::unfold(
+        (topology, offerings),
+        |(mut topology, mut offerings)| async move {
+            loop {
+                tokio::select! {
+                    ev = topology.recv() => {
+                        match ev {
+                            Ok(ev) => {
+                                let line = match &ev {
+                                    garden_kernel::topology::TopologyEvent::Seen(v) => {
+                                        serde_json::json!({
+                                            "stream": "topology", "kind": "seen",
+                                            "stone": v.body.stone.name,
+                                            "health": v.body.presence.health,
+                                        })
+                                    }
+                                    garden_kernel::topology::TopologyEvent::Goodbye { stone_name, .. } => {
+                                        serde_json::json!({
+                                            "stream": "topology", "kind": "goodbye",
+                                            "stone": stone_name,
+                                        })
+                                    }
+                                    garden_kernel::topology::TopologyEvent::Expired { stone_name, .. } => {
+                                        serde_json::json!({
+                                            "stream": "topology", "kind": "expired",
+                                            "stone": stone_name,
+                                        })
+                                    }
+                                };
+                                let event = axum::response::sse::Event::default()
+                                    .event("topology")
+                                    .data(line.to_string());
+                                return Some((Ok::<_, std::convert::Infallible>(event), (topology, offerings)));
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                let event = axum::response::sse::Event::default()
+                                    .event("lagged")
+                                    .data(serde_json::json!({ "missed": n }).to_string());
+                                return Some((Ok::<_, std::convert::Infallible>(event), (topology, offerings)));
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                    ev = offerings.recv() => {
+                        match ev {
+                            Ok(ev) => {
+                                let event = axum::response::sse::Event::default()
+                                    .event("offerings")
+                                    .data(serde_json::json!({ "name": ev.name }).to_string());
+                                return Some((Ok::<_, std::convert::Infallible>(event), (topology, offerings)));
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                let event = axum::response::sse::Event::default()
+                                    .event("lagged")
+                                    .data(serde_json::json!({ "missed": n }).to_string());
+                                return Some((Ok::<_, std::convert::Infallible>(event), (topology, offerings)));
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                }
+            }
+        },
+    );
+
+    axum::response::IntoResponse::into_response(axum::response::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default()))
 }
 
 async fn front_door() -> Json<serde_json::Value> {

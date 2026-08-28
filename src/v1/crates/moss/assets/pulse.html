@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__STONE_NAME__ — pulse</title>
+<style>
+  :root { --bg:#0d1210; --card:#141b17; --ink:#dfe8e2; --dim:#8aa094; --ok:#7fc98f; --warn:#e0b060; --bad:#d98080; --line:#22302a; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--ink); font:15px/1.5 ui-monospace,Menlo,Consolas,monospace; padding:1.5rem; max-width:64rem; margin-inline:auto; }
+  h1 { font-size:1.4rem; letter-spacing:.04em; }
+  h1 .dot { display:inline-block; width:.6em; height:.6em; border-radius:50%; background:var(--ok); margin-right:.4em; animation:breathe 4s ease-in-out infinite; }
+  @keyframes breathe { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+  .sub { color:var(--dim); margin:.2rem 0 1.2rem; font-size:.85rem; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:.5rem; padding:.9rem 1rem; margin-bottom:1rem; }
+  h2 { font-size:.75rem; text-transform:uppercase; letter-spacing:.14em; color:var(--dim); margin-bottom:.6rem; }
+  .stones div { padding:.15rem 0; }
+  .stones .health-ok { color:var(--ok); }
+  .ring { min-height:8rem; max-height:16rem; overflow-y:auto; }
+  .ring div { padding:.12rem 0; border-bottom:1px dotted var(--line); font-size:.85rem; }
+  .k-seen { color:var(--ok); } .k-goodbye, .k-expired { color:var(--bad); } .k-offerings { color:var(--warn); }
+  footer { color:var(--dim); font-size:.75rem; margin-top:1rem; }
+</style>
+</head>
+<body>
+  <h1><span class="dot"></span>__STONE_NAME__ — pulse</h1>
+  <div class="sub">the room, as it happens · sse: /pulse/stream</div>
+
+  <section>
+    <h2>Stones</h2>
+    <div class="stones" id="stones">listening…</div>
+  </section>
+
+  <section>
+    <h2>Event ring</h2>
+    <div class="ring" id="ring"></div>
+  </section>
+
+  <footer>calm honesty · the garden whispers when it heals</footer>
+
+<script>
+const stonesEl = document.getElementById('stones');
+const ring = document.getElementById('ring');
+
+function ringLine(kind, text) {
+  const d = document.createElement('div');
+  const t = new Date().toLocaleTimeString();
+  d.innerHTML = `<span class="k-${kind}">[${t} ${kind}]</span> ${text}`;
+  ring.prepend(d);
+  while (ring.children.length > 60) ring.lastChild.remove();
+}
+
+async function seed() {
+  try {
+    const v = await (await fetch('/api/v1/garden/stones')).json();
+    stonesEl.innerHTML = '';
+    for (const s of v.data.stones) {
+      const d = document.createElement('div');
+      const h = s.presence.health;
+      d.innerHTML = `${s.stone.name} <span class="health-${h === 'thriving' ? 'ok' : 'warn'}">${h}</span>`;
+      stonesEl.appendChild(d);
+    }
+  } catch (e) { /* the garden re-seeds on the next event */ }
+}
+
+const es = new EventSource('/pulse/stream');
+es.addEventListener('topology', e => {
+  const ev = JSON.parse(e.data);
+  ringLine(ev.kind, ev.stone + (ev.health ? ' (' + ev.health + ')' : ''));
+  seed();
+});
+es.addEventListener('offerings', e => {
+  const ev = JSON.parse(e.data);
+  ringLine('offerings', ev.name + ' changed');
+  seed();
+});
+es.addEventListener('lagged', e => ringLine('offerings', '…' + JSON.parse(e.data).missed + ' events rushed past'));
+es.onerror = () => ringLine('offerings', 'stream paused; reconnecting');
+
+seed();
+</script>
+</body>
+</html>

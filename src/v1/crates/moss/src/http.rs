@@ -28,6 +28,8 @@ pub struct AppState {
     pub storage: Arc<crate::offerings::storage::Storage>,
     /// The living will's runner (ADR-0005 §2).
     pub capture: Arc<crate::offerings::capture_run::Runner>,
+    /// The async operation tracker (the data plane's async contract).
+    pub jobs: crate::jobs::JobTracker,
     pub topology: Arc<garden_kernel::topology::Topology>,
     pub dispatcher: Dispatcher,
     pub ingest_counters: Arc<IngestCounters>,
@@ -75,6 +77,10 @@ enum Face {
     OfferingCaptureLast,
     /// Replant: restore an incarnation from its checkpoint (ADR-0005 §6).
     OfferingReplant,
+    /// Every async operation on this stone.
+    JobList,
+    /// One job by id.
+    JobDetail,
     /// The stone's living landing page (PORTRAIT idea: identity + presence).
     Portrait,
     /// The root lands on the portrait.
@@ -94,7 +100,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 26] = [
+    const ALL: [Face; 28] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -111,6 +117,8 @@ impl Face {
         Face::OfferingCapture,
         Face::OfferingCaptureLast,
         Face::OfferingReplant,
+        Face::JobList,
+        Face::JobDetail,
         Face::Portrait,
         Face::Root,
         Face::PulsePage,
@@ -136,6 +144,7 @@ impl Face {
             | Face::StorageList
             | Face::GardenStorage
             | Face::OfferingCaptureLast | Face::OfferingList | Face::OfferingShow
+            | Face::JobList | Face::JobDetail
             | Face::Portrait | Face::Root | Face::PulsePage | Face::PulseStream => "GET",
             | Face::StorageAdopt | Face::StorageEject | Face::StorageRoles
             | Face::OfferingCapture | Face::OfferingReplant => "POST",
@@ -169,6 +178,8 @@ impl Face {
             Face::OfferingReplant => "/api/v1/offerings/{fqn}/replant",
             Face::Portrait => "/portrait",
             Face::Root => "/",
+            Face::JobList => "/api/v1/jobs",
+            Face::JobDetail => "/api/v1/jobs/{id}",
             Face::PulsePage => "/pulse",
             Face::PulseStream => "/pulse/stream",
             Face::OfferingRest => "/api/v1/offerings/{fqn}/rest",
@@ -227,6 +238,8 @@ impl Face {
                 "This stone's living landing page: identity, offerings, banks, the room."
             }
             Face::Root => "Lands on the portrait.",
+            Face::JobList => "Every async operation on this stone, newest first.",
+            Face::JobDetail => "One job by id: kind, subject, status, error, result.",
             Face::PulsePage => {
                 "The live page: stones, offerings, and the event ring as they happen."
             }
@@ -264,6 +277,8 @@ impl Face {
             Face::OfferingReplant => post(replant_offer),
             Face::Portrait => get(portrait),
             Face::Root => get(root),
+            Face::JobList => get(job_list),
+            Face::JobDetail => get(job_detail),
             Face::PulsePage => get(pulse_page),
             Face::PulseStream => get(pulse_stream),
             Face::OfferingShow => get(show_offering),
@@ -869,6 +884,26 @@ async fn pulse_stream(
         .keep_alive(axum::response::sse::KeepAlive::default()))
 }
 
+/// Every tracked async operation, newest first.
+async fn job_list(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let jobs = state.jobs.list();
+    Json(serde_json::json!({ "data": { "jobs": jobs } }))
+}
+
+/// One job by id.
+async fn job_detail(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .jobs
+        .get(&id)
+        .map(|j| Json(serde_json::json!({ "data": { "job": j } })))
+        .ok_or_else(|| {
+            ApiError(CommandError::NotFound(format!("no job '{id}' on this stone")))
+        })
+}
+
 async fn front_door() -> Json<serde_json::Value> {
     let routes: Vec<serde_json::Value> = Face::ALL
         .iter()
@@ -1079,6 +1114,7 @@ mod tests {
                 Arc::new(crate::offerings::storage::Storage::new()),
                 Arc::new(crate::offerings::capture_run::NullHooks),
             )),
+            jobs: crate::jobs::JobTracker::new(),
             topology: Arc::new(garden_kernel::topology::Topology::new()),
             dispatcher: Dispatcher::new(16).0,
             ingest_counters: Arc::new(IngestCounters::default()),

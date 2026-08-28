@@ -10,6 +10,7 @@
 
 mod http;
 mod identity;
+mod jobs;
 mod offerings;
 mod source;
 
@@ -390,6 +391,9 @@ async fn main() {
         token.clone(),
     ));
 
+    // The jobs tracker: the async contract for every long-running operation.
+    let jobs_tracker = jobs::JobTracker::new();
+
     // HTTP surface, last: the garden answers once it can hear. The same
     // chirp source composes the SelfView — one identity, many mouths (B1).
     let state = Arc::new(http::AppState {
@@ -399,6 +403,7 @@ async fn main() {
         garden,
         storage: Arc::clone(&storage),
         capture: capture_runner,
+        jobs: jobs_tracker,
         chirp_source: chirp_source.clone() as Arc<dyn garden_kernel::announce::ChirpSource>,
         stone_name: identity.stone_name.clone(),
         boot_id,

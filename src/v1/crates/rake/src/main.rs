@@ -24,7 +24,7 @@ use clap::{Parser, Subcommand};
 use garden_contract::chirp::ChirpFrame;
 use garden_contract::consts;
 use garden_kernel::probe;
-use moss_http::AttachError;
+use moss_http::{AttachError, StreamError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
@@ -155,6 +155,31 @@ enum Command {
         /// The checkpoint run; absent = the newest.
         #[arg(long)]
         run: Option<String>,
+    },
+    /// Follow an offering's logs live: history first, then the stream.
+    Watch {
+        /// The offering's name (FQN or bare stem).
+        name: String,
+        #[command(subcommand)]
+        cmd: Option<WatchCmd>,
+    },
+}
+
+/// What to watch. Logs today; the verdict sheet holds the rest.
+#[derive(Subcommand)]
+enum WatchCmd {
+    /// Stream an offering's container logs: history first, then live.
+    Logs {
+        /// Prefix each line with the engine's timestamp.
+        #[arg(long)]
+        timestamps: bool,
+        /// Start from the last N lines instead of the whole history.
+        #[arg(long)]
+        tail: Option<u64>,
+        /// Exit 0 on the first line containing this text — the
+        /// readiness primitive for scripts.
+        #[arg(long)]
+        until: Option<String>,
     },
 }
 
@@ -782,11 +807,78 @@ async fn run(cli: &Cli) -> Result<(), String> {
         | Command::Wake { .. } | Command::Uproot { .. } | Command::Capture { .. }
         | Command::Replant { .. } => cmd_stone_op(cli).await,
         Command::Storage { cmd } => cmd_storage(cli, cmd.as_ref()).await,
+        Command::Watch { name, cmd } => cmd_watch(cli, name, cmd.as_ref()).await,
     }
 }
 
 /// The storage faces. Every verb here is the 1:1 client of one API face:
 /// list -> GET /api/v1/storage; adopt -> POST /api/v1/storage/adopt.
+/// `rake watch <offering> logs`: cascade to the first moss that will
+/// speak, follow the garden's redirect if the offering grows elsewhere,
+/// print lines until the stream ends or `--until` matches (exit 0).
+async fn cmd_watch(cli: &Cli, name: &str, cmd: Option<&WatchCmd>) -> Result<(), String> {
+    let Some(WatchCmd::Logs { timestamps, tail, until }) = cmd else {
+        return Err("watch what? try: rake watch <offering> logs".into());
+    };
+    let path = paths::logs_stream(name, *tail, *timestamps);
+    let (early, late) = cli.targets().await?;
+    for cand in early.into_iter().chain(late) {
+        match moss_http::open_stream(cand.ip, cand.http_port, &path, HTTP_TIMEOUT).await {
+            Ok(mut reader) => {
+                return stream_logs(&mut reader, *timestamps, until.as_deref()).await;
+            }
+            Err(StreamError::Refused { status, body }) => {
+                LAST_REFUSAL.store(status, std::sync::atomic::Ordering::Relaxed);
+                // The garden's only true redirect: logs grow where the
+                // offering grows — follow the way once, speak there.
+                if status == 404
+                    && let Some(home) = not_here_home(status, &body)
+                {
+                    eprintln!("rake: the offering grows elsewhere - asking {home}");
+                    let (ip, port) = parse_http_home(&home)?;
+                    let mut reader = moss_http::open_stream(ip, port, &path, HTTP_TIMEOUT)
+                        .await
+                        .map_err(|e| {
+                            format!("the offering's home stone at {home} did not answer: {e}")
+                        })?;
+                    return stream_logs(&mut reader, *timestamps, until.as_deref()).await;
+                }
+                return Err(raw_refusal(status, &body));
+            }
+            Err(StreamError::Connection(e)) => {
+                eprintln!("note: {} — {e}", cand.endpoint());
+                continue; // soft: observation walks past a sick answerer
+            }
+        }
+    }
+    Err("no moss answered; the offering's logs are out of reach".into())
+}
+
+/// Print one SSE payload (a JSON LogLine) per line, honoring --until.
+async fn stream_logs(
+    reader: &mut moss_http::SseStream,
+    timestamps: bool,
+    until: Option<&str>,
+) -> Result<(), String> {
+    while let Some(data) = reader.next_data().await {
+        let Ok(line) = serde_json::from_slice::<serde_json::Value>(&data) else {
+            continue; // keep-alives and strangers ride by
+        };
+        let message = line["message"].as_str().unwrap_or("");
+        let channel = line["stream"].as_str().unwrap_or("console");
+        match (timestamps, line["timestamp"].as_str()) {
+            (true, Some(ts)) => println!("[{ts}] {channel}: {message}"),
+            _ => println!("{channel}: {message}"),
+        }
+        if let Some(pattern) = until
+            && message.contains(pattern)
+        {
+            return Ok(()); // readiness reached: exit 0
+        }
+    }
+    Ok(())
+}
+
 async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> {
     match cmd {
         None => {
@@ -1294,6 +1386,24 @@ mod paths {
     /// The roles declaration's face.
     pub fn storage_roles(bank: &str) -> String {
         format!("{STORAGE}/{}/roles", encode_segment(bank))
+    }
+
+    /// The offering-logs stream face. `tail` and `timestamps` ride as
+    /// query pairs.
+    pub fn logs_stream(name: &str, tail: Option<u64>, timestamps: bool) -> String {
+        let mut params = Vec::new();
+        if let Some(n) = tail {
+            params.push(format!("tail={n}"));
+        }
+        if timestamps {
+            params.push("timestamps=true".into());
+        }
+        let query = if params.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", params.join("&"))
+        };
+        format!("{OFFERINGS}/{}/logs/stream{query}", encode_segment(name))
     }
 
     /// The bank-files list face. `path` and `depth` ride as query pairs.

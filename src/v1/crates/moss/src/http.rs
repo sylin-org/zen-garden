@@ -81,6 +81,8 @@ enum Face {
     StorageFileDelete,
     /// Move (rename) one file within a bank.
     StorageFileMove,
+    /// Follow an offering's logs: history first, then live.
+    OfferingLogsStream,
     /// Run a will: the capture pipeline (ADR-0005 §2).
     OfferingCapture,
     /// The last capture run of an offering.
@@ -110,7 +112,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 33] = [
+    const ALL: [Face; 34] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -128,6 +130,7 @@ impl Face {
         Face::StorageFilePut,
         Face::StorageFileDelete,
         Face::StorageFileMove,
+        Face::OfferingLogsStream,
         Face::GardenStorage,
         Face::OfferingCapture,
         Face::OfferingCaptureLast,
@@ -161,6 +164,7 @@ impl Face {
             | Face::StorageFileGet
             | Face::GardenStorage
             | Face::OfferingCaptureLast | Face::OfferingList | Face::OfferingShow
+            | Face::OfferingLogsStream
             | Face::JobList | Face::JobDetail
             | Face::Portrait | Face::Root | Face::PulsePage | Face::PulseStream => "GET",
             | Face::StorageAdopt | Face::StorageEject | Face::StorageRoles
@@ -200,6 +204,7 @@ impl Face {
                 "/api/v1/offerings/{fqn}/capture"
             }
             Face::OfferingReplant => "/api/v1/offerings/{fqn}/replant",
+            Face::OfferingLogsStream => "/api/v1/offerings/{fqn}/logs/stream",
             Face::Portrait => "/portrait",
             Face::Root => "/",
             Face::JobList => "/api/v1/jobs",
@@ -281,6 +286,9 @@ impl Face {
             Face::OfferingReplant => {
                 "Replant from a checkpoint {run?}: verify, restore the directory, place from the stored spec - same FQN, same connection strings (ADR-0005 §6)."
             }
+            Face::OfferingLogsStream => {
+                "Follow an offering's logs: history first (tail=N bounds it), then live - \n                 SSE `log` events, one JSON line each. A peer's offering answers the \n                 garden's redirect."
+            }
             Face::Portrait => {
                 "This stone's living landing page: identity, offerings, banks, the room."
             }
@@ -325,6 +333,7 @@ impl Face {
             Face::OfferingList => get(offerings_list),
             Face::OfferingPlant => post(plant_offering),
             Face::OfferingCapture => post(capture_offer),
+            Face::OfferingLogsStream => get(offering_logs_stream),
             Face::OfferingCaptureLast => get(capture_last),
             Face::OfferingReplant => post(replant_offer),
             Face::Portrait => get(portrait),
@@ -679,6 +688,104 @@ async fn capture_offer(
     Ok(Json(
         serde_json::json!({ "data": { "run": announced }, "job_id": job_id_resp }),
     ))
+}
+
+// ---- offering logs: the live voice of what was planted ---------------------
+
+/// Which peer's song carries this offering — the logs redirect's
+/// addressee. Offerings grow where they were planted; the room's cache
+/// knows who sings about them.
+fn service_holder(state: &AppState, fqn: &str) -> Option<String> {
+    for peer in state.topology.snapshot() {
+        let Some(services) = &peer.body.inventory.services else {
+            continue;
+        };
+        if services.items.iter().any(|s| s.name == fqn) {
+            let address = &peer.body.stone.network.address;
+            return Some(format!(
+                "http://{}:{}/api/v1/stone",
+                address.ip, address.port
+            ));
+        }
+    }
+    None
+}
+
+/// The not-here answer for an offering that grows elsewhere (1:1 with
+/// the bank files' redirect): 404, a Location header, `knows_at`.
+fn offering_not_here(state: &AppState, fqn: &str) -> axum::response::Response {
+    match service_holder(state, fqn) {
+        Some(knows_at) => (
+            axum::http::StatusCode::NOT_FOUND,
+            [(axum::http::header::LOCATION, knows_at.clone())],
+            Json(serde_json::json!({
+                "error": {
+                    "not_here": true,
+                    "offering": fqn,
+                    "knows_at": knows_at,
+                    "message": "That offering does not grow here. Its home stone answers at \
+                                `knows_at` - logs grow where the offering grows."
+                }
+            })),
+        )
+            .into_response(),
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": {
+                    "message": format!("'{fqn}' is not planted here, and the room's cache knows \
+                                        no home for it - rake list shows what this stone hosts")
+                }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// Follow an offering's logs: history first (tail=N bounds it), then
+/// live — SSE `log` events, one JSON LogLine each. The stream ends when
+/// the client leaves or the container stops.
+async fn offering_logs_stream(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    let fqn = garden_glossary::fqn::canonicalize(&name).unwrap_or_else(|_| name.clone());
+    if state.garden.placed(&fqn).is_none() {
+        return offering_not_here(&state, &fqn);
+    }
+    let tail = params.get("tail").and_then(|t| t.parse::<u64>().ok());
+    let timestamps = params
+        .get("timestamps")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    let Some(stream) = state.garden.logs_stream(&fqn, tail, timestamps) else {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": { "message": format!("'{fqn}' grows in a world that cannot stream logs") }
+            })),
+        )
+            .into_response();
+    };
+    use futures::StreamExt as _;
+    let events = stream.map(|item| {
+        let event = match item {
+            Ok(line) => axum::response::sse::Event::default()
+                .event("log")
+                .data(serde_json::to_string(&line).unwrap_or_default()),
+            Err(e) => axum::response::sse::Event::default()
+                .event("error")
+                .data(
+                    serde_json::to_string(&serde_json::json!({ "message": e }))
+                        .unwrap_or_default(),
+                ),
+        };
+        Ok::<_, std::convert::Infallible>(event)
+    });
+    axum::response::Sse::new(events)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response()
 }
 
 /// The last capture run of an offering.

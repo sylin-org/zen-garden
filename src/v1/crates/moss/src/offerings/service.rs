@@ -419,6 +419,21 @@ impl OfferingService {
         self.registry.get_by_name(&fqn)
     }
 
+    /// Follow an offering's logs through its bound world. `None` when
+    /// the offering is not placed here or its world cannot stream logs
+    /// (the null world opts out at its own seam).
+    pub fn logs_stream(
+        &self,
+        name: &str,
+        tail: Option<u64>,
+        timestamps: bool,
+    ) -> Option<super::runtime::LogStream> {
+        let offering = self.placed(name)?;
+        let managed = offering.managed()?;
+        let rt = self.worlds.by_kind(&managed.runtime_kind).ok()?;
+        rt.logs_stream(&offering.name, tail, timestamps)
+    }
+
     /// Rest: stopped, and reconcile will keep it so (§3.2).
     pub async fn rest(&self, name: &str) -> Result<Offering, CommandError> {
         let offering = self.managed(name)?;

@@ -70,7 +70,36 @@ pub trait Runtime: Send + Sync {
 
     /// Everything this world currently hosts for the garden.
     async fn list(&self) -> Vec<PlacedRef>;
+
+    /// Follow an offering's logs (docker-logs semantics: history first,
+    /// then live). `tail` bounds the history to the last N lines; the
+    /// stream runs until the container stops or the client leaves.
+    /// Returns `None` when this world cannot stream logs — the default,
+    /// so worlds opt IN at their own seam.
+    fn logs_stream(
+        &self,
+        _name: &str,
+        _tail: Option<u64>,
+        _timestamps: bool,
+    ) -> Option<LogStream> {
+        None
+    }
 }
+
+/// One log line as the wire wants it: which channel spoke, what it said,
+/// and the engine's timestamp when asked for.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LogLine {
+    /// stdout | stderr | console
+    pub stream: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+}
+
+/// A long-lived logs stream: history first, then follow.
+pub type LogStream =
+    std::pin::Pin<Box<dyn futures::Stream<Item = Result<LogLine, String>> + Send>>;
 
 /// A lightweight row for listings.
 #[derive(Debug, Clone, PartialEq, Eq)]

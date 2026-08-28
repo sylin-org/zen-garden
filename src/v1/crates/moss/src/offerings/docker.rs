@@ -283,6 +283,57 @@ impl Runtime for DockerRuntime {
             }
         }
     }
+
+    /// Docker-logs semantics: history first (bounded by `tail`), then
+    /// live follow. stdout/stderr keep their channels; timestamps are
+    /// the engine's, not ours.
+    fn logs_stream(
+        &self,
+        name: &str,
+        tail: Option<u64>,
+        timestamps: bool,
+    ) -> Option<super::runtime::LogStream> {
+        use bollard::container::LogsOptions;
+        use futures::StreamExt as _;
+        let container = Self::container_name(name);
+        let options = LogsOptions {
+            follow: true,
+            stdout: true,
+            stderr: true,
+            timestamps,
+            tail: tail.map(|n| n.to_string()).unwrap_or_default(),
+            ..Default::default()
+        };
+        let source = self.docker.logs(&container, Some(options));
+        Some(Box::pin(source.map(move |result| match result {
+            Ok(output) => {
+                let message =
+                    output.to_string().trim_end_matches('\n').trim_end_matches('\r').to_string();
+                let stream = match output {
+                    bollard::container::LogOutput::StdErr { .. } => "stderr",
+                    bollard::container::LogOutput::StdOut { .. } => "stdout",
+                    _ => "console",
+                };
+                // Docker's --timestamps prefixes each line with its
+                // RFC3339 engine time; split it off so the wire shape
+                // stays one field per fact.
+                let (timestamp, message) = if timestamps {
+                    message
+                        .split_once(' ')
+                        .map(|(t, rest)| (Some(t.to_string()), rest.to_string()))
+                        .unwrap_or((None, message))
+                } else {
+                    (None, message)
+                };
+                Ok(super::runtime::LogLine {
+                    stream: stream.into(),
+                    message,
+                    timestamp,
+                })
+            }
+            Err(e) => Err(e.to_string()),
+        })))
+    }
 }
 
 #[async_trait::async_trait]

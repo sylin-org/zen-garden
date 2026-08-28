@@ -9,7 +9,7 @@
 
 use std::net::IpAddr;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 /// How talking to a moss can fail — and whether that means "try another".
@@ -254,6 +254,150 @@ fn dechunk_bytes(mut body: &[u8]) -> Result<Vec<u8>, AttachError> {
         }
         body = &body[start + size + 2..];
     }
+}
+
+// ---- long-lived streams (the watch faces' transport) ------------------------
+
+/// Why a stream did not start. `Refused` carries the RAW body so the
+/// caller can read structured refusals (the not-here redirect lives in
+/// there, not just a message).
+#[derive(Debug)]
+pub enum StreamError {
+    Connection(String),
+    Refused { status: u16, body: Vec<u8> },
+}
+
+impl std::fmt::Display for StreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Connection(e) => write!(f, "connection failed: {e}"),
+            Self::Refused { status, body } => {
+                let text = String::from_utf8_lossy(body);
+                match serde_json::from_str::<serde_json::Value>(text.trim()) {
+                    Ok(v) if v["error"]["message"].is_string() => {
+                        write!(f, "{}", v["error"]["message"].as_str().unwrap_or_default())
+                    }
+                    _ => write!(f, "HTTP {status}"),
+                }
+            }
+        }
+    }
+}
+
+/// A live SSE connection: hands back one `data:` payload at a time,
+/// until the moss ends the stream or the caller hangs up.
+pub struct SseStream {
+    reader: tokio::io::BufReader<tokio::net::tcp::OwnedReadHalf>,
+}
+
+impl SseStream {
+    /// The next SSE `data:` payload, or `None` when the connection ends.
+    /// Multi-`data:` events arrive joined with newlines.
+    pub async fn next_data(&mut self) -> Option<Vec<u8>> {
+        let mut data: Option<Vec<u8>> = None;
+        loop {
+            let mut raw = Vec::new();
+            let n = self
+                .reader
+                .read_until(b'\n', &mut raw)
+                .await
+                .ok()?;
+            if n == 0 {
+                return None; // EOF: the moss hung up
+            }
+            let line = String::from_utf8_lossy(&raw);
+            let line = line.trim_end_matches(['\r', '\n']);
+            if let Some(rest) = line.strip_prefix("data:") {
+                let payload = rest.trim_start().as_bytes().to_vec();
+                match &mut data {
+                    Some(d) => {
+                        d.push(b'\n');
+                        d.extend_from_slice(&payload);
+                    }
+                    None => data = Some(payload),
+                }
+            } else if line.is_empty() {
+                // The event separator: a buffered payload is complete.
+                if data.is_some() {
+                    return data;
+                }
+            }
+            // event:/id:/retry:/comment lines carry nothing we need.
+        }
+    }
+}
+
+/// Open a long-lived SSE stream. Connect, request, read the head with a
+/// budget — then read the body forever (follow semantics; the budget
+/// does NOT apply to the stream itself).
+pub async fn open_stream(
+    ip: IpAddr,
+    port: u16,
+    path: &str,
+    connect_timeout: Duration,
+) -> Result<SseStream, StreamError> {
+    let connect = async {
+        TcpStream::connect((ip, port))
+            .await
+            .map_err(|e| StreamError::Connection(e.to_string()))
+    };
+    let stream = tokio::time::timeout(connect_timeout, connect)
+        .await
+        .map_err(|_| StreamError::Connection("connect timed out".into()))?
+        .map_err(|e| StreamError::Connection(e.to_string()))?;
+
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: {ip}:{port}\r\nAccept: text/event-stream\r\nConnection: close\r\n\r\n"
+    );
+    let (read_half, mut write_half) = stream.into_split();
+    let write = async {
+        write_half
+            .write_all(req.as_bytes())
+            .await
+            .map_err(|e| StreamError::Connection(e.to_string()))?;
+        write_half
+            .flush()
+            .await
+            .map_err(|e| StreamError::Connection(e.to_string()))
+    };
+    tokio::time::timeout(connect_timeout, write)
+        .await
+        .map_err(|_| StreamError::Connection("write timed out".into()))?
+        .map_err(|e| StreamError::Connection(e.to_string()))?;
+
+    // The head: status line + headers, line by line, under the budget.
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let head_read = async {
+        let mut reader = BufReader::new(read_half);
+        let mut status_line = String::new();
+        reader.read_line(&mut status_line).await.map_err(|e| StreamError::Connection(e.to_string()))?;
+        let status: u16 = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| StreamError::Connection("unreadable status line".into()))?;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let n = reader.read_line(&mut line).await.map_err(|e| StreamError::Connection(e.to_string()))?;
+            if n == 0 || line == "\r\n" || line == "\n" {
+                break;
+            }
+        }
+        Ok::<_, StreamError>((status, reader))
+    };
+    let (status, reader) = tokio::time::timeout(connect_timeout, head_read)
+        .await
+        .map_err(|_| StreamError::Connection("head read timed out".into()))??;
+
+    if status != 200 {
+        let mut reader = reader;
+        let mut body = Vec::new();
+        // Refusals are small envelopes; drain what came (best effort).
+        let _ = reader.read_until(b'\0', &mut body).await;
+        return Err(StreamError::Refused { status, body });
+    }
+    Ok(SseStream { reader })
 }
 
 #[cfg(test)]

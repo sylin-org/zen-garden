@@ -53,6 +53,10 @@ pub enum Face {
     OfferingReplant,
     /// Automated restore rehearsal: boot the newest checkpoint in isolation, report green/red (J2).
     OfferingRehearse,
+    /// The nourish check: refresh the image reference, would it change? (J3).
+    OfferingUpdateCheck,
+    /// The nourish apply: pull the newer image, rebuild the container, revert on failure (J3).
+    OfferingUpdate,
     /// Every async operation on this stone, newest first.
     JobList,
     /// One job by id: kind, subject, status, error, result.
@@ -115,6 +119,8 @@ pub const FACES: &[FaceDef] = &[
     FaceDef { face: Face::OfferingCaptureLast, method: "GET", path: "/api/v1/offerings/{fqn}/capture", summary: "The last capture run of this offering: phase, checkpoint, ferried sinks." },
     FaceDef { face: Face::OfferingReplant, method: "POST", path: "/api/v1/offerings/{fqn}/replant", summary: "Replant from a checkpoint {run?}: verify, restore the directory, place from the stored spec - same FQN, same connection strings (ADR-0005 §6)." },
     FaceDef { face: Face::OfferingRehearse, method: "POST", path: "/api/v1/offerings/{fqn}/rehearse", summary: "Restore rehearsal (J2): boot the newest checkpoint in isolation - no ports, no registry - hold the window, report green/red, clean up." },
+    FaceDef { face: Face::OfferingUpdateCheck, method: "GET", path: "/api/v1/offerings/{fqn}/update-check", summary: "The nourish check (J3): refresh the offering's image reference and say whether the tag would now run something different." },
+    FaceDef { face: Face::OfferingUpdate, method: "POST", path: "/api/v1/offerings/{fqn}/update", summary: "The nourish apply (J3): pull the newer image, rebuild the container from the stored spec (volumes persist), and revert to the pre-pull image if it will not run. Never the watchtower story." },
     FaceDef { face: Face::JobList, method: "GET", path: "/api/v1/jobs", summary: "Every async operation on this stone, newest first." },
     FaceDef { face: Face::JobDetail, method: "GET", path: "/api/v1/jobs/{id}", summary: "One job by id: kind, subject, status, error, result." },
     FaceDef { face: Face::Portrait, method: "GET", path: "/portrait", summary: "This stone's living landing page: identity, offerings, banks, the room." },

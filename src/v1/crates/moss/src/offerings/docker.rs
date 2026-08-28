@@ -349,6 +349,46 @@ impl Runtime for DockerRuntime {
         Some(fate)
     }
 
+    /// The pull half of nourish (J3): refresh the tag, compare IDs.
+    /// A pull of an up-to-date image is cheap (manifest check only).
+    async fn refresh_image(
+        &self,
+        image: &str,
+    ) -> Option<Result<super::runtime::ImageRefresh, super::runtime::RuntimeError>> {
+        let before = self
+            .docker
+            .inspect_image(image)
+            .await
+            .ok()
+            .map(|i| i.id.unwrap_or_default());
+        let mut pull = self.docker.create_image(
+            Some(bollard::image::CreateImageOptions {
+                from_image: image.to_string(),
+                ..Default::default()
+            }),
+            None,
+            None,
+        );
+        while let Some(step) = pull.next().await {
+            if let Err(e) = step {
+                return Some(Err(super::runtime::RuntimeError::Failed(format!(
+                    "pull {image}: {e}"
+                ))));
+            }
+        }
+        let after = self
+            .docker
+            .inspect_image(image)
+            .await
+            .ok()
+            .and_then(|i| i.id)
+            .unwrap_or_default();
+        Some(Ok(super::runtime::ImageRefresh {
+            changed: before.as_deref() != Some(after.as_str()) && !after.is_empty(),
+            id: after,
+        }))
+    }
+
     async fn list(&self) -> Vec<super::runtime::PlacedRef> {
         let opts: ListContainersOptions<String> = ListContainersOptions {
             all: true,

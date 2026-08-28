@@ -133,6 +133,18 @@
       "summary": "Restore rehearsal (J2): boot the newest checkpoint in isolation - no ports, no registry - hold the window, report green/red, clean up."
     },
     {
+      "face": "OfferingUpdateCheck",
+      "method": "GET",
+      "path": "/api/v1/offerings/{fqn}/update-check",
+      "summary": "The nourish check (J3): refresh the offering's image reference and say whether the tag would now run something different."
+    },
+    {
+      "face": "OfferingUpdate",
+      "method": "POST",
+      "path": "/api/v1/offerings/{fqn}/update",
+      "summary": "The nourish apply (J3): pull the newer image, rebuild the container from the stored spec (volumes persist), and revert to the pre-pull image if it will not run. Never the watchtower story."
+    },
+    {
       "face": "JobList",
       "method": "GET",
       "path": "/api/v1/jobs",

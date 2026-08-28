@@ -81,6 +81,8 @@ fn method_router(face: Face) -> axum::routing::MethodRouter<Arc<AppState>> {
             Face::OfferingCaptureLast => get(capture_last),
             Face::OfferingReplant => post(replant_offer),
             Face::OfferingRehearse => post(rehearse_offer),
+            Face::OfferingUpdateCheck => get(update_check_face),
+            Face::OfferingUpdate => post(update_face),
             Face::Portrait => get(portrait),
             Face::Root => get(root),
             Face::JobList => get(job_list),
@@ -1309,6 +1311,39 @@ async fn rehearse_offer(
         &fqn, &spec, deps, &scratch_root, REHEARSE_WAIT_SECS,
     ).await;
     Ok(Json(serde_json::json!({ "data": { "rehearsal": report } })))
+}
+
+/// The nourish check (J3): refresh the image reference and say whether
+/// the tag would now run something different.
+async fn update_check_face(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    let fqn = garden_glossary::fqn::canonicalize(&name)
+        .map_err(|e| CommandError::Conflict(e.to_string()))?;
+    let refresh = state.garden.update_check(&fqn).await?;
+    Ok(Json(serde_json::json!({ "data": {
+        "name": fqn,
+        "changed": refresh.changed,
+        "image_id": refresh.id,
+    } })))
+}
+
+/// The nourish apply (J3): pull the newer image and rebuild the container
+/// from the stored spec. Volumes persist — data never moves. Refused
+/// placements revert to the pre-pull image automatically.
+async fn update_face(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    let fqn = garden_glossary::fqn::canonicalize(&name)
+        .map_err(|e| CommandError::Conflict(e.to_string()))?;
+    let refresh = state.garden.update_offering(&fqn).await?;
+    Ok(Json(serde_json::json!({ "data": {
+        "name": fqn,
+        "updated": refresh.changed,
+        "image_id": refresh.id,
+    } })))
 }
 
 /// The living will's surfacing for one offering (L3: never silent).

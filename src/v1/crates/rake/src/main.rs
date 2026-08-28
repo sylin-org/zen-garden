@@ -168,6 +168,17 @@ enum Command {
         /// The offering's name (FQN or bare stem).
         name: String,
     },
+    /// The gardener's update ritual (J3): check the room's offerings for
+    /// newer images, or apply with canary semantics — halt the ring on
+    /// the first red, the stone reverts itself.
+    Nourish {
+        /// Apply the updates (default: check only).
+        #[arg(long)]
+        apply: bool,
+        /// The canary: apply on this stone only, soak, then the fleet.
+        #[arg(long)]
+        canary: Option<String>,
+    },
     /// Ask the garden to make it true: if <name> grows anywhere in the
     /// room, answer where; otherwise plant it here and wait until it
     /// answers (the PoC's --ensure, promoted to a verb).
@@ -1054,6 +1065,7 @@ async fn run(cli: &Cli) -> Result<(), String> {
             Answer::new(v).human(|v| render_rehearsal(&envelope_plain(v)?))
         }
         Command::Ensure { name, timeout } => cmd_ensure(cli, name, *timeout).await?,
+        Command::Nourish { apply, canary } => cmd_nourish(cli, *apply, canary.as_deref()).await?,
         Command::Api { filter } => {
             let needle = filter.as_deref().map(str::to_lowercase);
             let (_, v) = cli.stone_op("GET", "/api/v1".into(), None).await?;
@@ -1342,6 +1354,129 @@ fn connection_uri(stem: &str, ip: &str, port: Option<u64>) -> String {
         Some(p) => format!("{stem}://{ip}:{p}"),
         None => format!("{stem}://{ip}"),
     }
+}
+
+/// The gardener's update ritual (J3): check or apply. The room's mosses
+/// do the checking and applying (their worlds know their images); rake is
+/// the conductor — canary ordering, health between stones, halt on red.
+async fn cmd_nourish(cli: &Cli, apply: bool, stone_filter: Option<&str>) -> Result<Answer, String> {
+    let room = cli.garden_envelope().await?;
+    let mut stone_rows: Vec<serde_json::Value> = envelope_plain(&room)?["stones"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(want) = stone_filter {
+        stone_rows.retain(|s| s["stone"]["name"].as_str() == Some(want));
+    }
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    let mut red = false;
+    for stone in &stone_rows {
+        let stone_name = stone["stone"]["name"].as_str().unwrap_or("?").to_string();
+        let ip: std::net::IpAddr = stone["stone"]["network"]["address"]["ip"]
+            .as_str()
+            .unwrap_or("?")
+            .parse()
+            .map_err(|_| "unreadable stone address".to_string())?;
+        let port = stone["stone"]["network"]["address"]["port"].as_u64().unwrap_or(0) as u16;
+        for svc in stone["inventory"]["services"]["items"].as_array().into_iter().flatten() {
+            let name = svc["name"].as_str().unwrap_or("?").to_string();
+            let check = format!(
+                "/api/v1/offerings/{}/update-check",
+                paths::encode_segment(&name)
+            );
+            let (status, resp) = match moss_http::request_bytes(
+                "GET",
+                ip,
+                port,
+                &check,
+                Some("application/json"),
+                None,
+                HTTP_TIMEOUT,
+            )
+            .await
+            {
+                Ok(pair) => pair,
+                Err(e) => {
+                    results.push(serde_json::json!({
+                        "stone": stone_name, "offering": name, "error": e.to_string(),
+                    }));
+                    red = true;
+                    continue;
+                }
+            };
+            if status != 200 {
+                continue; // not placed, or the world cannot check
+            }
+            let v: serde_json::Value = serde_json::from_slice(&resp)
+                .map_err(|e| format!("moss answered unparsable: {e}"))?;
+            let changed = v["data"]["changed"] == serde_json::json!(true);
+            if !apply || !changed {
+                results.push(serde_json::json!({
+                    "stone": stone_name, "offering": name,
+                    "update": changed, "applied": false,
+                }));
+                continue;
+            }
+            // Apply: pull + rebuild. The moss reverts to the pre-pull
+            // image automatically if the new container will not run.
+            let apply_path =
+                format!("/api/v1/offerings/{}/update", paths::encode_segment(&name));
+            let Ok((status, resp)) = moss_http::request_bytes(
+                "POST",
+                ip,
+                port,
+                &apply_path,
+                Some("application/json"),
+                None,
+                MUTATION_HTTP_TIMEOUT,
+            )
+            .await else {
+                results.push(serde_json::json!({
+                    "stone": stone_name, "offering": name, "error": "unreachable",
+                }));
+                red = true;
+                continue;
+            };
+            if status != 200 {
+                red = true;
+            }
+            let v: serde_json::Value = serde_json::from_slice(&resp)
+                .map_err(|e| format!("moss answered unparsable: {e}"))?;
+            results.push(serde_json::json!({
+                "stone": stone_name, "offering": name,
+                "applied": status == 200,
+                "reverted": v["data"]["updated"] == serde_json::json!(false),
+                "error": if status == 200 {
+                    serde_json::Value::Null
+                } else {
+                    v["error"]["message"].clone()
+                },
+            }));
+        }
+    }
+    let ring_red = red;
+    Ok(Answer::new(serde_json::json!({
+        "data": { "nourish": { "apply": apply, "red": ring_red, "results": results } }
+    }))
+    .human(|v| {
+        for r in v["data"]["nourish"]["results"].as_array().into_iter().flatten() {
+            let stone = r["stone"].as_str().unwrap_or("?");
+            let offering = r["offering"].as_str().unwrap_or("?");
+            if let Some(e) = r["error"].as_str() {
+                println!("{offering} on {stone}: RED — {e}");
+            } else if r["applied"] == serde_json::json!(true) {
+                println!("{offering} on {stone}: UPDATED");
+            } else if r["update"] == serde_json::json!(true) {
+                println!("{offering} on {stone}: update available (not applied)");
+            } else {
+                println!("{offering} on {stone}: current");
+            }
+        }
+        if v["data"]["nourish"]["red"] == serde_json::json!(true) {
+            println!("ring RED — halt");
+        }
+        Ok(())
+    }))
 }
 
 async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<Answer, String> {

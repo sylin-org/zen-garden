@@ -85,6 +85,17 @@ pub trait Runtime: Send + Sync {
         None
     }
 
+    /// Refresh an image reference (the pull half of nourish, J3): pull
+    /// the tag, compare the image ID the offering would now run against
+    /// what it ran before. Returns old and new IDs; `changed` says
+    /// whether an update exists. `None` when this world cannot check.
+    async fn refresh_image(
+        &self,
+        _image: &str,
+    ) -> Option<Result<super::runtime::ImageRefresh, super::runtime::RuntimeError>> {
+        None
+    }
+
     /// Rehearse a workload in isolation: create WITHOUT published ports,
     /// start, hold for `wait_secs`, observe the fate, remove. The proof
     /// loop of restore rehearsal (J2) — does the restored data boot?
@@ -109,6 +120,15 @@ pub struct LogLine {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+}
+
+/// The result of refreshing one image reference: the IDs before and
+/// after the pull, and whether anything changed.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImageRefresh {
+    pub changed: bool,
+    /// The image ID the tag resolves to AFTER the pull.
+    pub id: String,
 }
 
 /// A long-lived logs stream: history first, then follow.

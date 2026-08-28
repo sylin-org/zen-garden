@@ -7,6 +7,45 @@ past a rule silently.
 
 ---
 
+## THE SLICE MANDATE — how every piece of work begins
+
+*"Let's work on this" is a mandate to research first.* Before a line of
+design or code, every slice — new feature, port, or a fix that touches a
+surface — walks five gates, in order, and records the walk (a verdict sheet
+in the slice's design note, PR, or commit message):
+
+1. **Prior art.** How do other solutions tackle this? Name the standard, the
+   successful product, the failed one. What do they promise the user, and
+   what does the approach cost them?
+2. **The PoC.** How did *we* already try this? Read the inventoried surfaces
+   (`../inventory/poc-*.yaml`) and the PoC source itself, file:line. State
+   the **objective** — the promise the feature made its user — separately
+   from the mechanism. The PoC is a prior experiment, not a spec: its wins
+   are evidence, its stubs are warnings, its fiction is a debt log.
+3. **The house.** Why did we do it this way? Check the lessons, ADRs, DEBT,
+   witnesses, and prior verdicts before overruling anything. A lesson is
+   bypassed only in writing (header rule).
+4. **Design.** Only now shape v1 — fulfill the *objective* with a leaner,
+   streamlined architecture. DDD to the letter: aggregates own their state
+   and invariants (R0.2), dependencies run one way (R0.3), and complexity
+   lives at the seams — wire, media, device, the edge — never spread
+   through the domain. Complexity that cannot find a seam must justify
+   itself in the design note or be cut.
+5. **Verdicts.** Every PoC element the slice touches is **brought**,
+   **brought reshaped**, **deferred**, or **left dead** — with a name on
+   the decision. Silently absent is a defect, not a decision.
+
+Then witness: the objective from gate 2 becomes an assertion, tested in
+deployment reality — including the mid-cycle joiner (a restart, a deploy, a
+newcomer stone), because that is how features actually arrive in the field.
+
+*(Born 2026-08-28: the storage data-plane slice was built stone-local,
+dropped the PoC manifest's roles field, and missed the room's convergence
+wound — all three recorded in the inventories and the bring-assessment,
+none consulted before the code.)*
+
+---
+
 ## P0 — Shape: a modular monolith
 
 **R0.1** One deploy unit per stone. Processes exist only at *machine* boundaries:

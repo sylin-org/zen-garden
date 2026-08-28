@@ -444,6 +444,7 @@ mod tests {
         storage
             .adopt(
                 &crate::offerings::storage::VolumeFact {
+                    roles: Vec::new(),
                     mount_point: std::path::PathBuf::from("E:\\"),
                     device_id: None,
                     fqn: None,

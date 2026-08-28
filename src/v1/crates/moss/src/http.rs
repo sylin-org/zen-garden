@@ -1629,6 +1629,7 @@ mod tests {
             .storage
             .adopt(
                 &crate::offerings::storage::VolumeFact {
+                    roles: Vec::new(),
                     mount_point: std::path::PathBuf::from("E:\\tmp-adopt"),
                     device_id: None,
                     fqn: None,
@@ -1664,6 +1665,7 @@ mod tests {
             .storage
             .adopt(
                 &crate::offerings::storage::VolumeFact {
+                    roles: Vec::new(),
                     mount_point: std::path::PathBuf::from("E:\\tmp-eject"),
                     device_id: None,
                     fqn: None,
@@ -1700,6 +1702,7 @@ mod tests {
             .storage
             .adopt(
                 &crate::offerings::storage::VolumeFact {
+                    roles: Vec::new(),
                     mount_point: tmp.clone(),
                     device_id: None,
                     fqn: None,
@@ -1914,6 +1917,7 @@ mod tests {
             .storage
             .adopt(
                 &crate::offerings::storage::VolumeFact {
+                    roles: Vec::new(),
                     mount_point: tmp.clone(),
                     device_id: None,
                     fqn: None,

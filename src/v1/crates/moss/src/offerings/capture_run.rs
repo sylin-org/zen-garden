@@ -1196,19 +1196,21 @@ capture:
         std::fs::create_dir_all(&tmp).unwrap();
         let (hooks, _) = Scripted::recording();
         let storage = Arc::new(Storage::new());
-        // A mounted bank granted the sink role (ADR-0005 §4).
+        // A mounted bank granted the sink role (ADR-0005 §4) - adopted
+        // for real: the ceremony writes the record the declaration amends.
         let vol = crate::offerings::storage::VolumeFact {
             mount_point: tmp.join("sink-bank"),
-            device_id: Some("dev-sink".into()),
-            fqn: Some("seed-vault::default".into()),
+            device_id: None,
+            fqn: None,
+            roles: Vec::new(),
             capacity_bytes: 1_000_000,
             available_bytes: 900_000,
         };
         std::fs::create_dir_all(&vol.mount_point).unwrap();
-        storage.reconcile(&[vol]);
+        storage.adopt(&vol, "seed-vault", "stone-1").unwrap();
         storage
             .set_roles(
-                "seed-vault::default",
+                "seed-vault",
                 vec![garden_glossary::bank::role::SINK.into()],
             )
             .unwrap()
@@ -1251,23 +1253,25 @@ async fn replant_restores_the_incarnation_from_a_checkpoint() {
     let tmp = std::env::temp_dir().join(format!("zg-replant-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&tmp).unwrap();
 
-    // The stone: registry + directories + a mounted SINK bank.
+    // The stone: registry + directories + a mounted SINK bank, adopted
+    // for real (the ceremony writes the record declarations amend).
     let store = DirectoryStore::new(tmp.join("offerings"));
     let registry = Arc::new(Registry::new(Arc::new(store)));
     let storage = Arc::new(Storage::new());
     let sink_mount = tmp.join("sink-bank");
     let vol = VolumeFact {
         mount_point: sink_mount.clone(),
-        device_id: Some("dev-sink".into()),
-        fqn: Some("seed-vault::default".into()),
+        device_id: None,
+        fqn: None,
+        roles: Vec::new(),
         capacity_bytes: 1_000_000,
         available_bytes: 900_000,
     };
     std::fs::create_dir_all(&sink_mount).unwrap();
-    storage.reconcile(&[vol]);
+    storage.adopt(&vol, "seed-vault", "stone-1").unwrap();
     storage
         .set_roles(
-            "seed-vault::default",
+            "seed-vault",
             vec![garden_glossary::bank::role::SINK.into()],
         )
         .unwrap()

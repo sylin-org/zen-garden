@@ -31,6 +31,9 @@ pub const MANIFEST_DIR: &str = ".zen-garden";
 pub const MANIFEST_FILE: &str = "manifest.json";
 
 /// The adoption manifest, riding the device (STORAGE-0009 dotfolder law).
+/// Roles ride it too — the PoC's manifest carried `roles: []` and v1
+/// keeps the field: a declaration that dies with a moss restart was a
+/// silent lie (L3/L5 — the media is the record).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BankManifest {
     /// Physical device identity (GUIDv7, minted at first adoption).
@@ -43,6 +46,10 @@ pub struct BankManifest {
     pub adopted_at: chrono::DateTime<chrono::Utc>,
     /// Schema marker.
     pub proto: String,
+    /// Declared duties (sink today). Absent on older records; written
+    /// always, PoC-style.
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
 /// A bank as this stone holds it.
@@ -77,6 +84,8 @@ pub struct VolumeFact {
     pub device_id: Option<String>,
     /// The bank's logical name — present iff a manifest rides it.
     pub fqn: Option<String>,
+    /// The roles the media holds — L5: declarations travel with the drive.
+    pub roles: Vec<String>,
     pub capacity_bytes: u64,
     pub available_bytes: u64,
 }
@@ -174,6 +183,13 @@ impl Storage {
     /// Declare a bank's roles (§4: sink today; the set grows with the
     /// tiers). Role news is state news - it bumps. Unknown roles refuse
     /// loudly (L12 - the glossary speaks once, everywhere).
+    /// Declare a bank's roles (§4: sink today; the set grows with the
+    /// tiers). Write-through: the declaration is real when the MEDIA
+    /// holds it — the manifest is amended and rewritten before memory
+    /// moves, so a moss restart (or another stone) hears the same
+    /// duties. A refused write refuses the declaration loudly (L3: a
+    /// sink that silently dies at restart is a lie). Role news is state
+    /// news - it bumps. Unknown roles refuse loudly (L12).
     pub fn set_roles(&self, fqn: &str, roles: Vec<String>) -> Result<Option<Bank>, String> {
         for r in &roles {
             if !garden_glossary::bank::role::ALL.contains(&r.as_str()) {
@@ -190,6 +206,23 @@ impl Storage {
         let Some(bank) = banks.get_mut(&canonical) else {
             return Ok(None);
         };
+        if bank.state != vocab::MOUNTED {
+            return Err(format!(
+                "'{canonical}' is ejected - its volume does not answer; a declaration needs the media"
+            ));
+        }
+        let mount = PathBuf::from(&bank.mount_point);
+        // Read-amend-write: the manifest holds the ceremony's truth
+        // (stone_id, adopted_at) and must not be forged from memory.
+        let mut manifest = read_manifest(&mount).ok_or_else(|| {
+            format!(
+                "'{canonical}' carries no readable adoption record on its media - roles live \
+                 on the drive (R0.5); re-adopt or repair the drive"
+            )
+        })?;
+        manifest.roles = roles.clone();
+        write_manifest(&mount, &manifest)
+            .map_err(|e| format!("the media refused the declaration: {e}"))?;
         bank.roles = roles;
         let updated = bank.clone();
         drop(banks);
@@ -212,14 +245,10 @@ impl Storage {
             stone_id: stone_id.to_string(),
             adopted_at: chrono::Utc::now(),
             proto: garden_contract::consts::PROTO_V1.into(),
+            roles: Vec::new(),
         };
-        let dir = vol.mount_point.join(MANIFEST_DIR);
-        std::fs::create_dir_all(&dir).map_err(|e| AdoptError::Io(format!("{}: {e}", dir.display())))?;
-        let file = dir.join(MANIFEST_FILE);
-        let bytes = serde_json::to_vec_pretty(&manifest)
-            .map_err(|e| AdoptError::Io(format!("encode: {e}")))?;
-        std::fs::write(&file, bytes)
-            .map_err(|e| AdoptError::Io(format!("{}: {e}", file.display())))?;
+        write_manifest(&vol.mount_point, &manifest)
+            .map_err(AdoptError::Io)?;
 
         let bank = Bank {
             fqn,
@@ -293,6 +322,13 @@ impl Storage {
                         }
                         bank.capacity_bytes = Some(vol.capacity_bytes);
                         bank.used_bytes = Some(used);
+                        // The media is the record (L5): roles travel with
+                        // the drive, so a re-plug — or a drive moved from
+                        // another stone — re-voices its duties here.
+                        if bank.roles != vol.roles {
+                            bank.roles = vol.roles.clone();
+                            changed = true;
+                        }
                     }
                     None => {
                         tracing::info!(bank = %fqn, "recognized an adopted bank at boot/plug-in");
@@ -302,7 +338,7 @@ impl Storage {
                                 fqn: fqn.clone(),
                                 device_id: device_id.clone(),
                                 state: vocab::MOUNTED.into(),
-                                roles: Vec::new(),
+                                roles: vol.roles.clone(),
                                 mount_point: vol.mount_point.display().to_string(),
                                 capacity_bytes: Some(vol.capacity_bytes),
                                 used_bytes: Some(used),
@@ -597,13 +633,34 @@ fn read_manifest(mount: &Path) -> Option<BankManifest> {
         origin = poc["origin_stone"].as_str().unwrap_or("?"),
         "recognized a PoC-era bank manifest; its lineage rides along"
     );
+    let roles = poc["roles"]
+        .as_array()
+        .map(|r| {
+            r.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
     Some(BankManifest {
         device_id,
         fqn,
         stone_id: poc["origin_stone"].as_str().unwrap_or("unknown").to_string(),
         adopted_at,
         proto: format!("poc/{}", poc["version"].as_u64().unwrap_or(4)),
+        roles,
     })
+}
+
+/// Write the adoption record onto the media (STORAGE-0009). The record
+/// is the contract: identity AND duties (roles) ride it, so a restart,
+/// a re-plug, or another stone hears the same truth (L5/R0.5).
+fn write_manifest(mount: &Path, manifest: &BankManifest) -> Result<(), String> {
+    let dir = mount.join(MANIFEST_DIR);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let file = dir.join(MANIFEST_FILE);
+    let bytes =
+        serde_json::to_vec_pretty(manifest).map_err(|e| format!("encode: {e}"))?;
+    std::fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))
 }
 
 /// Scan removable volumes (the edge: sysinfo refresh). Returns facts for
@@ -620,6 +677,7 @@ pub fn scan_volumes() -> Vec<VolumeFact> {
         out.push(VolumeFact {
             device_id: manifest.as_ref().map(|m| m.device_id.clone()),
             fqn: manifest.as_ref().map(|m| m.fqn.clone()),
+            roles: manifest.as_ref().map(|m| m.roles.clone()).unwrap_or_default(),
             capacity_bytes: d.total_space(),
             available_bytes: d.available_space(),
             mount_point: mount,
@@ -654,6 +712,7 @@ mod tests {
             mount_point: PathBuf::from(mount),
             device_id: adopted.then(|| "dev-1".to_string()),
             fqn: adopted.then(|| "seed-vault::default".to_string()),
+            roles: Vec::new(),
             capacity_bytes: 1000,
             available_bytes: 400,
         }
@@ -711,6 +770,7 @@ mod tests {
 
         let vol = vol(tmp.to_str().unwrap(), false);
         let vol = VolumeFact {
+            roles: Vec::new(),
             device_id: Some("019cd3c0-fe39-7dd0-a8f8-3c805a0a23aa".into()),
             fqn: Some("seed-gentle-valley::default".into()),
             ..vol
@@ -762,6 +822,112 @@ mod tests {
             .unwrap();
         assert_eq!(bank.roles, vec![garden_glossary::bank::role::SINK]);
         assert_ne!(*signal.borrow(), before, "role news is state news");
+    }
+
+    /// The declaration is WRITE-THROUGH (the trap the live room taught):
+    /// declaring roles amends the manifest ON THE MEDIA, so a moss
+    /// restart — a fresh Storage reconciling the same volume — hears the
+    /// same duties. Roles travel with the drive (L5), PoC lineage too.
+    #[test]
+    fn roles_ride_the_media_and_survive_a_restart() {
+        let tmp = std::env::temp_dir().join(format!("zg-roles-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let storage = Storage::new();
+        storage
+            .adopt(
+                &VolumeFact {
+                    mount_point: tmp.clone(),
+                    device_id: None,
+                    fqn: None,
+                    roles: Vec::new(),
+                    capacity_bytes: 1_000_000,
+                    available_bytes: 900_000,
+                },
+                "seed-vault",
+                "stone-1",
+            )
+            .unwrap();
+
+        storage
+            .set_roles("seed-vault", vec![garden_glossary::bank::role::SINK.into()])
+            .unwrap()
+            .unwrap();
+        // The media holds it.
+        let manifest: BankManifest = serde_json::from_slice(
+            &std::fs::read(tmp.join(MANIFEST_DIR).join(MANIFEST_FILE)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.roles, vec![garden_glossary::bank::role::SINK]);
+        assert_eq!(manifest.fqn, "seed-vault::default", "lineage preserved");
+
+        // A restart: a fresh Storage scans the same volume — the scan
+        // reads the manifest's roles, reconcile seats the bank WITH its
+        // duties. No re-declaration, no silent sink loss.
+        let rescanned = VolumeFact {
+            device_id: Some(manifest.device_id.clone()),
+            fqn: Some(manifest.fqn.clone()),
+            roles: manifest.roles.clone(),
+            capacity_bytes: 1_000_000,
+            available_bytes: 900_000,
+            mount_point: tmp.clone(),
+        };
+        let restarted = Storage::new();
+        restarted.reconcile(&[rescanned]);
+        let banks = restarted.banks();
+        assert_eq!(banks.len(), 1);
+        assert_eq!(
+            banks[0].roles,
+            vec![garden_glossary::bank::role::SINK],
+            "the declaration survived the restart"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A declaration needs the media: an ejected bank refuses (its
+    /// volume does not answer), and a bank whose record vanished from
+    /// the media refuses rather than pretending (L3/L7).
+    #[test]
+    fn declarations_refuse_without_the_media() {
+        let tmp = std::env::temp_dir().join(format!("zg-roles2-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let storage = Storage::new();
+        // Adopted for real: the ceremony wrote the record on the media.
+        storage
+            .adopt(
+                &VolumeFact {
+                    mount_point: tmp.clone(),
+                    device_id: None,
+                    fqn: None,
+                    roles: Vec::new(),
+                    capacity_bytes: 1000,
+                    available_bytes: 400,
+                },
+                "seed-vault",
+                "stone-1",
+            )
+            .unwrap();
+
+        // Ejected: no volume answers, no declaration.
+        storage.eject("seed-vault").unwrap();
+        let err = storage
+            .set_roles("seed-vault", vec![garden_glossary::bank::role::SINK.into()])
+            .unwrap_err();
+        assert!(err.contains("ejected"), "{err}");
+
+        // Record gone: the manifest is the record; without it, refuse.
+        // (The return from the void releases the operator's hold: the
+        // drive is back, mounted, with its record missing.)
+        storage.reconcile(&[]);
+        storage.reconcile(&[vol(tmp.to_str().unwrap(), true)]);
+        std::fs::remove_file(tmp.join(MANIFEST_DIR).join(MANIFEST_FILE)).unwrap();
+        let err = storage
+            .set_roles("seed-vault", vec![garden_glossary::bank::role::SINK.into()])
+            .unwrap_err();
+        assert!(
+            err.contains("no readable adoption record"),
+            "the refusal teaches: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// The eject laws: eject announces and holds the same slot; a vanish
@@ -879,6 +1045,7 @@ mod tests {
         storage
             .adopt(
                 &VolumeFact {
+                    roles: Vec::new(),
                     mount_point: tmp.clone(),
                     device_id: None,
                     fqn: None,
@@ -931,6 +1098,7 @@ mod tests {
         storage
             .adopt(
                 &VolumeFact {
+                    roles: Vec::new(),
                     mount_point: tmp.clone(),
                     device_id: None,
                     fqn: None,
@@ -974,6 +1142,7 @@ mod tests {
         storage
             .adopt(
                 &VolumeFact {
+                    roles: Vec::new(),
                     mount_point: tmp.clone(),
                     device_id: None,
                     fqn: None,

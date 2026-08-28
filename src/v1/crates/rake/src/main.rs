@@ -542,13 +542,14 @@ impl Cli {
     }
 
     /// Run ONE raw-bytes request against the first moss that answers —
-    /// the file verbs' front door, the same cascade and halt law as
-    /// [`Cli::stone_op`]. Files can be big: the mutation budget rides
-    /// reads as well as writes (one wide budget, P1).
+    /// the raw transport behind [`Cli::bank_bytes`]. Files can be big:
+    /// the mutation budget rides reads as well as writes (one wide
+    /// budget, P1).
     async fn stone_bytes(
         &self,
         method: &'static str,
         path: String,
+        content_type: &'static str,
         body: Option<Vec<u8>>,
     ) -> Result<(Candidate, u16, Vec<u8>), String> {
         let owned = body;
@@ -562,7 +563,7 @@ impl Cli {
                     cand.ip,
                     cand.http_port,
                     &path,
-                    Some("application/octet-stream"),
+                    Some(content_type),
                     body.as_deref(),
                     MUTATION_HTTP_TIMEOUT,
                 )
@@ -583,15 +584,17 @@ impl Cli {
         &self,
         method: &'static str,
         path: String,
+        content_type: &'static str,
         body: Option<Vec<u8>>,
     ) -> Result<(Candidate, u16, Vec<u8>), String> {
+        let owned = body;
         let (cand, status, bytes) =
-            self.stone_bytes(method, path.clone(), body.clone()).await?;
+            self.stone_bytes(method, path.clone(), content_type, owned.clone()).await?;
         let Some(home) = not_here_home(status, &bytes) else {
             return Ok((cand, status, bytes));
         };
         eprintln!("rake: the bank grows elsewhere - asking {home}");
-        let (status, bytes) = reissue_at_home(method, &home, &path, body.as_deref()).await?;
+        let (status, bytes) = reissue_at_home(method, &home, &path, content_type, owned.as_deref()).await?;
         Ok((cand, status, bytes))
     }
 }
@@ -626,6 +629,7 @@ async fn reissue_at_home(
     method: &str,
     home: &str,
     path: &str,
+    content_type: &str,
     body: Option<&[u8]>,
 ) -> Result<(u16, Vec<u8>), String> {
     let (ip, port) = parse_http_home(home)?;
@@ -634,7 +638,7 @@ async fn reissue_at_home(
         ip,
         port,
         path,
-        Some("application/octet-stream"),
+        Some(content_type),
         body,
         MUTATION_HTTP_TIMEOUT,
     )
@@ -827,7 +831,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
         }
         Some(StorageCmd::Files { bank, path, depth }) => {
             let target = paths::storage_files(bank, path.as_deref(), depth.as_deref());
-            let (_, status, body) = cli.bank_bytes("GET", target, None).await?;
+            let (_, status, body) = cli.bank_bytes("GET", target, "application/octet-stream", None).await?;
             if status != 200 {
                 return Err(raw_refusal(status, &body));
             }
@@ -844,6 +848,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
                 .bank_bytes(
                     "PATCH",
                     paths::storage_file(bank, from),
+                    "application/json",
                     Some(serde_json::to_vec(&body).map_err(|e| e.to_string())?),
                 )
                 .await?;
@@ -862,7 +867,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
             // The file IS the output — --json has nothing to re-render,
             // so the raw bytes ride to --out or stdout untouched.
             let (_, status, bytes) =
-                cli.bank_bytes("GET", paths::storage_file(bank, path), None).await?;
+                cli.bank_bytes("GET", paths::storage_file(bank, path), "application/octet-stream", None).await?;
             if status != 200 {
                 return Err(raw_refusal(status, &bytes));
             }
@@ -883,7 +888,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
         Some(StorageCmd::Put { bank, path, file }) => {
             let bytes = read_local(file)?;
             let (_, status, body) = cli
-                .bank_bytes("PUT", paths::storage_file(bank, path), Some(bytes))
+                .bank_bytes("PUT", paths::storage_file(bank, path), "application/octet-stream", Some(bytes))
                 .await?;
             if status != 200 {
                 return Err(raw_refusal(status, &body));
@@ -904,7 +909,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
         }
         Some(StorageCmd::Rm { bank, path }) => {
             let (_, status, body) =
-                cli.bank_bytes("DELETE", paths::storage_file(bank, path), None).await?;
+                cli.bank_bytes("DELETE", paths::storage_file(bank, path), "application/octet-stream", None).await?;
             if status != 200 {
                 return Err(raw_refusal(status, &body));
             }
@@ -1788,6 +1793,7 @@ mod tests {
             "GET",
             &home,
             "/api/v1/storage/seed-vault%3A%3Adefault/files/x.txt",
+            "application/octet-stream",
             None,
         )
         .await

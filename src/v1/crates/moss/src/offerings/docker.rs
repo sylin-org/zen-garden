@@ -249,6 +249,106 @@ impl Runtime for DockerRuntime {
         Some(Observed { running, named_host_ports })
     }
 
+    async fn rehearse_run(
+        &self,
+        name: &str,
+        spec: &super::model::WorkloadSpec,
+        volumes_root: &std::path::Path,
+        wait_secs: u64,
+    ) -> Option<super::runtime::RehearsalFate> {
+        use bollard::container::{Config, CreateContainerOptions};
+        use bollard::models::HostConfig;
+        let full = format!("zen-rehearsal-{}", Self::container_name(name).trim_start_matches(crate::offerings::docker::CONTAINER_PREFIX));
+
+        // No exposed ports, no bindings: a rehearsal never publishes or
+        // collides — it boots restored data and speaks to no one.
+        let binds: Vec<String> = spec
+            .volumes
+            .iter()
+            .map(|v| {
+                let vol_name = std::path::Path::new(&v.host_path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| v.host_path.clone());
+                format!("{}:{}:rw", volumes_root.join(vol_name).display(), v.container_path)
+            })
+            .collect();
+        let cfg_files: Vec<String> = spec
+            .config_files
+            .keys()
+            .map(|cpath| {
+                format!(
+                    "{}:{}:ro",
+                    volumes_root.join(".config").join(cpath.replace('/', "_")).display(),
+                    cpath
+                )
+            })
+            .collect();
+
+        let config = Config {
+            image: Some(spec.image.clone()),
+            env: Some(spec.env.iter().map(|(k, v)| format!("{k}={v}")).collect()),
+            host_config: Some(HostConfig {
+                binds: Some([binds, cfg_files].concat()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // A stale rehearsal container from a crashed run never blocks the
+        // proof: force-remove before create.
+        let _ = self
+            .docker
+            .remove_container(&full, Some(bollard::container::RemoveContainerOptions { force: true, ..Default::default() }))
+            .await;
+        self.docker
+            .create_container(
+                Some(CreateContainerOptions { name: full.clone(), platform: None }),
+                config,
+            )
+            .await
+            .map_err(|e| super::runtime::RuntimeError::Failed(format!("create {full}: {e}")))
+            .ok()?;
+        if let Err(e) = self.docker.start_container::<String>(&full, None).await {
+            let _ = self.docker.remove_container(&full, Some(bollard::container::RemoveContainerOptions { force: true, ..Default::default() })).await;
+            return Some(super::runtime::RehearsalFate {
+                stayed_running: false,
+                state: format!("start-failed: {e}"),
+                exit_code: None,
+                ran_secs: 0,
+            });
+        }
+
+        // Hold the window, sampling: a container that dies mid-window is
+        // red immediately — no point waiting out the clock.
+        let started = std::time::Instant::now();
+        let mut stayed_running = true;
+        let mut state = "running".to_string();
+        let mut exit_code = None;
+        while std::time::Instant::now().duration_since(started).as_secs() < wait_secs {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if let Ok(inspect) = self.docker.inspect_container(&full, None).await {
+                let s = inspect.state.unwrap_or_default();
+                if !s.running.unwrap_or(false) {
+                    stayed_running = false;
+                    state = "exited".into();
+                    exit_code = s.exit_code;
+                    break;
+                }
+            }
+        }
+        let ran_secs = started.elapsed().as_secs();
+        let fate = super::runtime::RehearsalFate { stayed_running, state, exit_code, ran_secs };
+
+        // The proof never lingers: the rehearsal container is removed
+        // whatever the verdict.
+        let _ = self
+            .docker
+            .remove_container(&full, Some(bollard::container::RemoveContainerOptions { force: true, ..Default::default() }))
+            .await;
+        Some(fate)
+    }
+
     async fn list(&self) -> Vec<super::runtime::PlacedRef> {
         let opts: ListContainersOptions<String> = ListContainersOptions {
             all: true,

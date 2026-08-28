@@ -127,6 +127,11 @@ impl Runner {
     }
 
     /// The last known run of an offering, if any (surfaced by GET faces).
+    /// The capture workspace root — scratch lives beside it.
+    pub fn workspace_root(&self) -> &std::path::Path {
+        &self.workspace_root
+    }
+
     pub fn last_run(&self, fqn: &str) -> Option<RunInfo> {
         self.runs.lock().get(fqn).cloned()
     }

@@ -84,6 +84,20 @@ pub trait Runtime: Send + Sync {
     ) -> Option<LogStream> {
         None
     }
+
+    /// Rehearse a workload in isolation: create WITHOUT published ports,
+    /// start, hold for `wait_secs`, observe the fate, remove. The proof
+    /// loop of restore rehearsal (J2) — does the restored data boot?
+    /// Returns `None` when this world cannot rehearse (the null world).
+    async fn rehearse_run(
+        &self,
+        _name: &str,
+        _spec: &super::model::WorkloadSpec,
+        _volumes_root: &std::path::Path,
+        _wait_secs: u64,
+    ) -> Option<RehearsalFate> {
+        None
+    }
 }
 
 /// One log line as the wire wants it: which channel spoke, what it said,
@@ -100,6 +114,19 @@ pub struct LogLine {
 /// A long-lived logs stream: history first, then follow.
 pub type LogStream =
     std::pin::Pin<Box<dyn futures::Stream<Item = Result<LogLine, String>> + Send>>;
+
+/// How a rehearsal container fared (the J2 proof loop's raw material).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RehearsalFate {
+    /// The container stayed up the whole wait window without dying.
+    pub stayed_running: bool,
+    /// Docker's state string after the wait (running / exited / ...).
+    pub state: String,
+    /// The container's exit code, when it exited.
+    pub exit_code: Option<i64>,
+    /// Seconds the container actually ran.
+    pub ran_secs: u64,
+}
 
 /// A lightweight row for listings.
 #[derive(Debug, Clone, PartialEq, Eq)]

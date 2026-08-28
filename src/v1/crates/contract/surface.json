@@ -127,6 +127,12 @@
       "summary": "Replant from a checkpoint {run?}: verify, restore the directory, place from the stored spec - same FQN, same connection strings (ADR-0005 §6)."
     },
     {
+      "face": "OfferingRehearse",
+      "method": "POST",
+      "path": "/api/v1/offerings/{fqn}/rehearse",
+      "summary": "Restore rehearsal (J2): boot the newest checkpoint in isolation - no ports, no registry - hold the window, report green/red, clean up."
+    },
+    {
       "face": "JobList",
       "method": "GET",
       "path": "/api/v1/jobs",

@@ -422,6 +422,8 @@ impl OfferingService {
     /// Follow an offering's logs through its bound world. `None` when
     /// the offering is not placed here or its world cannot stream logs
     /// (the null world opts out at its own seam).
+    /// Follow an offering's logs through its bound world. `None` when
+    /// the offering is not placed here or its world cannot stream logs.
     pub fn logs_stream(
         &self,
         name: &str,

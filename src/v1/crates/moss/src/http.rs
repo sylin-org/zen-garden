@@ -20,6 +20,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// How long a rehearsal container is held before the verdict (J2):
+/// long enough for a restored service to reveal a crash-loop, short
+/// enough to keep the mutation budget honest.
+const REHEARSE_WAIT_SECS: u64 = 15;
+
 /// Shared state behind the routes.
 pub struct AppState {
     /// The offering application service (domain + worlds coordinated).
@@ -75,6 +80,7 @@ fn method_router(face: Face) -> axum::routing::MethodRouter<Arc<AppState>> {
             Face::OfferingLogsStream => get(offering_logs_stream),
             Face::OfferingCaptureLast => get(capture_last),
             Face::OfferingReplant => post(replant_offer),
+            Face::OfferingRehearse => post(rehearse_offer),
             Face::Portrait => get(portrait),
             Face::Root => get(root),
             Face::JobList => get(job_list),
@@ -1262,6 +1268,47 @@ async fn show_offering(
         }
         None => Err(CommandError::NotFound(fqn).into()),
     }
+}
+
+/// Restore rehearsal (J2): boot the newest checkpoint in isolation and
+/// report green/red. The proof never touches the live offering, never
+/// publishes a port, and never lingers — container and scratch removed
+/// whatever the verdict.
+async fn rehearse_offer(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    let fqn = garden_glossary::fqn::canonicalize(&name)
+        .map_err(|e| CommandError::Conflict(e.to_string()))?;
+    let offering = state
+        .garden
+        .placed(&fqn)
+        .ok_or(CommandError::NotFound(format!("'{}' is not planted here", fqn)))?;
+    let Some(managed) = offering.managed() else {
+        return Err(ApiError(CommandError::Conflict(format!(
+            "'{fqn}' is not managed by the garden - rehearsal replays a capture, and adopted work has none"
+        ))));
+    };
+
+    let world = state.garden.world_for(&offering)?;
+    let spec = managed.spec.clone();
+    let deps = crate::offerings::rehearse::RehearsalDeps {
+        world,
+        select_checkpoint: {
+            let runner = Arc::clone(&state.capture);
+            let fqn = fqn.clone();
+            Box::new(move |_| runner.select_checkpoint(&fqn, None))
+        },
+        restore_into: {
+            let runner = Arc::clone(&state.capture);
+            Box::new(move |cp, dir| runner.restore_into(cp, dir))
+        },
+    };
+    let scratch_root = state.capture.workspace_root().join("rehearsals");
+    let report = crate::offerings::rehearse::rehearse(
+        &fqn, &spec, deps, &scratch_root, REHEARSE_WAIT_SECS,
+    ).await;
+    Ok(Json(serde_json::json!({ "data": { "rehearsal": report } })))
 }
 
 /// The living will's surfacing for one offering (L3: never silent).

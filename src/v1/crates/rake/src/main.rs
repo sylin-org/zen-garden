@@ -162,6 +162,12 @@ enum Command {
         #[arg(long)]
         filter: Option<String>,
     },
+    /// Prove the safety net: boot <name>'s newest checkpoint in isolation
+    /// (no ports, no registry) and report green/red.
+    Rehearse {
+        /// The offering's name (FQN or bare stem).
+        name: String,
+    },
     /// Ask the garden to make it true: if <name> grows anywhere in the
     /// room, answer where; otherwise plant it here and wait until it
     /// answers (the PoC's --ensure, promoted to a verb).
@@ -1041,6 +1047,12 @@ async fn run(cli: &Cli) -> Result<(), String> {
         | Command::Replant { .. } => cmd_stone_op(cli).await?,
         Command::Storage { cmd } => cmd_storage(cli, cmd.as_ref()).await?,
         Command::Watch { name, cmd } => cmd_watch(cli, name, cmd.as_ref()).await?,
+        Command::Rehearse { name } => {
+            let (_, v) = cli
+                .stone_op("POST", paths::rehearse(name), None)
+                .await?;
+            Answer::new(v).human(|v| render_rehearsal(&envelope_plain(v)?))
+        }
         Command::Ensure { name, timeout } => cmd_ensure(cli, name, *timeout).await?,
         Command::Api { filter } => {
             let needle = filter.as_deref().map(str::to_lowercase);
@@ -1566,6 +1578,40 @@ fn raw_refusal(status: u16, body: &[u8]) -> String {
     }
 }
 
+/// The rehearsal verdict: the proof loop's green/red, spoken plainly.
+fn render_rehearsal(v: &serde_json::Value) -> Result<(), String> {
+    let r = &v["rehearsal"];
+    let name = display_name(r["name"].as_str().unwrap_or("?"));
+    let green = r["green"] == serde_json::json!(true);
+    if green {
+        println!("{name} rehearsal GREEN — the checkpoint boots");
+    } else {
+        println!(
+            "{name} rehearsal RED — {}",
+            r["error"].as_str().unwrap_or("the proof failed")
+        );
+    }
+    println!("  checkpoint  {}", r["checkpoint"].as_str().unwrap_or("-"));
+    let h = r["hash"].as_str().unwrap_or("-");
+    println!(
+        "  restored    {} files, {} bytes, sha {}...",
+        r["files"],
+        r["bytes"],
+        h.get(..8).unwrap_or(h)
+    );
+    println!(
+        "  container   {} ({}s)",
+        r["container_state"].as_str().unwrap_or("-"),
+        r["container_ran_secs"]
+    );
+    if !green {
+        return Err(format!(
+            "{name} failed its restore rehearsal — the safety net is not safe"
+        ));
+    }
+    Ok(())
+}
+
 /// Bytes for human eyes.
 fn human_bytes(n: u64) -> String {
     let units = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -1820,6 +1866,11 @@ mod paths {
     /// The roles declaration's face.
     pub fn storage_roles(bank: &str) -> String {
         format!("{STORAGE}/{}/roles", encode_segment(bank))
+    }
+
+    /// The restore-rehearsal face (J2's proof loop).
+    pub fn rehearse(name: &str) -> String {
+        format!("{OFFERINGS}/{}/rehearse", encode_segment(name))
     }
 
     /// The offering-logs stream face. `tail` and `timestamps` ride as

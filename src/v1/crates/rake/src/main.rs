@@ -60,6 +60,11 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Extract one value via dot notation (implies --json).
+    /// Example: --field 'data.offering.identity.name'
+    #[arg(long, global = true)]
+    field: Option<String>,
+
     /// Discovery UDP port (default is the v1 room).
     #[arg(long, env = "RAKE_DISCOVERY_PORT")]
     discovery_port: Option<u16>,
@@ -488,12 +493,36 @@ impl Cli {
 // Command dispatch and rendering
 // ---------------------------------------------------------------------------
 
+/// Exit codes (R3.3: the process answers with a code, not just a message).
+/// The full vocabulary lands with the typed error refactor; GENERAL is
+/// wired now, the rest are declared so callers can plan against them.
+mod exit {
+    pub const GENERAL: i32 = 1;
+    /// Not yet wired: arrives with typed errors carrying their own code.
+    #[allow(dead_code)]
+    pub const NOT_FOUND: i32 = 2;
+    /// Not yet wired: same.
+    #[allow(dead_code)]
+    pub const CONFLICT: i32 = 3;
+    /// Not yet wired: same.
+    #[allow(dead_code)]
+    pub const UNAVAILABLE: i32 = 4;
+}
+
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    // --field implies JSON mode: you cannot extract from a table.
+    if cli.field.is_some() {
+        cli.json = true;
+    }
     if let Err(msg) = run(&cli).await {
-        eprintln!("rake: {msg}");
-        std::process::exit(1);
+        if cli.json {
+            println!("{}", serde_json::json!({ "error": { "message": msg } }));
+        } else {
+            eprintln!("rake: {msg}");
+        }
+        std::process::exit(exit::GENERAL);
     }
 }
 
@@ -504,7 +533,7 @@ async fn run(cli: &Cli) -> Result<(), String> {
                 .stone_op("GET", paths::OFFERINGS.to_string(), None)
                 .await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             render_list(&envelope_plain(&v)?)
         }
@@ -513,7 +542,7 @@ async fn run(cli: &Cli) -> Result<(), String> {
             if cli.json {
                 let arr = serde_json::to_value(&stones)
                     .map_err(|e| format!("could not render json: {e}"))?;
-                emit_pretty(&arr)
+                emit_output(&arr, cli)
             } else {
                 print_table(&stones);
                 Ok(())
@@ -549,7 +578,7 @@ async fn run(cli: &Cli) -> Result<(), String> {
                     if cli.json {
                         let arr = serde_json::to_value(&stones)
                             .map_err(|e| format!("could not render json: {e}"))?;
-                        emit_pretty(&arr)
+                        emit_output(&arr, cli)
                     } else {
                         print_table(&stones);
                         Ok(())
@@ -571,7 +600,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
         None => {
             let (_, v) = cli.stone_op("GET", paths::STORAGE.to_string(), None).await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             render_storage(&envelope_plain(&v)?)
         }
@@ -581,7 +610,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
                 .stone_op("POST", paths::storage_roles(bank), Some(&body))
                 .await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             let b = envelope(&v, "bank")?;
             println!(
@@ -603,7 +632,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
                 .stone_op("GET", paths::STORAGE_GARDEN.to_string(), None)
                 .await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             render_garden_storage(&envelope_plain(&v)?)
         }
@@ -612,7 +641,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
                 .stone_op("POST", paths::storage_eject(bank), None)
                 .await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             let b = envelope(&v, "bank")?;
             println!(
@@ -627,7 +656,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
                 .stone_op("POST", paths::STORAGE_ADOPT.to_string(), Some(&body))
                 .await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             let bank = envelope(&v, "bank")?;
             println!(
@@ -773,14 +802,14 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
 
             let (target, v) = cli.stone_op("POST", paths::record(name), Some(&body.into())).await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             render_offered(&target, envelope(&v, "offering")?)
         }
         Command::Explain { name } => {
             let (target, v) = cli.stone_op("GET", paths::record(name), None).await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             let data = envelope_plain(&v)?;
             render_explain(&target, data["offering"].clone(), &data)
@@ -788,7 +817,7 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
         Command::Rest { name } => {
             let (_, v) = cli.stone_op("POST", paths::rest(name), None).await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             render_status("rested", &envelope_plain(&v)?)
         }
@@ -798,7 +827,7 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
                     .stone_op("GET", paths::capture_last(name), None)
                     .await?;
                 if cli.json {
-                    return emit_pretty(&v);
+                    return emit_output(&v, cli);
                 }
                 let run = envelope_plain(&v)?;
                 println!(
@@ -826,7 +855,7 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
                 .stone_op("POST", paths::capture(name), None)
                 .await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             let run = envelope(&v, "run")?;
             println!(
@@ -850,7 +879,7 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
                 )
                 .await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             let o = envelope_plain(&v)?;
             println!(
@@ -869,7 +898,7 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
         Command::Wake { name } => {
             let (_, v) = cli.stone_op("POST", paths::wake(name), None).await?;
             if cli.json {
-                return emit_pretty(&v);
+                return emit_output(&v, cli);
             }
             let data = envelope_plain(&v)?;
             render_status("awake", &data)?;
@@ -883,7 +912,7 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
         Command::Uproot { name } => {
             let (_, v) = cli.stone_op("DELETE", paths::record(name), None).await?;
             if cli.json {
-                emit_pretty(&v)
+                emit_output(&v, cli)
             } else {
                 // Echo what was ACTUALLY uprooted, moniker-displayed.
                 let canonical = v["data"]["name"].as_str().unwrap_or(name);
@@ -957,6 +986,57 @@ fn envelope(v: &serde_json::Value, key: &str) -> Result<serde_json::Value, Strin
         .get(key)
         .cloned()
         .ok_or_else(|| format!("response lacked data.{key}"))
+}
+
+/// Extract one value via dot notation with array indexing.
+/// `"services[0].connection.uris[0]"` walks objects and arrays.
+/// Returns the value as a string (objects/arrays serialize as JSON).
+fn extract_json_field(value: &serde_json::Value, path: &str) -> Option<String> {
+    let mut current = value;
+    for segment in path.split('.') {
+        if let Some(bracket_pos) = segment.find('[') {
+            let field_name = &segment[..bracket_pos];
+            let rest = &segment[bracket_pos..];
+            if !field_name.is_empty() {
+                current = current.get(field_name)?;
+            }
+            let mut chars = rest.chars().peekable();
+            while chars.peek() == Some(&'[') {
+                chars.next();
+                let mut index_str = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c == ']' {
+                        chars.next();
+                        break;
+                    }
+                    index_str.push(c);
+                    chars.next();
+                }
+                let index: usize = index_str.parse().ok()?;
+                current = current.get(index)?;
+            }
+        } else {
+            current = current.get(segment)?;
+        }
+    }
+    match current {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        other => Some(other.to_string()),
+    }
+}
+
+/// Emit the JSON output, or extract one field if --field is set.
+fn emit_output(v: &serde_json::Value, cli: &Cli) -> Result<(), String> {
+    if let Some(path) = &cli.field {
+        let extracted = extract_json_field(v, path).ok_or_else(|| {
+            format!("field '{path}' not found in output")
+        })?;
+        println!("{extracted}");
+        return Ok(());
+    }
+    emit_pretty(v)
 }
 
 fn emit_pretty(v: &serde_json::Value) -> Result<(), String> {

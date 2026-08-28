@@ -187,18 +187,18 @@ async fn main() {
     })
     .await;
 
-    // The offering catalog, DERIVED from a directory tree (no hardcoded
-    // list): MOSS_CATALOG_DIR wins; default ~/.zen-garden/catalog. An
-    // operator's own manifest layer ({data_dir}/manifests by default,
-    // MOSS_CATALOG_OVERLAY_DIR twin) overrides base entries BY NAME.
+    // The offering catalog, layered per ADR-0008: the embedded approved
+    // catalog is the floor (the release tagged what this binary places);
+    // MOSS_CATALOG_DIR / ~/.zen-garden/catalog adds and overrides BY
+    // NAME; the manifests overlay twin is highest. No directory needs to
+    // exist — first light is zero-config.
     let catalog_root = std::env::var_os("MOSS_CATALOG_DIR")
         .map(std::path::PathBuf::from)
         .or_else(|| {
             std::env::var_os("USERPROFILE")
                 .or_else(|| std::env::var_os("HOME"))
                 .map(|h| std::path::PathBuf::from(h).join(".zen-garden").join("catalog"))
-        })
-        .ok_or_else(|| "no home directory known".to_string());
+        });
     let catalog_overlays = std::env::var_os("MOSS_CATALOG_OVERLAY_DIR")
         .map(std::path::PathBuf::from)
         .or_else(|| {
@@ -214,16 +214,13 @@ async fn main() {
         _,
     >("catalog-load", {
         async move {
-            match catalog_root {
-                Ok(root) => Ok(Arc::new(offerings::manifest::Catalog::load_layered(
-                    &root,
-                    &catalog_overlays,
-                ))),
-                Err(e) => {
-                    tracing::warn!(error = %e, "catalog location unknown; empty catalog");
-                    Ok(Arc::new(offerings::manifest::Catalog::default()))
-                }
-            }
+            // ADR-0008 layering: the embedded approved catalog is the
+            // floor; the operator dir and the manifests overlay adjust
+            // by name. No directory needs to exist for first light.
+            Ok(Arc::new(offerings::manifest::Catalog::load_fully_layered(
+                catalog_root.as_deref(),
+                &catalog_overlays,
+            )))
         }
     })
     .await;

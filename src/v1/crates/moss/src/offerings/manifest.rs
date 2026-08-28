@@ -255,6 +255,43 @@ managed:
         assert_eq!(redis.description, "OPERATOR redis");
     }
 
+    /// ADR-0008: the embedded approved catalog is the floor — a moss
+    /// with NO directories boots knowing the approved set; an operator
+    /// layer overrides by name; the floor's other entries survive.
+    #[test]
+    fn embedded_floor_carries_first_light_and_layers_override_by_name() {
+        let catalog = Catalog::load_fully_layered(None, &[]);
+        assert!(
+            catalog.get("memcached").is_some(),
+            "the embedded floor carries the approved set"
+        );
+        assert!(catalog.get("redis").is_some());
+        assert!(catalog.get("mongodb").is_some());
+
+        // The operator layer: same name, different description — the
+        // override wins; a sibling entry is ADDED, not lost.
+        let dir = std::env::temp_dir().join(format!("moss-catalog-emb-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("memcached.offering.yaml"),
+            GOOD.replace("name: redis", "name: memcached")
+                .replace("category: data", "category: cache")
+                .replace("description: In-memory cache", "description: operator's own memcached"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("private.offering.yaml"),
+            GOOD.replace("name: redis", "name: private"),
+        )
+        .unwrap();
+        let layered = Catalog::load_fully_layered(None, std::slice::from_ref(&dir));
+        let mem = layered.get("memcached").unwrap();
+        assert_eq!(mem.description, "operator's own memcached", "override by name");
+        assert!(layered.get("private").is_some(), "operator additions land");
+        assert!(layered.get("redis").is_some(), "floor siblings survive");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// An absent overlay layer is routine (operators mostly run the base).
     #[test]
     fn missing_overlays_are_not_fatal() {
@@ -290,6 +327,12 @@ pub enum CondOp {
 // ---------------------------------------------------------------------------
 // The catalog: every manifest this moss can offer
 // ---------------------------------------------------------------------------
+
+/// The approved catalog, compiled into the binary (ADR-0008 layer 0):
+/// the release tagged what the moss knows how to place.
+#[derive(rust_embed::RustEmbed)]
+#[folder = "../../catalog"]
+struct ApprovedCatalog;
 
 #[derive(Debug, Clone, Default)]
 pub struct Catalog {
@@ -438,6 +481,68 @@ impl Catalog {
             Err(e) => tracing::warn!(error = %e, "manifest skipped"),
         });
         (added, overrode)
+    }
+
+    /// Layer 0 (ADR-0008): the approved catalog, compiled into the
+    /// binary. The floor every moss boots with — the release tagged what
+    /// it knows how to place.
+    fn ingest_embedded(&mut self) -> usize {
+        let mut added = 0usize;
+        for path in ApprovedCatalog::iter() {
+            let path = path.as_ref();
+            let Some(name) = path.rsplit('/').next() else { continue };
+            let Some(stem) = name.strip_suffix(".offering.yaml") else { continue };
+            if let Some(file) = ApprovedCatalog::get(path) {
+                match Self::parse(stem, &String::from_utf8_lossy(&file.data)) {
+                    Ok(m) => {
+                        self.entries.insert(m.name.clone(), m);
+                        added += 1;
+                    }
+                    Err(e) => tracing::warn!(error = %e, "embedded manifest skipped"),
+                }
+            }
+        }
+        added
+    }
+
+    /// The ADR-0008 layering: the embedded approved catalog is the floor;
+    /// the operator catalog dir adds and overrides by name; the manifests
+    /// overlay is highest. The filesystem base is OPTIONAL now — absence
+    /// no longer means an empty garden (the floor carries it). Missing
+    /// layers are noted, never fatal.
+    pub fn load_fully_layered(
+        base: Option<&std::path::Path>,
+        overlays: &[std::path::PathBuf],
+    ) -> Self {
+        let mut catalog = Self::default();
+        let embedded = catalog.ingest_embedded();
+        tracing::info!(offerings = embedded, "embedded approved catalog loaded");
+
+        let mut added = 0usize;
+        let mut overrode = 0usize;
+        if let Some(base) = base {
+            if base.is_dir() {
+                let (a, o) = catalog.ingest_counting(base);
+                added += a;
+                overrode += o;
+            } else {
+                tracing::info!(
+                    root = %base.display(),
+                    "operator catalog absent; the floor carries it"
+                );
+            }
+        }
+        for overlay in overlays {
+            if !overlay.is_dir() {
+                tracing::info!(overlay = %overlay.display(), "overlay absent; nothing applied");
+                continue;
+            }
+            let (a, o) = catalog.ingest_counting(overlay);
+            added += a;
+            overrode += o;
+        }
+        tracing::info!(overlays = overlays.len(), added, overrode, "catalog layers applied");
+        catalog
     }
 
     pub fn get(&self, name: &str) -> Option<&Manifest> {

@@ -182,6 +182,13 @@ pull from their bounded queue, or ignore what isn't theirs. No module owns a
 private socket tapping the wire; no handler is invoked by surprise. Ingress never
 blocks on a slow handler: bounded queues, counted drops, visible in posture (B3).
 
+**R2.10** A moss boots knowing the approved set (ADR-0008): the catalog is
+sourced in LAYERS — the embedded approved catalog is the floor; operator
+directories (`MOSS_CATALOG_DIR`, the manifests overlay) add and override BY
+NAME. Filesystem absence never means an empty garden, and every layer merge
+is logged with honest counts (found / overridden) — a silent merge is a lie
+about which truth is serving.
+
 ## P3 — Semantics and ergonomics: low cognitive load
 
 **R3.1** Code speaks garden. Function names use glossary verbs (`offer`, `rest`,

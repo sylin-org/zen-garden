@@ -23,6 +23,7 @@ parking_lot = "0.12"
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"
+rust-embed = "8"
 sha2 = "0.10"
 sysinfo = "0.33"
 tar = "0.4"

@@ -1,312 +1,130 @@
 # CONTINUATION — read me first, then delete me
 
-Written 2026-08-26 at a planned pause, mid-epic. Updated 2026-08-27: S3
-(songs/rich ask), S4 (candidates), S5 (URI cut), S6 (rake sync), S5.5
-(persistence v3), S7a (storage MVP), S7b (the room's storage grid), S8
-(fleet deploy) + **W6 witnessed** all landed. THE EPIC IS COMPLETE — see
-WITNESSES.md W6 for the live proofs and the three findings it harvested.
-What remains is OUTSIDE that epic: W7 (ADR-0005 capture/replant),
-Lantern, O3 adoption, then the M-milestones.
+Written 2026-08-28 at end of a marathon session. This replaces all prior
+continuation content. Everything below reflects the current tree.
 
-## NEW EPIC OPEN (2026-08-27): the living will (ADR-0005, W7)
+---
 
-Slices 1-4 LANDED — the capture grammar (`offerings/capture.rs`), the
-two-phase pipeline (`offerings/capture_run.rs`, `310a0522`), checkpoint
-verify/unpack + sink-role declaration (`7993233a`), REPLANT
-(`a3553e17`), and surfacing + scheduler (`1c4e6e0e`): Runner.select_checkpoint (local ledger + mounted sink
-banks), restore_into (fresh-target only - refuses to overwrite an
-incarnation), service.replant (place from the STORED spec, no catalog
-needed; audit chain opens Replanted{predecessor_offering_id,
-final_hash}); 1:1 faces POST `/api/v1/offerings/{fqn}/replant` {run?} +
-`rake replant {name} [--run]`; checkpoints now carry events.jsonl (the
-audit ledger rides the will):
-verify_checkpoint proves archive + per-file SHA-256 (tamper = loud
-refusal), unpack_volumes restores traversal-checked volumes fresh,
-latest_checkpoint selects (replant composes all three); Storage::set_roles
-is live with glossary-validated roles — 1:1 faces POST
-`/api/v1/storage/{fqn}/roles` + `rake storage roles {bank} --role sink`.
-Slice 1 remained — the capture grammar (`offerings/capture.rs`): workspaces
-at `~/.zen-garden/workspace/{fqn}/{run}` (MOSS_WORKSPACE_DIR override);
-Phase A quiesce->imprint->resume with finally-style resume, max_locked_s
-budget, rested offerings skipping the lock, export hooks templated with
-{workspace}; Phase B pack (tar.zst + SHA-256 manifest, per-file hashes),
-ferry to mounted SINK-role banks (best-effort, loud), atomic `.partial`
-rename commit, rotation keeps 5; docker `exec` HookRunner (NullHooks
-refuses loudly on companion stones); 1:1 faces POST/GET
-`/api/v1/offerings/{fqn}/capture` + `rake capture {name} [--last]`.
-Slice 1 remains — the capture grammar (`offerings/capture.rs`):
-stateless/lock-and-copy/export modes parsed from manifests; loud load
-errors (lock-and-copy needs BOTH quiesce+resume, export needs its hook,
-stateless takes no hooks, capture needs a managed section); closed
-template vocabulary ({fqn},{stem},{instance},{workspace},{volume.<name>},
-{port.<role>}) checked against declared volumes/roles at load; readiness
-classifier (NothingToPreserve/Trusted/Untrusted) for honest surfaces;
-`capture` sits outside WorkloadSpec AND plan_hash (test-pinned: policy
-edits never flip plans). DEBT D15 opened: corpus capture coverage by RC0.
+## What happened today (one paragraph for orientation)
 
-Slice 5 LANDED — show face carries a `capture` annex (readiness
-trusted/untrusted/nothing-to-preserve + mode + last run), posture carries
-capture counters, `rake explain` renders the will honestly (UNTRUSTED
-volumes are named as a lie waiting to happen), and the scheduler
-(`run_scheduler`, daily CADENCE_SECS) runs every placed offering's
-trusted will on cadence — pinned by test.
+The living-will epic (S3–S8 + W7) was completed, witnessed on the fleet, and
+the companion ecosystem (Suzu) was spun out. Then the bring-assessment was
+written, the visibility slice (list/URIs/portrait/pulse) landed, the agentic
+baseline (errors-as-JSON/exit-codes/--field) landed, and the jobs registry was
+built. 134 tests, clippy `-D warnings` clean, everything pushed.
 
-(6) **W7 WITNESSED (2026-08-28)** — the full story is in
-WITNESSES.md: capture -> ferry -> murder of stone-crystalline-dune ->
-replant on stone-tranquil-pass from the gposingway bank -> same FQN,
-same ledgered home :7301, redis `GET will` = "survives", audit chain
-opens Replanted. The living will is PROVEN on the fleet. Findings
-harvested: D16 opened (imprint via docker cp for 0600
-container-internal files), roles persistence, rich-reply inventory map
-gap (queued as the next slice: DiscoveryResponse carries the full
-InventoryMap; on_response merges by rev).
+---
 
-THE EPIC IS COMPLETE. LANDED SINCE W7: rich-reply inventory (`5d5fdbc9`),
-visibility slice (list verb, find --format uri, portrait, pulse:
-`eab16e44..c900eabc`), agentic baseline (errors-as-JSON, exit codes,
---field: `c56e8b99`), and the jobs registry (`bd907c94`). Suzu (the
-companion ecosystem) is spun out to `sylin-org/suzu` (ADR-0006).
-Next: data plane (bank fs CRUD, S3/WebDAV), then orchestrators/O3,
-then M1. Self-contained for a clean context. Verify everything against
-the tree — trust files over this doc.
+## Git state
 
-## Project in one paragraph
+Branch `dev`, pushed to `origin/dev` (`git@github.com:sylin-org/zen-garden.git`, SSH).
+Tree is clean. Latest: `1e46b3a7`.
 
-Zen Garden: self-hosted service orchestration on repurposed hardware
-("stones"). Services outlive machines. The PoC (`src/poc/`, branch `poc`,
-tag `poc-final`) is the frozen oracle. v1 is being built in `src/v1/` under
-an accepted constitution. Current epic: **the garden that knows itself** —
-ADR-0004 discovery envelope (chirp/song, inventory map, topology cache) +
-storage MVP with the USB adoption ceremony, ending in fleet deploy + W6
-witness.
+Branch law: only `dev` (trunk) and — from RC — `main`.
+PoC lives as tag `poc-final`. Pavilion parked at tag `pavilion-parked`.
 
-## Authority (read in order; conflicts resolve downward)
+The fleet: stone-crystalline-dune (.111) and stone-tranquil-pass (.195) run the
+latest v1 build. stone-emerald-vale (.82) runs v1 (joined at W7). stone-limpid-dune
+and stone-quartz-fen are chirping but HTTP-unreachable. The PoC fleet is ALSO
+still alive on 7184/7185 — 5 stones thriving (mongodb x3, qdrant, searxng).
+One stone has 65-day uptime. Live-migration target confirmed.
 
-1. `docs/v1/lessons.md` — L1–L26 normative
-2. `docs/v1/CHARTER.md` — accepted, amended; bets B1–B11
-3. `docs/v1/CODE-RULES.md` — P0–P5; **R3.9 "records are paths" is new**
-4. `docs/v1/OFFERINGS.md` — offerings law (§5.1 layered catalogs, FQN
-   namespace, named installations)
-5. `docs/v1/decisions/ADR-0001..0005` — directory, ports, FQN namespace,
-   discovery envelope (A1 records-are-paths, A2 inventory-map/songs/framer),
-   living will (capture/checkpoints/replant + §8 storage-on-envelope)
-6. `src/v1/DEBT.md` (D1–D14; D14 closes on W5/W6 work), `src/v1/WITNESSES.md`
-   (W1–W4 recorded)
-7. `docs/MEMORY.md` — durable memory index; `local/NOTES.md` — machine
-   facts (gitignored): fleet IPs (.82/.111/.195, keys in plink), v1 room =
-   UDP 7284 / group 239.255.42.199, HTTP 7285
+## v1 capabilities — what exists NOW
 
-## Git state (branch `dev`, PUSHED to origin; `main` deferred to the release candidate)
+| Surface | Routes/verbs |
+|---|---|
+| Discovery | chirp/song (lean + full), rich ask/reply, candidates pool, topology cache |
+| HTTP faces | 28 faces: /health, /api/v1 (manifest), /stone{,/this,/{ref},/posture}, /garden/stones, /garden/storage, /catalog, /storage{,/adopt,/roles,/eject}, /pulse{,/stream}, /offerings[/{fqn}][/capture[/last]|[/replant]|[/rest|/wake]] , /jobs[/{id}], /portrait via / |
+| rake verbs | observe, find (--format uri), list, offer, explain, rest, wake, uproot, capture (--last), replant, storage (list/adopt/roles/garden/eject) |
+| Living will | capture grammar (3 modes), two-phase pipeline, checkpoints (SHA-256, atomic rename, rotation), sink banks, replant with Replanted audit |
+| Jobs | JobTracker (in-memory), GET /api/v1/jobs + /{id}, capture runs tracked |
+| Agentic | --json, --field dot.notation, exit codes, errors-as-JSON |
+| Suzu | spun out to sylin-org/suzu (ADR-0006); companion-contract, SDK, USB layer, firefly, cricket, firmware |
 
-Remote: `git@github.com:sylin-org/zen-garden.git` (SSH — the HTTPS PAT
-lacks `workflow` scope and GitHub rejects pushes touching
-`.github/workflows/` over it). `dev` pushed 2026-08-27 (a73bf12a). Branch
-law: only `dev` (trunk) and, from the RC onward, `main`. Local branches
-were pruned to dev alone: the PoC lives only as tag `poc-final`; Pavilion
-is parked at tag `pavilion-parked` (charter B10 recovery). The two remote
-`ecc-tools/*` tool-branches were deleted.
+## What to build next (priority order)
 
-```
-a73bf12a docs: continuation updated - S3 landed (rich ask/reply + songs), resume at S4
-df3dfbe5 feat(v1): S3b - boots and changes sing, heartbeats chirp lean; the cache merges by rev
-7ebe96de feat(v1): S3a - rich ask, rich tell: probe speaks depth, responder answers with inventory
-fbf889cc docs: CONTRIBUTING - the lightweight contributor path
-f7b3a9b3 docs(v1): orientation - one datagram's life, boot to expiry
-ee607965 docs(v1): glossary speaks its metaphors - every garden word carries its standard-term gloss
-```
+### 1 · Bank file operations
+CRUD on mounted bank filesystems. Makes a seed bank a real storage destination.
+- GET `/api/v1/storage/{fqn}/files` — list files on the bank
+- GET `/api/v1/storage/{fqn}/files/{path}` — read/download a file
+- PUT `/api/v1/storage/{fqn}/files/{path}` — write a file
+- DELETE `/api/v1/storage/{fqn}/files/{path}` — delete a file
+Implementation: resolve bank mount_point, join with traversal-checked path,
+read/write via std::fs. The Storage.banks() already tracks mount_point.
 
-Working tree is CLEAN (91 tests green, clippy -D warnings clean). 2026-08-27
-also landed (before S3): R1.1 registers amendment, glossary metaphor
-glosses, `docs/v1/orientation.md`, root `CONTRIBUTING.md` (lightweight
-contributor path), `docs/v1/design/dx-delight-research.md` (one OPEN ruling
-recorded there: CLI register — session recommends keeping garden verbs;
-operator agreed in conversation, amendment not yet written).
+### 2 · Agentic baseline completion
+- errors currently exit(1) with no code distinction — wire NOT_FOUND/CONFLICT/
+  UNAVAILABLE from the typed error refactor
+- `--format uri` on find exists; add it to observe and list
 
-## ~~⚠️ BLOCKER~~ RESOLVED (kept for the lesson)
+### 3 · Logs/watch streaming
+The PoC's open wound (advertised, stubbed). v1: docker adapter logs → SSE →
+`rake watch <offering> logs`.
 
-The S2 hang was a tokio watch deadlock: `send_replace(source.version_tx
-.borrow()…)` holds the read guard across the write attempt. Fixed with
-`send_modify(|v| *v = v.wrapping_add(1))` under one lock (9df8c53b). The
-idiom comment lives in source.rs. No open blockers.
+### 4 · Companions (Suzu)
+Suzu is a separate project. The bootstrap, contract ADR, and harvest list are
+committed in the zen-garden repo (`docs/v1/design/suzu-bootstrap.md`,
+`docs/v1/decisions/ADR-0006-suzu-contract.md`). The suzu agent harvests from
+`src/poc/companion-sdk/`, `companion-usb/`, `cricket/`, `firefly/`, and
+`scripts/`. Integration: moss spawns companions, streams events via SSE,
+proxies commands. Port pool: 7286–7295.
 
-## The canonical shape (S1.5/S1.6 — MEMORIZE before touching wire code)
+### 5 · Orchestrators / O3 adoption
+Ollama as first citizen. Detect → adopt → expose (L25). Compatibility
+predicates (`ai.runtime`) already in the census grammar.
 
-`ChirpFrame` (contract/src/chirp.rs), sections per R3.9:
-`stone{id, name, moss.version, network{address{ip,port,tls_port}, mac}} ·
-presence{health, status} · inventory{...} · meta{proto, boot_id, seq,
-part{n,of}} · received{discovered_at, last_seen}`.
+### 6 · M1 release pipeline
+main branch + tag → build → sign → publish. Gate: a stranger installs from a
+public artifact. Requires: repo public, RC quality, install script.
 
-- `inventory: InventoryMap` — closed rootspace. Typed knowns:
-  `services: Option<Inventory<ServiceEntry>>`; `banks` claimed slot
-  (`_banks_slot: Option<serde_json::Value>` — type it in S7b);
-  `extra: Map` passthrough round-trips unknown domains losslessly.
-- `InventoryMap::insert("services", v)` decodes typed, preserves verbatim
-  if undecodable; `from_pairs` builder; `merge_frame` = per-domain rev rule
-  (absent key keeps, present block's rev speaks; unknown = last-write-wins).
-- `ServiceEntry{offering_id, name(FQN!), stem, category, state{status,
-  role}, ports}`. `Offering::service_entry()` in model.rs produces it.
-- **Song vs chirp**: `stone_chirp` = lean heartbeat (rev-only inventory
-  blocks since S3b); `stone_song` (`stone_song` discriminator, EMITTED by
-  the announcer since S3b on boot + change) = full-voice.
-  `contract::song::frame_song(base, blocks, seq)` quantizes domain blocks
-  whole against `FRAME_BUDGET_BYTES=3500`: biggest-first greedy,
-  every frame re-anchored, `meta.part` informational, empty → no frames.
-  The composer caps songs alphabetically at INVENTORY_CAP=24 with `total`
-  declared; heartbeats speak revs, never items.
-- Fixtures (`contract/tests/wire_fixtures.rs`) pin the CANONICAL shape;
-  v0-compat RETIRED (v1 owns its room). R3.9 law in CODE-RULES.
-- Discogs: lowercase discriminators (`announcement::*`) — pinned.
+## Fleet state
 
-## Epic map (todowrite list mirrors this)
+| Stone | v1 build | Moss name | Notes |
+|---|---|---|---|
+| .111 topaz-butte | latest (living-will) | crystalline-dune | witness-db::garden + redis::ports running |
+| .195 obsidian-summit | latest (living-will) | tranquil-pass | seed-vault::default (ejected), redis::witness |
+| .82 emerald-vale | latest (living-will) | translucent-clearing | joined at W7; seed-gentle-valley::default recognized |
+| limpid-dune | — | — | powered off / unreachable |
+| quartz-fen | — | — | powered off / unreachable |
 
-- [x] S1/S1.5/S1.6 — wire anchors, canonical frame, A1+A2 amendments,
-      inventory map, song+framer (committed)
-- [x] **S2 — DynamicChirpSource LANDED (9df8c53b).** Rev starts at
-      max(snapshot.len(),1); bumps on OfferingChanged (lagged bumps once);
-      version watch fires → announcer's existing debounce (L18) emits
-      change-chirp. Interim: inventory rides plain chirps; songs wire-up
-      lands in S3.
-- [x] **S3 — rich responders + songs wire-up LANDED (7ebe96de, df3dfbe5).**
-      Probe `ask_the_room_rich`; responder parses `rich` and answers with
-      `DiscoveryResponse{stone, services: Some(inventory)}` from the
-      source's song blocks (undecodable ask → lean card, R2.5); moss boot
-      ask is rich. `ChirpSource` gained `song_blocks()`; body() is LEAN
-      (rev-only blocks); announcer sings `stone_song` (new discriminator,
-      contract consts) on boot + debounced change, quantized by the
-      framer, capped 24 alphabetical with `total`. Topology claims
-      `stone_song` and merges inventory by per-domain rev (merge_frame) —
-      a lean heartbeat never wipes what a song taught (regression test
-      pins this). S4's merge-on-ingest is thereby ABSORBED here; S4 keeps
-      candidates pool + promotion.
-- [x] **S4 — candidates pool LANDED (af2ebe41).** Overheard rich answers
-      land as TTL'd `Candidate`s (id required; live truth ignores gossip;
-      first live frame retires the rumor; `CANDIDATE_TTL_SECS=300` in
-      contract consts — outlives the L24 querier window). Candidates are
-      NOT members: no snapshot rendering, no version bump, silent expiry.
-      The old on_response hint-entry behavior is gone (no more `starting`
-      phantoms in observe / no Expired events for stones never met).
-      merge_frame-on-ingest landed earlier with S3b. S4 complete.
-- [x] **S5 — URI grammar cut LANDED (0588c244).** Clean cut, no aliases:
-      `/api/v1` front door (the manifest), `/stone` + `/stone/this`
-      (SelfView: chirp source body re-voiced with song_blocks — AppState
-      gained `chirp_source`), `/stone/{ref}` (me by name-or-id; peers
-      answered 404 + Location + `knows_at` — the delight face; unknown =
-      plain 404), `/stone/posture` (gained candidates count),
-      `/garden/stones` (self spliced first, `"self": true`), `/catalog`,
-      `/offerings[/{fqn}][/rest|/wake]`. L9/R4.7 structural win: the
-      router is BUILT FROM the `Face` enum table — routes exist only as
-      manifest rows; tests: every face answers, legacy spellings dead,
-      front door lists all faces exactly once, redirect + splice pinned.
-      Topology gained `find(id_or_name)`. **rake is knowingly BROKEN until
-      S6** (calls /garden/observe + /stone/offerings paths).
-- [x] **S6 — rake sync LANDED (10d07809).** Paths repointed
-      (`/garden/stones`, `/api/v1/offerings`, moss_http fixture);
-      GardenStone parses the splice (`is_self` from `"self"`,
-      `chirps: Option`); observe table gained an OFFERINGS column
-      (declared total or visible items, `-` when silent) and a `(me)`
-      marker on the spliced self row. Rake speaks the new grammar.
-- [x] **S5.5 — persistence v3 LANDED (6f1e72bf).** record.json/candidate.json
-      render the sectioned v3 view (`record.rs`: identity{offering_id,
-      name, stem, category} · state{status} · location · mode ·
-      registered_at/updated_at); plan scalars re-homed under `meta`
-      (PlacementPlan{workload, decisions, meta{plan_hash,
-      facts_generation}}) — record embed AND plan.json sidecar speak one
-      shape. Load auto-migrates v2 flats: source renamed
-      `*.json.migrated`, sectioned truth written fresh, embedded plan
-      re-sectioned; idempotent; HTTP offerings faces render the SAME v3
-      view (rake renderers updated). model::Offering's flat serde REMAINS
-      as the legacy reader — that is the forever-compat surface (R0.5).
-- [x] **S7a — storage MVP LANDED (af0abed6).** `offerings/storage.rs`:
-      Bank {fqn (ADR-0003 grammar), device_id GUIDv7, state mounted|ejected
-      (glossary::bank), roles[], capacity/used TELEMETRY}; scan of
-      removable volumes (sysinfo); adopt ceremony writes
-      `.zen-garden/manifest.json` (STORAGE-0009) — `rake storage adopt` 1:1
-      with POST `/api/v1/storage/adopt` (operator's new standing law: every
-      CLI verb has its API face, recorded in MEMORY.md); `rake storage`
-      1:1 with GET `/api/v1/storage` (banks + adoptable). Mount watcher
-      (5s edge poll) reconciles: mount/eject bump, measurements ride.
-      **Pulled forward from S7b:** the contract `banks` slot is TYPED
-      (`Inventory<BankEntry>`, DOMAIN_BANKS const) and merge_frame
-      generalizes rev-merge to it — no interim passthrough debt. Source
-      composes banks in BOTH registers (lean rev-only, songs full);
-      follow_storage_changes wires storage bumps -> bank_rev -> song.
-- [x] **S7b — the room's storage grid LANDED (26724924).** `GET
-      /api/v1/garden/storage`: self's banks spliced first, then every
-      peer's banks from the one topology cache — rows name the holding
-      stone; 1:1 `rake storage garden`. Eject verb pair: POST
-      `/api/v1/storage/{fqn}/eject` + `rake storage eject <bank>` —
-      authoritative absence, sung. Eject LAWS (storage.rs, pinned by
-      tests): an operator's eject holds for the same slot for the boot's
-      life (no flip-flop with the watcher); physical absence releases the
-      hold (return = true re-plug, remounts); a different slot is a true
-      re-plug; vanish-ejected banks remount on return. End-to-end test:
-      peer song with banks -> topology merge -> /garden/storage renders
-      the foreign bank.
-- [x] **S8 + W6 — fleet deploy + witness LANDED (6566fad3 + WITNESSES.md
-      W6).** linux-x64 release via the perennial builder; deployed and
-      upgraded on 192.168.1.111 + .195 (`.82` offline — same procedure
-      when it returns). Witnessed live: mutual presence; plant on A
-      visible from B <= 1 interval; rev-heal drill (cache refill by rich
-      ask + rehydration); USB adopt garden-wide (adoptable scan ->
-      recognized -> heard on the peer -> eject -> absence heard). THREE
-      findings harvested: self-ingest defect (fixed, 6566fad3),
-      MOSS_RUNTIME=docker needed for appliance default, adopt-vs-
-      point-of-restore permission posture (operator's call).
-
-Deliberately OUT of this epic: capture/checkpoint pipeline (ADR-0005 core,
-W7), Lantern, O3 adoption.
-
-## Conventions & gotchas (new since last continuation)
-
-- **tokio watch deadlock**: never `.borrow()` inside `send_replace` args.
-  Prefer `send_modify`.
-- `#[tokio::test]` = current_thread runtime; spawned tasks interleave at
-  awaits — hangs above looked like "watch never fires", were lock deadlock.
-- `expect_used` is deny in prod code: test modules need
-  `#![allow(clippy::unwrap_used, clippy::expect_used)]`.
-- Witness/ADR convention: once Accepted, ADRs get AMENDMENT sections (A1,
-  A2…), never edits. todowrite list mirrors the epic slices.
-- The full workspace `cargo test` timed out at 600s during the hang — after
-  the fix, run per-crate first (`-p garden-moss --bin moss source::`),
-  then full suite.
-- Old continuation's gotchas still valid: `gen` reserved; tokio interval
-  first-tick; rg+PS quoting; SO_REUSEADDR (D8); one moss per host while
-  developing (stop old moss.exe before rebuilding — file lock).
+PoC fleet: ALSO alive on 7184/7185 — 5 stones, mongodb x3, qdrant, searxng.
+Live-migration target confirmed.
 
 ## Key file locations
 
 | What | Where |
 |---|---|
-| Frame/inventory/song/framer | src/v1/crates/contract/src/{chirp,discovery,song}.rs |
-| Wire fixtures (canonical pins) | src/v1/crates/contract/tests/wire_fixtures.rs |
-| Announcer (chirp on change, heartbeats) | src/v1/crates/kernel/src/announce.rs |
-| Topology cache | src/v1/crates/kernel/src/topology.rs |
-| Probe/responder (ask/tell) | src/v1/crates/kernel/src/{probe,responder}.rs |
-| **S2 source (BLOCKER here)** | src/v1/crates/moss/src/source.rs |
-| moss wiring | src/v1/crates/moss/src/main.rs |
-| HTTP surface | src/v1/crates/moss/src/http.rs |
-| rake | src/v1/crates/rake/src/main.rs |
-| Offerings stack | src/v1/crates/moss/src/offerings/ |
-| ADRs | docs/v1/decisions/ADR-0001..0005 |
+| Contract (wire shapes, BankEntry, consts) | `src/v1/crates/contract/src/` |
+| Kernel (announce, topology, probe, responder, dispatch, ingress) | `src/v1/crates/kernel/src/` |
+| Moss (offerings, storage, capture, jobs, http, source, identity) | `src/v1/crates/moss/src/` |
+| rake (CLI) | `src/v1/crates/rake/src/` |
+| Glossary (vocabulary with metaphor glosses) | `src/v1/crates/glossary/src/` |
+| Suzu (companion ecosystem) | `sylin-org/suzu` (separate repo) |
 
-## Resume procedure
+## Conventions & gotchas
 
-1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
-   dev pushed).
-2. The living-will epic is DONE and WITNESSED (W7). The rich-reply
-   inventory slice also LANDED (`5d5fdbc9`): DiscoveryResponse carries the
-   full InventoryMap (services + banks + future domains), the responder
-   composes it from song_blocks, on_response merges heard answers into
-   existing peers by rev, fixtures pin the shape - a newcomer learns the
-   whole room in one exchange.
-3. The VISIBILITY slice LANDED (eab16e44..c900eabc): `rake list` verb
-   (collection face GET /api/v1/offerings + URIs, stem://host:home),
-   `rake find --format uri`, the portrait (GET / + /portrait, embedded
-   page from SelfView), pulse (GET /pulse page + /pulse/stream SSE
-   firehose over topology + offering events, L18-at-the-edge). The
-   garden is VISIBLE.
-4. Next arcs per the bring assessment
-   (docs/v1/design/poc-bring-assessment.md): agentic baseline
-   (errors-as-JSON + exit codes + --field), companions epic (five
-   rulings pending), data plane (jobs first), orchestrators/O3. One
-   slice = one commit, gates green at every commit.
+- `--json` / `--field` / `--format uri` — the three-degree machine output
+- `gen` is a RESERVED keyword in Rust edition 2024
+- tokio interval fires immediately on first tick — consume once before loops
+- SO_REUSEADDR on Windows; SO_REUSEPORT on Unix (D8)
+- one moss per host while developing (file lock on Windows)
+- rg + PowerShell quoting breaks through two hops — use Write tool for scripts
+- Push channel is SSH (HTTPS PAT lacks `workflow` scope)
+- Companions repo: `sylin-org/suzu` — Suzu is generalized, Zen Garden is one
+  consumer of many
+
+## Authority (read in order; conflicts resolve downward)
+
+1. `docs/v1/lessons.md` — L1–L26 normative
+2. `docs/v1/CHARTER.md` — accepted, amended; bets B1–B11
+3. `docs/v1/CODE-RULES.md` — P0–P5; R3.9 records-are-paths; R1.1 registers
+4. `docs/v1/OFFERINGS.md` — offerings law (§5.1 layered catalogs, FQN namespace)
+5. `docs/v1/decisions/ADR-0001..0006` — directory, ports, FQN namespace,
+   discovery envelope, living will, Suzu contract
+6. `src/v1/DEBT.md` (D1–D15; D14 closed), `src/v1/WITNESSES.md` (W1–W7)
+7. `docs/v1/inventory/poc-rake-surfaces.yaml` + `poc-moss-surfaces.yaml` —
+   deep PoC capability inventories
+8. `docs/v1/design/poc-bring-assessment.md` — what to bring/reshape/cut
+9. `docs/v1/design/dx-delight-research.md` — vocabulary tiers, tutorial gap
+10. `docs/v1/design/suzu-bootstrap.md` — the companion ecosystem brief
+11. `docs/MEMORY.md` — durable memory index; `local/NOTES.md` — machine facts

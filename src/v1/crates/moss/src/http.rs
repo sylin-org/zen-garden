@@ -596,21 +596,37 @@ async fn capture_offer(
         ferried_to: None,
     };
     state.capture.announce(announced.clone());
+
+    // Track the capture as a job (the data plane's async contract).
+    let job_id = state.jobs.start("capture", &fqn_str);
+    let job_id_resp = job_id.clone();
+
     let task_fqn = fqn_str.clone();
     let task_run = run_id.clone();
+    let jobs = state.jobs.clone();
     tokio::spawn(async move {
-        // The runner records progress under its own run id; the spawn carries
-        // the caller-visible one.
-        let _ = task_run;
-        if let Err(e) = runner
+        match runner
             .execute_named(&task_fqn, &policy, &workload, &task_run)
             .await
         {
-            tracing::warn!(offering = %task_fqn, error = %e, "capture run failed");
+            Ok(checkpoint) => {
+                jobs.complete(
+                    &job_id,
+                    serde_json::json!({
+                        "checkpoint": checkpoint.display().to_string(),
+                    }),
+                );
+            }
+            Err(e) => {
+                jobs.fail(&job_id, &e);
+                tracing::warn!(offering = %task_fqn, error = %e, "capture run failed");
+            }
         }
     });
     announced.phase = "accepted".into();
-    Ok(Json(serde_json::json!({ "data": { "run": announced } })))
+    Ok(Json(
+        serde_json::json!({ "data": { "run": announced }, "job_id": job_id_resp }),
+    ))
 }
 
 /// The last capture run of an offering.

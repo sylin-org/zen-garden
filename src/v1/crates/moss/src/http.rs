@@ -44,275 +44,14 @@ pub struct AppState {
 use garden_kernel::dispatch::Dispatcher;
 use garden_kernel::ingress::IngestCounters;
 
-/// The surface, declared once (L9, R4.7): routes exist ONLY as rows of
-/// [`Face::ALL`]. Adding a face means adding a variant — the compiler then
-/// demands its method, path, summary, and wiring; removing one leaves
-/// nowhere for a stale row to hide.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Face {
-    Health,
-    /// The front door: this route table (ADR-0004 §4 — kills the
-    /// `/manifest` offering-name collision).
-    FrontDoor,
-    /// Me: the SelfView.
-    StoneSelf,
-    /// Me, spelled explicitly.
-    StoneThis,
-    /// Any stone by name or id: mine answered, others redirected home.
-    StoneRef,
-    StonePosture,
-    GardenStones,
-    Catalog,
-    /// Local banks + adoptable volumes (L22: stone data).
-    StorageList,
-    /// The adopt ceremony: claim a removable volume for the garden.
-    StorageAdopt,
-    /// Authoritative absence: the eject verb (ADR-0005 §8.3).
-    StorageEject,
-    /// Declare a bank's roles (sink today; ADR-0005 §4).
-    StorageRoles,
-    /// List a bank directory: the files riding the volume.
-    StorageFileList,
-    /// Read one file from a bank.
-    StorageFileGet,
-    /// Write one file onto a bank.
-    StorageFilePut,
-    /// Delete one file from a bank.
-    StorageFileDelete,
-    /// Move (rename) one file within a bank.
-    StorageFileMove,
-    /// Follow an offering's logs: history first, then live.
-    OfferingLogsStream,
-    /// Run a will: the capture pipeline (ADR-0005 §2).
-    OfferingCapture,
-    /// The last capture run of an offering.
-    OfferingCaptureLast,
-    /// Replant: restore an incarnation from its checkpoint (ADR-0005 §6).
-    OfferingReplant,
-    /// Every async operation on this stone.
-    JobList,
-    /// One job by id.
-    JobDetail,
-    /// The stone's living landing page (PORTRAIT idea: identity + presence).
-    Portrait,
-    /// The root lands on the portrait.
-    Root,
-    /// The live page: the room, as events happen.
-    PulsePage,
-    /// The SSE firehose: topology + offering events, one stream.
-    PulseStream,
-    /// The room's banks, projected from the cache (ADR-0004 §4 grid).
-    GardenStorage,
-    OfferingList,
-    OfferingPlant,
-    OfferingShow,
-    OfferingRest,
-    OfferingWake,
-    OfferingUproot,
-}
-
-impl Face {
-    const ALL: [Face; 34] = [
-        Face::Health,
-        Face::FrontDoor,
-        Face::StoneSelf,
-        Face::StoneThis,
-        Face::StoneRef,
-        Face::StonePosture,
-        Face::GardenStones,
-        Face::Catalog,
-        Face::StorageList,
-        Face::StorageAdopt,
-        Face::StorageEject,
-        Face::StorageRoles,
-        Face::StorageFileList,
-        Face::StorageFileGet,
-        Face::StorageFilePut,
-        Face::StorageFileDelete,
-        Face::StorageFileMove,
-        Face::OfferingLogsStream,
-        Face::GardenStorage,
-        Face::OfferingCapture,
-        Face::OfferingCaptureLast,
-        Face::OfferingReplant,
-        Face::JobList,
-        Face::JobDetail,
-        Face::Portrait,
-        Face::Root,
-        Face::PulsePage,
-        Face::PulseStream,
-        Face::OfferingList,
-        Face::OfferingPlant,
-        Face::OfferingShow,
-        Face::OfferingRest,
-        Face::OfferingWake,
-        Face::OfferingUproot,
-    ];
-
-    fn method(self) -> &'static str {
-        match self {
-            Face::Health
-            | Face::FrontDoor
-            | Face::StoneSelf
-            | Face::StoneThis
-            | Face::StoneRef
-            | Face::StonePosture
-            | Face::GardenStones
-            | Face::Catalog
-            | Face::StorageList
-            | Face::StorageFileList
-            | Face::StorageFileGet
-            | Face::GardenStorage
-            | Face::OfferingCaptureLast | Face::OfferingList | Face::OfferingShow
-            | Face::OfferingLogsStream
-            | Face::JobList | Face::JobDetail
-            | Face::Portrait | Face::Root | Face::PulsePage | Face::PulseStream => "GET",
-            | Face::StorageAdopt | Face::StorageEject | Face::StorageRoles
-            | Face::OfferingCapture | Face::OfferingReplant => "POST",
-            Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
-            Face::StorageFilePut => "PUT",
-            Face::StorageFileMove => "PATCH",
-            Face::StorageFileDelete | Face::OfferingUproot => "DELETE",
-        }
-    }
-
-    fn path(self) -> &'static str {
-        match self {
-            Face::Health => "/health",
-            Face::FrontDoor => "/api/v1",
-            Face::StoneSelf => "/api/v1/stone",
-            Face::StoneThis => "/api/v1/stone/this",
-            Face::StoneRef => "/api/v1/stone/{ref}",
-            Face::StonePosture => "/api/v1/stone/posture",
-            Face::GardenStones => "/api/v1/garden/stones",
-            Face::Catalog => "/api/v1/catalog",
-            Face::StorageList => "/api/v1/storage",
-            Face::StorageAdopt => "/api/v1/storage/adopt",
-            Face::StorageRoles => "/api/v1/storage/{fqn}/roles",
-            Face::StorageEject => "/api/v1/storage/{fqn}/eject",
-            Face::StorageFileList => "/api/v1/storage/{fqn}/files",
-            Face::StorageFileGet
-            | Face::StorageFilePut
-            | Face::StorageFileMove
-            | Face::StorageFileDelete => "/api/v1/storage/{fqn}/files/{*path}",
-            Face::GardenStorage => "/api/v1/garden/storage",
-            Face::OfferingList => "/api/v1/offerings",
-            Face::OfferingPlant | Face::OfferingShow | Face::OfferingUproot => {
-                "/api/v1/offerings/{fqn}"
-            }
-            Face::OfferingCapture | Face::OfferingCaptureLast => {
-                "/api/v1/offerings/{fqn}/capture"
-            }
-            Face::OfferingReplant => "/api/v1/offerings/{fqn}/replant",
-            Face::OfferingLogsStream => "/api/v1/offerings/{fqn}/logs/stream",
-            Face::Portrait => "/portrait",
-            Face::Root => "/",
-            Face::JobList => "/api/v1/jobs",
-            Face::JobDetail => "/api/v1/jobs/{id}",
-            Face::PulsePage => "/pulse",
-            Face::PulseStream => "/pulse/stream",
-            Face::OfferingRest => "/api/v1/offerings/{fqn}/rest",
-            Face::OfferingWake => "/api/v1/offerings/{fqn}/wake",
-        }
-    }
-
-    fn summary(self) -> &'static str {
-        match self {
-            Face::Health => "Liveness probe of this stone and its wire protocol marker.",
-            Face::FrontDoor => "This route table - every surface, described in place.",
-            Face::StoneSelf => "Me: my frame, sung full-voice (the SelfView projection).",
-            Face::StoneThis => "Me, spelled explicitly (same SelfView).",
-            Face::StoneRef => {
-                "A stone by name or id: mine answered here; others answer 404 with a \
-                 Location to their home stone (the garden's only true redirect)."
-            }
-            Face::StonePosture => {
-                "Local data (L22): this moss's live counters - ingest, dispatch, \
-                 topology, offerings."
-            }
-            Face::GardenStones => {
-                "Garden data (L22): the room as this moss sees it - self spliced \
-                 among the peers, every row a canonical frame."
-            }
-            Face::Catalog => "The catalog this stone can place from (derived).",
-            Face::StorageList => {
-                "This stone's banks, plus the removable volumes ready for adoption."
-            }
-            Face::StorageAdopt => {
-                "The adopt ceremony: {device: mount point, name: bank FQN} - writes the manifest onto the drive and sings the news (ADR-0005 sec 8)."
-            }
-            Face::StorageEject => {
-                "Eject a bank by name: authoritative absence, sung to the room (ADR-0005 sec 8.3)."
-            }
-            Face::StorageRoles => {
-                "Declare a bank's roles: {roles: [sink]} - a sink receives checkpoints (ADR-0005 sec 4)."
-            }
-            Face::StorageFileList => {
-                "List a bank directory (optional ?path= subdirectory): the files riding \
-                 the volume, minus the adoption record. A bank held by a peer answers \
-                 the garden's redirect (knows_at)."
-            }
-            Face::StorageFileGet => {
-                "Read one file from a bank: the raw bytes, content-type guessed from the \
-                 extension; the path is relative to the bank's root. A peer's bank \
-                 answers the garden's redirect (knows_at)."
-            }
-            Face::StorageFilePut => {
-                "Write one file onto a bank: the raw body, parent directories created - \
-                 makes a sink a real storage destination. A peer's bank answers the \
-                 garden's redirect (knows_at); writes bind at their authority."
-            }
-            Face::StorageFileDelete => {
-                "Delete one file from a bank. Directories refuse - wholesale removal is \
-                 the operator's hand. A peer's bank answers the garden's redirect."
-            }
-            Face::StorageFileMove => {
-                "Move (rename) one file within a bank: {move_to: path} - no re-upload. \
-                 Never overwrites. A peer's bank answers the garden's redirect."
-            }
-            Face::GardenStorage => {
-                "Garden data (L22): every bank in the room, self included, from the one cache."
-            }
-            Face::OfferingPlant => {
-                "Plant a managed offering {image?, ports:{name:container}, runtime?, \
-                 inputs?}; catalog name wins when one exists."
-            }
-            Face::OfferingList => "Every offering placed on this stone (the collection).",
-            Face::OfferingShow => "The placed record - plan, decisions, ports (OFFERINGS.md §5.3).",
-            Face::OfferingCapture => {
-                "Run this offering's declared will: Phase A imprint (quiesce -> copy -> resume), then pack, ferry, commit."
-            }
-            Face::OfferingCaptureLast => "The last capture run of this offering: phase, checkpoint, ferried sinks.",
-            Face::OfferingReplant => {
-                "Replant from a checkpoint {run?}: verify, restore the directory, place from the stored spec - same FQN, same connection strings (ADR-0005 §6)."
-            }
-            Face::OfferingLogsStream => {
-                "Follow an offering's logs: history first (tail=N bounds it), then live - \n                 SSE `log` events, one JSON line each. A peer's offering answers the \n                 garden's redirect."
-            }
-            Face::Portrait => {
-                "This stone's living landing page: identity, offerings, banks, the room."
-            }
-            Face::Root => "Lands on the portrait.",
-            Face::JobList => "Every async operation on this stone, newest first.",
-            Face::JobDetail => "One job by id: kind, subject, status, error, result.",
-            Face::PulsePage => {
-                "The live page: stones, offerings, and the event ring as they happen."
-            }
-            Face::PulseStream => {
-                "SSE firehose: topology events (seen/goodbye/expired) and offering changes."
-            }
-            Face::OfferingRest => {
-                "Rest a managed offering - stopped, and reconcile will keep it so."
-            }
-            Face::OfferingWake => {
-                "Wake a rested offering; resurrects from its stored spec if reality lost it."
-            }
-            Face::OfferingUproot => "Uproot - remove the workload and forget the offering.",
-        }
-    }
-
-    fn method_router(self) -> axum::routing::MethodRouter<Arc<AppState>> {
-        match self {
+/// The surface, declared once — now FROM THE CONTRACT (ADR-0009/B1):
+/// the Face enum and its declarations live in garden_contract::faces;
+/// this module owns only the handler wiring and behavior.
+use garden_contract::faces::Face;
+/// The wiring: which handler answers each face. The declarations
+/// (method/path/summary) live in the contract; this is behavior only.
+fn method_router(face: Face) -> axum::routing::MethodRouter<Arc<AppState>> {
+        match face {
             Face::Health => get(health),
             Face::FrontDoor => get(front_door),
             Face::StoneSelf | Face::StoneThis => get(stone_self),
@@ -348,7 +87,7 @@ impl Face {
             Face::OfferingUproot => axum::routing::delete(uproot_offering),
         }
     }
-}
+
 
 async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let uptime = chrono::Utc::now() - state.started_at;
@@ -1420,13 +1159,13 @@ async fn job_detail(
 }
 
 async fn front_door() -> Json<serde_json::Value> {
-    let routes: Vec<serde_json::Value> = Face::ALL
+    let routes: Vec<serde_json::Value> = garden_contract::faces::FACES
         .iter()
         .map(|face| {
             serde_json::json!({
-                "method": face.method(),
-                "path": face.path(),
-                "summary": face.summary(),
+                "method": face.method,
+                "path": face.path,
+                "summary": face.summary,
             })
         })
         .collect();
@@ -1579,9 +1318,11 @@ async fn uproot_offering(
 /// routes are exactly [`Face::ALL`] — nothing emits unadvertised, nothing
 /// advertises unrouted.
 pub fn router(state: Arc<AppState>) -> Router {
-    let router = Face::ALL
+    let router = garden_contract::faces::FACES
         .iter()
-        .fold(Router::new(), |r, face| r.route(face.path(), face.method_router()));
+        .fold(Router::new(), |r, face| {
+            r.route(face.path, method_router(face.face))
+        });
     router.with_state(state)
 }
 
@@ -1664,7 +1405,7 @@ mod tests {
     async fn every_manifest_face_answers() {
         let app = router(test_state());
 
-        for face in Face::ALL {
+        for face in garden_contract::faces::FACES.iter().map(|d| d.face) {
             let res = send(&app, face.method(), face.path()).await;
             assert_ne!(
                 res.status(),
@@ -1729,7 +1470,7 @@ mod tests {
         let body = axum::body::to_bytes(res.into_body(), 1_000_000).await.unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let routes = v["data"]["routes"].as_array().expect("routes array");
-        assert_eq!(routes.len(), Face::ALL.len(), "every face advertised");
+        assert_eq!(routes.len(), garden_contract::faces::FACES.len(), "every face advertised");
 
         let mut keys: Vec<(String, String)> = routes
             .iter()

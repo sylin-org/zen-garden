@@ -155,6 +155,13 @@ enum Command {
     /// The machine-readable catalog of every verb, argument, and help
     /// text — how agents discover rake (ADR-0007).
     Manifest,
+    /// The moss's live API reference: every face, method, path, and
+    /// promise — rendered from the stone's own contract table (ADR-0009).
+    Api {
+        /// Only faces whose path or summary contains this text.
+        #[arg(long)]
+        filter: Option<String>,
+    },
     /// Ask the garden to make it true: if <name> grows anywhere in the
     /// room, answer where; otherwise plant it here and wait until it
     /// answers (the PoC's --ensure, promoted to a verb).
@@ -1035,6 +1042,30 @@ async fn run(cli: &Cli) -> Result<(), String> {
         Command::Storage { cmd } => cmd_storage(cli, cmd.as_ref()).await?,
         Command::Watch { name, cmd } => cmd_watch(cli, name, cmd.as_ref()).await?,
         Command::Ensure { name, timeout } => cmd_ensure(cli, name, *timeout).await?,
+        Command::Api { filter } => {
+            let needle = filter.as_deref().map(str::to_lowercase);
+            let (_, v) = cli.stone_op("GET", "/api/v1".into(), None).await?;
+            let data = envelope_plain(&v)?;
+            let routes = data["routes"].as_array().cloned().unwrap_or_default();
+            let mut shown = 0usize;
+            for r in &routes {
+                let method = r["method"].as_str().unwrap_or("?");
+                let path = r["path"].as_str().unwrap_or("?");
+                let summary = r["summary"].as_str().unwrap_or("");
+                let hits = needle.as_ref().map(|n| {
+                    path.to_lowercase().contains(n) || summary.to_lowercase().contains(n)
+                }).unwrap_or(true);
+                if !hits { continue; }
+                if cli.json {
+                    println!("{}", serde_json::to_string(r).map_err(|e| e.to_string())?);
+                } else {
+                    println!("{:<7} {:<52} {}", method, path, summary);
+                }
+                shown += 1;
+            }
+            if shown == 0 { println!("no faces match the filter"); }
+            Answer::empty()
+        }
     };
     emit(cli, answer)
 }

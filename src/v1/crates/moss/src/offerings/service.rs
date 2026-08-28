@@ -22,6 +22,8 @@ pub enum CommandError {
     NotFound(String),
     /// It is, but this command doesn't apply to it.
     Conflict(String),
+    /// The request itself is malformed — it never had a chance.
+    BadRequest(String),
     /// The bound world isn't available on this host.
     WorldUnavailable(String),
     /// The world tried and failed.
@@ -33,6 +35,7 @@ impl std::fmt::Display for CommandError {
         match self {
             Self::NotFound(n) => write!(f, "'{n}' is not planted here"),
             Self::Conflict(m) => write!(f, "{m}"),
+            Self::BadRequest(m) => write!(f, "{m}"),
             Self::WorldUnavailable(e) => write!(f, "{e}"),
             Self::Runtime(e) => write!(f, "{e}"),
         }

@@ -28,6 +28,8 @@ use moss_http::AttachError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
+use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
@@ -172,6 +174,43 @@ enum StorageCmd {
         /// The complete role set, repeatable.
         #[arg(long = "role")]
         roles: Vec<String>,
+    },
+    /// List a bank's files (optional --path for a subdirectory).
+    Files {
+        /// The bank's name (FQN or bare stem).
+        bank: String,
+        /// A subdirectory of the bank to list.
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Read one file from a bank: raw bytes to --out, or stdout.
+    Get {
+        /// The bank's name (FQN or bare stem).
+        bank: String,
+        /// The file's path, relative to the bank's root.
+        path: String,
+        /// Write the bytes here instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Write one file onto a bank — makes a sink a real storage
+    /// destination. Parents are created on the bank.
+    Put {
+        /// The bank's name (FQN or bare stem).
+        bank: String,
+        /// The file's path, relative to the bank's root.
+        path: String,
+        /// The local file to send, or `-` for stdin.
+        #[arg(long = "file")]
+        file: String,
+    },
+    /// Delete one file from a bank. Directories refuse — wholesale
+    /// removal is the operator's hand.
+    Rm {
+        /// The bank's name (FQN or bare stem).
+        bank: String,
+        /// The file's path, relative to the bank's root.
+        path: String,
     },
     /// The room's banks — every stone's storage, from the one cache.
     Garden,
@@ -487,6 +526,38 @@ impl Cli {
         remember_attachment(&cand, &[]);
         Ok((cand, value))
     }
+
+    /// Run ONE raw-bytes request against the first moss that answers —
+    /// the file verbs' front door, the same cascade and halt law as
+    /// [`Cli::stone_op`]. Files can be big: the mutation budget rides
+    /// reads as well as writes (one wide budget, P1).
+    async fn stone_bytes(
+        &self,
+        method: &'static str,
+        path: String,
+        body: Option<Vec<u8>>,
+    ) -> Result<(Candidate, u16, Vec<u8>), String> {
+        let owned = body;
+        self.walk(true, "no moss answered; nothing was changed", move |cand| {
+            let method = method.to_string();
+            let path = path.clone();
+            let body = owned.clone();
+            async move {
+                moss_http::request_bytes(
+                    &method,
+                    cand.ip,
+                    cand.http_port,
+                    &path,
+                    Some("application/octet-stream"),
+                    body.as_deref(),
+                    MUTATION_HTTP_TIMEOUT,
+                )
+                .await
+            }
+        })
+        .await
+        .map(|(cand, (status, bytes))| (cand, status, bytes))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -672,6 +743,121 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
             println!("  the garden hears the news within one song");
             Ok(())
         }
+        Some(StorageCmd::Files { bank, path }) => {
+            let mut target = paths::storage_files(bank);
+            if let Some(dir) = path {
+                target = format!("{}?path={}", target, paths::encode_segment(dir));
+            }
+            let (_, v) = cli.stone_op("GET", target, None).await?;
+            if cli.json {
+                return emit_output(&v, cli);
+            }
+            render_bank_files(&envelope_plain(&v)?)
+        }
+        Some(StorageCmd::Get { bank, path, out }) => {
+            // The file IS the output — --json has nothing to re-render,
+            // so the raw bytes ride to --out or stdout untouched.
+            let (_, status, bytes) =
+                cli.stone_bytes("GET", paths::storage_file(bank, path), None).await?;
+            if status != 200 {
+                return Err(raw_refusal(status, &bytes));
+            }
+            match out {
+                Some(dest) => {
+                    std::fs::write(dest, &bytes)
+                        .map_err(|e| format!("could not write '{}': {e}", dest.display()))?;
+                    println!("{} → {} ({} bytes)", path, dest.display(), bytes.len());
+                }
+                None => {
+                    std::io::stdout()
+                        .write_all(&bytes)
+                        .map_err(|e| format!("could not write stdout: {e}"))?;
+                }
+            }
+            Ok(())
+        }
+        Some(StorageCmd::Put { bank, path, file }) => {
+            let bytes = read_local(file)?;
+            let (_, status, body) = cli
+                .stone_bytes("PUT", paths::storage_file(bank, path), Some(bytes))
+                .await?;
+            if status != 200 {
+                return Err(raw_refusal(status, &body));
+            }
+            let v: serde_json::Value = serde_json::from_slice(&body)
+                .map_err(|e| format!("moss answered unparsable: {e}"))?;
+            if cli.json {
+                return emit_output(&v, cli);
+            }
+            let written = v["data"]["size_bytes"].as_u64().unwrap_or(0);
+            println!(
+                "{} written onto {} ({} bytes)",
+                path,
+                display_name(bank),
+                written
+            );
+            Ok(())
+        }
+        Some(StorageCmd::Rm { bank, path }) => {
+            let (_, status, body) =
+                cli.stone_bytes("DELETE", paths::storage_file(bank, path), None).await?;
+            if status != 200 {
+                return Err(raw_refusal(status, &body));
+            }
+            if cli.json {
+                let v: serde_json::Value = serde_json::from_slice(&body)
+                    .map_err(|e| format!("moss answered unparsable: {e}"))?;
+                return emit_output(&v, cli);
+            }
+            println!("{} removed from {}", path, display_name(bank));
+            Ok(())
+        }
+    }
+}
+
+/// A bank's directory listing: one row per entry, directories marked.
+fn render_bank_files(v: &serde_json::Value) -> Result<(), String> {
+    let rows = v["files"].as_array();
+    match rows {
+        Some(r) if !r.is_empty() => {
+            println!("{:<40} {:<5} {:>10}  MODIFIED", "NAME", "KIND", "SIZE");
+            for e in r {
+                println!(
+                    "{:<40} {:<5} {:>10}  {}",
+                    e["name"].as_str().unwrap_or("?"),
+                    e["kind"].as_str().unwrap_or("?"),
+                    e["size_bytes"].as_u64().map(human_bytes).unwrap_or_else(|| "-".into()),
+                    e["modified_at"].as_str().unwrap_or("-"),
+                );
+            }
+        }
+        _ => println!("The bank holds no files here."),
+    }
+    Ok(())
+}
+
+/// Read the `--file` side of `storage put`: a local path, or `-` for stdin.
+fn read_local(source: &str) -> Result<Vec<u8>, String> {
+    if source == "-" {
+        let mut buf = Vec::new();
+        std::io::stdin()
+            .lock()
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("could not read stdin: {e}"))?;
+        return Ok(buf);
+    }
+    std::fs::read(source).map_err(|e| format!("could not read '{source}': {e}"))
+}
+
+/// A non-200 answer from a raw-bytes request: pull the moss's error
+/// envelope message when one rides the body, else name the status.
+fn raw_refusal(status: u16, body: &[u8]) -> String {
+    let text = String::from_utf8_lossy(body);
+    match serde_json::from_str::<serde_json::Value>(text.trim()) {
+        Ok(v) if v["error"]["message"].is_string() => {
+            v["error"]["message"].as_str().unwrap_or_default().to_string()
+        }
+        _ => format!("HTTP {status}"),
     }
 }
 
@@ -936,12 +1122,48 @@ mod paths {
     pub const STORAGE_GARDEN: &str = "/api/v1/garden/storage";
     /// The eject verb's face.
     pub fn storage_eject(bank: &str) -> String {
-        format!("{STORAGE}/{bank}/eject")
+        format!("{STORAGE}/{}/eject", encode_segment(bank))
     }
 
     /// The roles declaration's face.
     pub fn storage_roles(bank: &str) -> String {
-        format!("{STORAGE}/{bank}/roles")
+        format!("{STORAGE}/{}/roles", encode_segment(bank))
+    }
+
+    /// The bank-files list face.
+    pub fn storage_files(bank: &str) -> String {
+        format!("{STORAGE}/{}/files", encode_segment(bank))
+    }
+
+    /// One file's face on a bank. The path is wire-encoded whole — `/`
+    /// inside a name nests on the bank, everything unsafe escapes.
+    pub fn storage_file(bank: &str, path: &str) -> String {
+        format!(
+            "{STORAGE}/{}/files/{}",
+            encode_segment(bank),
+            encode_segment(path)
+        )
+    }
+
+    /// Percent-encode one wire path segment: everything outside the
+    /// unreserved set escapes, so names with spaces, `#` or `/` ride
+    /// correctly. Zero deps (P5) — one table of safe bytes.
+    pub fn encode_segment(s: &str) -> String {
+        const HEX: &[u8; 16] = b"0123456789ABCDEF";
+        let mut out = String::with_capacity(s.len());
+        for b in s.bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                    out.push(b as char)
+                }
+                other => {
+                    out.push('%');
+                    out.push(HEX[usize::from(other >> 4)] as char);
+                    out.push(HEX[usize::from(other & 15)] as char);
+                }
+            }
+        }
+        out
     }
 
     /// The living will's faces (ADR-0005 §2).
@@ -1350,6 +1572,54 @@ mod tests {
         assert_eq!(err, "response lacked data.offering");
         let err = envelope_plain(&serde_json::json!({})).unwrap_err();
         assert!(err.contains("data"));
+    }
+
+    /// The wire encoder: safe bytes ride raw, everything unsafe escapes —
+    /// including `/` (which would otherwise nest the path on the bank)
+    /// and the `::` of an FQN.
+    #[test]
+    fn path_encoding_escapes_everything_unsafe() {
+        assert_eq!(paths::encode_segment("seed-vault::default"), "seed-vault%3A%3Adefault");
+        assert_eq!(paths::encode_segment("dumps/notes.txt"), "dumps%2Fnotes.txt");
+        assert_eq!(paths::encode_segment("my file#1.txt"), "my%20file%231.txt");
+        assert_eq!(paths::encode_segment("plain-._~name"), "plain-._~name");
+
+        let face = paths::storage_file("seed-vault::default", "dumps/notes.txt");
+        assert_eq!(face, "/api/v1/storage/seed-vault%3A%3Adefault/files/dumps%2Fnotes.txt");
+        assert_eq!(
+            paths::storage_files("seed-vault"),
+            "/api/v1/storage/seed-vault/files",
+            "a bare stem has nothing to escape"
+        );
+    }
+
+    /// The listing renders one row per entry; sparse rows cannot crash it.
+    #[test]
+    fn bank_files_render_tolerates_the_sparse() {
+        render_bank_files(&serde_json::json!({
+            "bank": "seed-vault::default",
+            "path": "",
+            "files": [
+                { "name": "dumps", "kind": "dir", "size_bytes": null, "modified_at": "2026-08-28T10:00:00Z" },
+                { "name": "notes.txt", "kind": "file", "size_bytes": 10 }
+            ]
+        }))
+        .unwrap();
+        // The empty and malformed answers render too (L3: never a crash).
+        render_bank_files(&serde_json::json!({ "files": [] })).unwrap();
+        render_bank_files(&serde_json::json!({})).unwrap();
+    }
+
+    /// The raw refusal: envelope messages surface verbatim, foreign
+    /// bodies degrade to the status (L21 — rake speaks moss's refusals).
+    #[test]
+    fn raw_refusals_speak_the_moss_envelope() {
+        let body = br#"{"error":{"message":"nothing answers at 'x' on this bank"}}"#;
+        assert_eq!(
+            raw_refusal(404, body),
+            "nothing answers at 'x' on this bank"
+        );
+        assert_eq!(raw_refusal(502, b"<html>gateway</html>"), "HTTP 502");
     }
 
     #[test]

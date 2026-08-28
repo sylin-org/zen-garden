@@ -339,6 +339,232 @@ impl Storage {
             .cloned()
             .collect()
     }
+
+    /// Resolve a bank to its mounted volume root — the gate every file
+    /// operation passes. The FQN is canonicalized (bare stems speak their
+    /// communal ::default); an ejected bank refuses: its volume does not
+    /// answer, whatever the map says.
+    pub fn bank_root(&self, fqn: &str) -> Result<(Bank, PathBuf), FilesError> {
+        let canonical = garden_glossary::fqn::canonicalize(fqn)
+            .map_err(|_| FilesError::UnknownBank(fqn.to_string()))?;
+        let banks = self.banks.lock();
+        let bank = banks
+            .get(&canonical)
+            .ok_or_else(|| FilesError::UnknownBank(canonical.clone()))?;
+        if bank.state != vocab::MOUNTED {
+            return Err(FilesError::NotMounted(bank.fqn.clone()));
+        }
+        Ok((bank.clone(), PathBuf::from(&bank.mount_point)))
+    }
+}
+
+/// Why a bank-file operation refused. Errors answer three questions (R3.3).
+#[derive(Debug)]
+pub enum FilesError {
+    /// No bank by that name is adopted on this stone.
+    UnknownBank(String),
+    /// The bank is adopted but its volume is not present (ejected).
+    NotMounted(String),
+    /// The path does not name a file under the bank: traversal, escape,
+    /// or the garden's own adoption record.
+    BadPath(String),
+    /// The path names a directory but the verb needs a file (or the
+    /// reverse: a file where the verb needs a directory).
+    NotThatKind(String),
+    /// The path names nothing on the volume.
+    Missing(String),
+    /// The filesystem refused.
+    Io(String),
+}
+
+impl std::fmt::Display for FilesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownBank(n) => write!(
+                f,
+                "no bank '{n}' is adopted here — rake storage lists what this stone holds"
+            ),
+            Self::NotMounted(n) => write!(
+                f,
+                "'{n}' is ejected — its volume does not answer; replug it (rake storage shows the state)"
+            ),
+            Self::BadPath(p) => write!(f, "{p}"),
+            Self::NotThatKind(p) => write!(f, "{p}"),
+            Self::Missing(p) => write!(f, "nothing answers at '{p}' on this bank"),
+            Self::Io(e) => write!(f, "the bank's filesystem refused: {e}"),
+        }
+    }
+}
+
+/// One row of a bank directory listing.
+#[derive(Debug, Clone, Serialize)]
+pub struct FileEntry {
+    /// Name within its directory (no separators).
+    pub name: String,
+    /// file | dir (the two kinds the files API speaks).
+    pub kind: String,
+    /// Bytes on disk; files only.
+    pub size_bytes: Option<u64>,
+    /// Last modification, when the filesystem knows.
+    pub modified_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Join a bank root with a wire path (`a/b/c`, `/`-separated, relative),
+/// refusing every escape before the filesystem sees it:
+///   · no `..` — the single law that makes the rest decoration,
+///   · no absolute forms (leading `/`, Windows prefixes) — the wire path
+///     is relative by definition,
+///   · no [`MANIFEST_DIR`] — the adoption record is ceremony-owned
+///     (STORAGE-0009); file operations never see it,
+///   · empties and `.` collapse; a path that collapses to nothing is not
+///     a file.
+/// A final canonicalize-and-prefix check runs at call sites for anything
+/// that touches the disk (symlinks planted on the media cannot launder a
+/// path past it).
+pub fn safe_join(mount: &Path, rel: &str) -> Result<PathBuf, FilesError> {
+    let refuse = |why: String| Err(FilesError::BadPath(why));
+    if rel.starts_with('/') || rel.starts_with('\\') {
+        return refuse(format!(
+            "'{rel}' is absolute — bank paths are relative to the bank's root"
+        ));
+    }
+    let mut joined = mount.to_path_buf();
+    for part in rel.split(['/', '\\']) {
+        match part {
+            "" | "." => continue,
+            ".." => {
+                return refuse(format!(
+                    "'{rel}' climbs out of the bank ('..') — paths stay under the bank's root"
+                ));
+            }
+            MANIFEST_DIR => {
+                return refuse(format!(
+                    "'.{MANIFEST_DIR}' is the adoption record — ceremony-owned, always closed"
+                ));
+            }
+            p => joined.push(p),
+        }
+    }
+    if joined == mount {
+        return refuse(format!(
+            "'{rel}' names no file — give a path under the bank's root"
+        ));
+    }
+    Ok(joined)
+}
+
+/// The canonicalize-and-prefix check: the target (or its deepest existing
+/// ancestor, for writes) must truly live under the mount. Catches what
+/// lexicals cannot see — a symlink on the media pointing outward.
+fn verify_under_mount(mount: &Path, target: &Path) -> Result<(), FilesError> {
+    let mount_real = std::fs::canonicalize(mount)
+        .map_err(|e| FilesError::Io(format!("{}: {e}", mount.display())))?;
+    let mut probe = target.to_path_buf();
+    while !probe.as_os_str().is_empty() {
+        if let Ok(real) = std::fs::canonicalize(&probe) {
+            if !real.starts_with(&mount_real) {
+                return Err(FilesError::BadPath(format!(
+                    "'{}' resolves outside the bank — the path refuses",
+                    rel_of(mount, target)
+                )));
+            }
+            return Ok(());
+        }
+        probe = probe
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+    }
+    Ok(())
+}
+
+/// The wire spelling of a resolved path (for error messages).
+fn rel_of(mount: &Path, target: &Path) -> String {
+    target
+        .strip_prefix(mount)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| target.display().to_string())
+}
+
+/// List a directory on a bank, sorted by name. The adoption record's
+/// dotfolder is invisible — the ceremony's business stays off the wire.
+pub fn list_dir(mount: &Path, dir: &Path) -> Result<Vec<FileEntry>, FilesError> {
+    verify_under_mount(mount, dir)?;
+    let mut out = Vec::new();
+    let io_err = |e: std::io::Error| match e.kind() {
+        std::io::ErrorKind::NotFound => FilesError::Missing(rel_of(mount, dir)),
+        _ => FilesError::Io(format!("{}: {e}", dir.display())),
+    };
+    for entry in std::fs::read_dir(dir).map_err(io_err)? {
+        let entry = entry.map_err(io_err)?;
+        if entry.file_name() == MANIFEST_DIR {
+            continue;
+        }
+        let meta = entry.metadata().map_err(io_err)?;
+        out.push(FileEntry {
+            name: entry.file_name().display().to_string(),
+            kind: if meta.is_dir() { "dir" } else { "file" }.into(),
+            size_bytes: meta.is_file().then_some(meta.len()),
+            modified_at: meta
+                .modified()
+                .ok()
+                .map(chrono::DateTime::<chrono::Utc>::from),
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// Read one file from a bank.
+pub fn read_file(mount: &Path, path: &Path) -> Result<Vec<u8>, FilesError> {
+    verify_under_mount(mount, path)?;
+    let meta = std::fs::metadata(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => FilesError::Missing(rel_of(mount, path)),
+        _ => FilesError::Io(format!("{}: {e}", path.display())),
+    })?;
+    if meta.is_dir() {
+        return Err(FilesError::NotThatKind(format!(
+            "'{}' is a directory — the files face lists directories, it does not read them",
+            rel_of(mount, path)
+        )));
+    }
+    std::fs::read(path).map_err(|e| FilesError::Io(format!("{}: {e}", path.display())))
+}
+
+/// Write one file onto a bank, creating parent directories. Returns the
+/// bytes written (the file's new size).
+pub fn write_file(mount: &Path, path: &Path, bytes: &[u8]) -> Result<u64, FilesError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| FilesError::Io(format!("{}: {e}", parent.display())))?;
+    }
+    verify_under_mount(mount, path)?;
+    if std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
+        return Err(FilesError::NotThatKind(format!(
+            "'{}' is a directory — a file cannot be written over it",
+            rel_of(mount, path)
+        )));
+    }
+    std::fs::write(path, bytes).map_err(|e| FilesError::Io(format!("{}: {e}", path.display())))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Delete one file from a bank. Directories refuse: wholesale removal is
+/// the operator's hand (or the will's pipeline), not a stray verb.
+pub fn delete_file(mount: &Path, path: &Path) -> Result<(), FilesError> {
+    verify_under_mount(mount, path)?;
+    let meta = std::fs::metadata(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => FilesError::Missing(rel_of(mount, path)),
+        _ => FilesError::Io(format!("{}: {e}", path.display())),
+    })?;
+    if meta.is_dir() {
+        return Err(FilesError::NotThatKind(format!(
+            "'{}' is a directory — delete its files, or eject the bank to release the whole volume",
+            rel_of(mount, path)
+        )));
+    }
+    std::fs::remove_file(path)
+        .map_err(|e| FilesError::Io(format!("{}: {e}", path.display())))
 }
 
 /// Read the garden manifest off a volume, if one rides it.
@@ -608,5 +834,181 @@ mod tests {
         storage.reconcile(&[fatter]);
         assert_ne!(*signal.borrow(), before);
         assert_eq!(storage.banks()[0].state, vocab::MOUNTED);
+    }
+
+    // ---- bank file operations -----------------------------------------
+
+    /// The safe_join law: relative in, under-the-bank out; every escape
+    /// refuses with a message that teaches (R3.3).
+    #[test]
+    fn safe_join_refuses_every_escape() {
+        let mount = Path::new("/media/vault");
+        assert_eq!(
+            safe_join(mount, "dumps/redis.rdb").unwrap(),
+            mount.join("dumps").join("redis.rdb")
+        );
+        assert_eq!(safe_join(mount, "a/./b").unwrap(), mount.join("a").join("b"));
+
+        for bad in [
+            "../sibling",
+            "a/../../b",
+            "/etc/passwd",
+            "\\windows\\escape",
+            ".zen-garden/manifest.json",
+            "seeds/.zen-garden/x",
+            "",
+            ".",
+        ] {
+            assert!(
+                matches!(safe_join(mount, bad), Err(FilesError::BadPath(_))),
+                "'{bad}' must refuse"
+            );
+        }
+    }
+
+    /// The CRUD roundtrip over a real mounted bank: write, list, read,
+    /// delete — and the adoption record stays invisible the whole way.
+    #[test]
+    fn bank_files_crud_roundtrip() {
+        let tmp = std::env::temp_dir().join(format!("zg-files-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let storage = Storage::new();
+        storage
+            .adopt(
+                &VolumeFact {
+                    mount_point: tmp.clone(),
+                    device_id: None,
+                    fqn: None,
+                    capacity_bytes: 1_000_000,
+                    available_bytes: 900_000,
+                },
+                "seed-vault",
+                "stone-1",
+            )
+            .unwrap();
+        let (_, root) = storage.bank_root("seed-vault").unwrap();
+
+        // Write through a directory that does not exist yet.
+        let n = write_file(&root, &safe_join(&root, "dumps/redis.rdb").unwrap(), b"RDBDATA").unwrap();
+        assert_eq!(n, 7);
+        // Overwrite is a write too.
+        let n = write_file(&root, &safe_join(&root, "dumps/redis.rdb").unwrap(), b"RDBDATA2").unwrap();
+        assert_eq!(n, 8);
+
+        let entries = list_dir(&root, &root).unwrap();
+        assert_eq!(entries.len(), 1, "the adoption record is invisible");
+        assert_eq!(entries[0].name, "dumps");
+        assert_eq!(entries[0].kind, "dir");
+
+        let dumps = safe_join(&root, "dumps").unwrap();
+        let entries = list_dir(&root, &dumps).unwrap();
+        assert_eq!(entries[0].name, "redis.rdb");
+        assert_eq!(entries[0].kind, "file");
+        assert_eq!(entries[0].size_bytes, Some(8));
+
+        let bytes = read_file(&root, &safe_join(&root, "dumps/redis.rdb").unwrap()).unwrap();
+        assert_eq!(bytes, b"RDBDATA2");
+
+        delete_file(&root, &safe_join(&root, "dumps/redis.rdb").unwrap()).unwrap();
+        assert!(matches!(
+            read_file(&root, &safe_join(&root, "dumps/redis.rdb").unwrap()),
+            Err(FilesError::Missing(_))
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Verbs and kinds agree: reading a directory refuses with the way
+    /// out, deleting one refuses louder, and the manifest dotfolder is
+    /// ceremony-owned at every level.
+    #[test]
+    fn file_verbs_refuse_the_wrong_kind_and_the_manifest() {
+        let tmp = std::env::temp_dir().join(format!("zg-files2-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(tmp.join("sub")).unwrap();
+        let storage = Storage::new();
+        storage
+            .adopt(
+                &VolumeFact {
+                    mount_point: tmp.clone(),
+                    device_id: None,
+                    fqn: None,
+                    capacity_bytes: 1,
+                    available_bytes: 1,
+                },
+                "seed-vault",
+                "stone-1",
+            )
+            .unwrap();
+        let (_, root) = storage.bank_root("seed-vault::default").unwrap();
+
+        assert!(matches!(
+            read_file(&root, &safe_join(&root, "sub").unwrap()),
+            Err(FilesError::NotThatKind(_))
+        ));
+        assert!(matches!(
+            delete_file(&root, &safe_join(&root, "sub").unwrap()),
+            Err(FilesError::NotThatKind(_))
+        ));
+        assert!(matches!(
+            safe_join(&root, "sub/.zen-garden/thing").unwrap_err(),
+            FilesError::BadPath(_)
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A symlink on the media pointing outward cannot launder a read past
+    /// the prefix check (the lexical law's second line of defense).
+    #[cfg(unix)]
+    #[test]
+    fn symlink_escape_refuses() {
+        let outside = std::env::temp_dir().join(format!("zg-outside-{}", uuid::Uuid::now_v7()));
+        let tmp = std::env::temp_dir().join(format!("zg-files3-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(outside.join("secret"), b"nope").unwrap();
+        std::os::unix::fs::symlink(&outside, tmp.join("door")).unwrap();
+
+        let storage = Storage::new();
+        storage
+            .adopt(
+                &VolumeFact {
+                    mount_point: tmp.clone(),
+                    device_id: None,
+                    fqn: None,
+                    capacity_bytes: 1,
+                    available_bytes: 1,
+                },
+                "seed-vault",
+                "stone-1",
+            )
+            .unwrap();
+        let (_, root) = storage.bank_root("seed-vault").unwrap();
+        let smuggled = safe_join(&root, "door/secret").unwrap();
+        assert!(
+            matches!(read_file(&root, &smuggled), Err(FilesError::BadPath(_))),
+            "the symlink must not read outside the bank"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    /// The bank_root gate: unknown banks and ejected banks refuse before
+    /// any filesystem question is asked.
+    #[test]
+    fn bank_root_gates_unknown_and_ejected() {
+        let tmp = std::env::temp_dir().join(format!("zg-files4-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let storage = Storage::new();
+        storage.reconcile(&[vol(tmp.to_str().unwrap(), true)]);
+
+        assert!(matches!(
+            storage.bank_root("ghost"),
+            Err(FilesError::UnknownBank(_))
+        ));
+        storage.eject("seed-vault").unwrap();
+        assert!(matches!(
+            storage.bank_root("seed-vault"),
+            Err(FilesError::NotMounted(_))
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

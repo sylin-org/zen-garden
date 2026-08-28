@@ -61,6 +61,48 @@ pub async fn request_json(
     body: Option<&serde_json::Value>,
     timeout: Duration,
 ) -> Result<serde_json::Value, AttachError> {
+    let payload = body.map(serde_json::to_vec).transpose().map_err(|e| {
+        AttachError::ProcessingError(format!("request body would not serialize: {e}"))
+    })?;
+    let (status, raw) = request_bytes(
+        method,
+        ip,
+        port,
+        path,
+        Some("application/json"),
+        payload.as_deref(),
+        timeout,
+    )
+    .await?;
+    json_from_parts(status, &raw)
+}
+
+/// Status + body bytes → JSON answer or honest `AttachError`. The one
+/// interpretation shared by the JSON and raw transports.
+fn json_from_parts(status: u16, body: &[u8]) -> Result<serde_json::Value, AttachError> {
+    if status != 200 {
+        return Err(AttachError::ResponseError(
+            status,
+            error_message(&String::from_utf8_lossy(body)),
+        ));
+    }
+    serde_json::from_slice(body)
+        .map_err(|e| AttachError::ProcessingError(format!("body was not JSON: {e}")))
+}
+
+/// One HTTP request carrying raw bytes (or none), answering the status
+/// and the raw body — the file faces' transport (bytes in, bytes out;
+/// JSON is never assumed). Every status rides home; the CALLER decides
+/// what a non-200 means for its verb.
+pub async fn request_bytes(
+    method: &str,
+    ip: IpAddr,
+    port: u16,
+    path: &str,
+    content_type: Option<&str>,
+    body: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<(u16, Vec<u8>), AttachError> {
     let connect = async {
         TcpStream::connect((ip, port))
             .await
@@ -70,17 +112,14 @@ pub async fn request_json(
         .await
         .map_err(|_| AttachError::ConnectionFailed("connect timed out".into()))??;
 
-    let payload = body.map(serde_json::to_vec).transpose().map_err(|e| {
-        AttachError::ProcessingError(format!("request body would not serialize: {e}"))
-    })?;
     let mut req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {ip}:{port}\r\nConnection: close\r\nAccept: application/json\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {ip}:{port}\r\nConnection: close\r\n"
     );
-    if let Some(bytes) = &payload {
-        req.push_str(&format!(
-            "Content-Type: application/json\r\nContent-Length: {}\r\n",
-            bytes.len()
-        ));
+    if let Some(ct) = content_type {
+        req.push_str(&format!("Content-Type: {ct}\r\n"));
+    }
+    if let Some(bytes) = body {
+        req.push_str(&format!("Content-Length: {}\r\n", bytes.len()));
     }
     req.push_str("\r\n");
 
@@ -89,7 +128,7 @@ pub async fn request_json(
             .write_all(req.as_bytes())
             .await
             .map_err(|e| AttachError::ConnectionFailed(e.to_string()))?;
-        if let Some(bytes) = &payload {
+        if let Some(bytes) = body {
             stream
                 .write_all(bytes)
                 .await
@@ -115,17 +154,20 @@ pub async fn request_json(
         .map_err(|_| AttachError::ConnectionFailed("read timed out".into()))?
         .map_err(AttachError::ConnectionFailed)?;
 
-    parse_response(&raw)
+    parse_response_bytes(&raw)
 }
 
-/// Split status line / headers / body and parse. Pure — pinned by tests.
-fn parse_response(raw: &[u8]) -> Result<serde_json::Value, AttachError> {
-    let text_err = |_| AttachError::ProcessingError("response was not valid UTF-8".into());
-    let full = std::str::from_utf8(raw).map_err(text_err)?;
-    let (head, body) = full
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| AttachError::ProcessingError("no header/body split".into()))?;
+/// Split status line / headers / body at the byte level and hand back
+/// `(status, body)` — binary-safe (the file faces carry payloads that
+/// are not text). Pure — pinned by tests.
+fn parse_response_bytes(raw: &[u8]) -> Result<(u16, Vec<u8>), AttachError> {
+    let Some(split) = find(raw, b"\r\n\r\n") else {
+        return Err(AttachError::ProcessingError("no header/body split".into()));
+    };
+    let (head, body) = (&raw[..split], &raw[split + 4..]);
 
+    let head = std::str::from_utf8(head)
+        .map_err(|_| AttachError::ProcessingError("unreadable headers".into()))?;
     let status_line = head.lines().next().unwrap_or("");
     let status: u16 = status_line
         .split_whitespace()
@@ -133,28 +175,27 @@ fn parse_response(raw: &[u8]) -> Result<serde_json::Value, AttachError> {
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| AttachError::ProcessingError("unreadable status line".into()))?;
 
-    let chunked = head
-        .lines()
-        .skip(1)
-        .filter_map(|l| l.split_once(':'))
-        .any(|(k, v)| {
+    let chunked = head.lines().skip(1).filter_map(|l| l.split_once(':')).any(
+        |(k, v)| {
             k.trim().eq_ignore_ascii_case("transfer-encoding")
                 && v.trim().eq_ignore_ascii_case("chunked")
-        });
-    let decoded;
-    let body: &str = if chunked {
-        decoded = dechunk(body)?;
-        &decoded
+        },
+    );
+    let body = if chunked {
+        dechunk_bytes(body)?
     } else {
-        body.trim()
+        body.to_vec()
     };
+    Ok((status, body))
+}
 
-    if status != 200 {
-        return Err(AttachError::ResponseError(status, error_message(body)));
-    }
-
-    serde_json::from_str(body)
-        .map_err(|e| AttachError::ProcessingError(format!("body was not JSON: {e}")))
+/// The raw→JSON pipeline the tests pin: transport bytes in, one answer
+/// out. Production callers ride `request_json`/`request_bytes`; this is
+/// the pure composition of [`parse_response_bytes`] + [`json_from_parts`].
+#[cfg(test)]
+fn parse_response(raw: &[u8]) -> Result<serde_json::Value, AttachError> {
+    let (status, body) = parse_response_bytes(raw)?;
+    json_from_parts(status, &body)
 }
 
 /// Pull the moss's refusal out of its standard error envelope; bodies
@@ -174,34 +215,44 @@ fn error_message(body: &str) -> String {
     }
 }
 
+/// First index of `needle` inside `haystack`, byte-honest.
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 /// Decode Transfer-Encoding: chunked framing into raw body bytes.
 /// Hex sizes per RFC 9112 §7.1; trailers after the zero size are dropped.
-fn dechunk(body: &str) -> Result<String, AttachError> {
-    let mut out = String::new();
-    let mut rest = body;
+/// Byte-level: file payloads are not text and survive whole.
+fn dechunk_bytes(mut body: &[u8]) -> Result<Vec<u8>, AttachError> {
+    let mut out = Vec::new();
     loop {
-        let Some((size_line, tail)) = rest.split_once("\r\n") else {
+        let Some(pos) = find(body, b"\r\n") else {
             return Err(AttachError::ProcessingError(
                 "chunked body ended mid-frame-size".into(),
             ));
         };
+        let size_line = std::str::from_utf8(&body[..pos])
+            .map_err(|_| AttachError::ProcessingError("unreadable chunk size".into()))?;
         let size = usize::from_str_radix(size_line.trim(), 16)
             .map_err(|_| AttachError::ProcessingError("unreadable chunk size".into()))?;
         if size == 0 {
             return Ok(out);
         }
-        if tail.len() < size + 2 {
+        let start = pos + 2;
+        if body.len() < start + size + 2 {
             return Err(AttachError::ProcessingError(
                 "chunked body truncated inside frame".into(),
             ));
         }
-        out.push_str(tail.get(..size).ok_or_else(|| {
-            AttachError::ProcessingError("chunked body index broke UTF-8".into())
-        })?);
-        rest = tail
-            .get(size..)
-            .and_then(|t| t.strip_prefix("\r\n"))
-            .ok_or_else(|| AttachError::ProcessingError("chunk missing terminator".into()))?;
+        out.extend_from_slice(&body[start..start + size]);
+        if &body[start + size..start + size + 2] != b"\r\n" {
+            return Err(AttachError::ProcessingError(
+                "chunk missing terminator".into(),
+            ));
+        }
+        body = &body[start + size + 2..];
     }
 }
 
@@ -286,6 +337,48 @@ mod tests {
             .unwrap();
         server.await.unwrap();
         assert_eq!(v["ok"], true);
+    }
+
+    // ---- the raw transport (the file faces' pipes) ----------------------
+
+    /// Binary payloads survive whole: status and bytes come home apart.
+    #[test]
+    fn binary_bodies_survive_with_content_length() {
+        let payload: Vec<u8> = (0..=255u8).chain([0, 255, 0x0d, 0x0a]).collect();
+        let mut raw = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            payload.len()
+        )
+        .into_bytes();
+        raw.extend_from_slice(&payload);
+
+        let (status, body) = parse_response_bytes(&raw).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body, payload, "every byte, including NULs and CRLFs");
+    }
+
+    /// Chunked framing decodes at the byte level — binary chunks too.
+    #[test]
+    fn dechunk_bytes_keeps_binary_whole() {
+        // Chunk 1 is 4 bytes including an embedded CRLF; chunk 2 is 0xFF.
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
+                    4\r\na\r\nb\r\n1\r\n\xff\r\n0\r\n\r\n";
+        let (status, body) = parse_response_bytes(raw).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body, vec![b'a', b'\r', b'\n', b'b', 0xff]);
+    }
+
+    /// Non-200 rides home with its status — the caller decides (a file
+    /// GET wants to raise 404 as "not on the bank", not as a transport
+    /// fault).
+    #[test]
+    fn non_200_rides_home_with_status_and_body() {
+        let raw = b"HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n\r\n\
+                    {\"error\":{\"message\":\"nothing answers at 'x' on this bank\"}}";
+        let (status, body) = parse_response_bytes(raw).unwrap();
+        assert_eq!(status, 404);
+        let msg = error_message(&String::from_utf8_lossy(&body));
+        assert!(msg.contains("nothing answers"), "{msg}");
     }
 
     /// POST flows carry method, body headers and the payload itself.

@@ -9,7 +9,7 @@
 //! impossible and an unrouted claim fails the manifest gates (L9, R4.7).
 
 use crate::offerings::service::{CommandError, OfferingService};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -71,6 +71,14 @@ enum Face {
     StorageEject,
     /// Declare a bank's roles (sink today; ADR-0005 §4).
     StorageRoles,
+    /// List a bank directory: the files riding the volume.
+    StorageFileList,
+    /// Read one file from a bank.
+    StorageFileGet,
+    /// Write one file onto a bank.
+    StorageFilePut,
+    /// Delete one file from a bank.
+    StorageFileDelete,
     /// Run a will: the capture pipeline (ADR-0005 §2).
     OfferingCapture,
     /// The last capture run of an offering.
@@ -100,7 +108,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 28] = [
+    const ALL: [Face; 32] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -113,6 +121,10 @@ impl Face {
         Face::StorageAdopt,
         Face::StorageEject,
         Face::StorageRoles,
+        Face::StorageFileList,
+        Face::StorageFileGet,
+        Face::StorageFilePut,
+        Face::StorageFileDelete,
         Face::GardenStorage,
         Face::OfferingCapture,
         Face::OfferingCaptureLast,
@@ -142,6 +154,8 @@ impl Face {
             | Face::GardenStones
             | Face::Catalog
             | Face::StorageList
+            | Face::StorageFileList
+            | Face::StorageFileGet
             | Face::GardenStorage
             | Face::OfferingCaptureLast | Face::OfferingList | Face::OfferingShow
             | Face::JobList | Face::JobDetail
@@ -149,7 +163,8 @@ impl Face {
             | Face::StorageAdopt | Face::StorageEject | Face::StorageRoles
             | Face::OfferingCapture | Face::OfferingReplant => "POST",
             Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
-            Face::OfferingUproot => "DELETE",
+            Face::StorageFilePut => "PUT",
+            Face::StorageFileDelete | Face::OfferingUproot => "DELETE",
         }
     }
 
@@ -167,6 +182,10 @@ impl Face {
             Face::StorageAdopt => "/api/v1/storage/adopt",
             Face::StorageRoles => "/api/v1/storage/{fqn}/roles",
             Face::StorageEject => "/api/v1/storage/{fqn}/eject",
+            Face::StorageFileList => "/api/v1/storage/{fqn}/files",
+            Face::StorageFileGet | Face::StorageFilePut | Face::StorageFileDelete => {
+                "/api/v1/storage/{fqn}/files/{*path}"
+            }
             Face::GardenStorage => "/api/v1/garden/storage",
             Face::OfferingList => "/api/v1/offerings",
             Face::OfferingPlant | Face::OfferingShow | Face::OfferingUproot => {
@@ -217,6 +236,22 @@ impl Face {
             }
             Face::StorageRoles => {
                 "Declare a bank's roles: {roles: [sink]} - a sink receives checkpoints (ADR-0005 sec 4)."
+            }
+            Face::StorageFileList => {
+                "List a bank directory (optional ?path= subdirectory): the files riding \
+                 the volume, minus the adoption record."
+            }
+            Face::StorageFileGet => {
+                "Read one file from a bank: the raw bytes, content-type guessed from the \
+                 extension. The path is relative to the bank's root."
+            }
+            Face::StorageFilePut => {
+                "Write one file onto a bank: the raw body, parent directories created. \
+                 Makes a sink a real storage destination."
+            }
+            Face::StorageFileDelete => {
+                "Delete one file from a bank. Directories refuse - wholesale removal is \
+                 the operator's hand."
             }
             Face::GardenStorage => {
                 "Garden data (L22): every bank in the room, self included, from the one cache."
@@ -269,6 +304,10 @@ impl Face {
             Face::StorageAdopt => post(storage_adopt),
             Face::StorageRoles => post(storage_roles),
             Face::StorageEject => post(storage_eject),
+            Face::StorageFileList => get(storage_files_list),
+            Face::StorageFileGet => get(storage_file_get),
+            Face::StorageFilePut => axum::routing::put(storage_file_put),
+            Face::StorageFileDelete => axum::routing::delete(storage_file_delete),
             Face::GardenStorage => get(garden_storage),
             Face::OfferingList => get(offerings_list),
             Face::OfferingPlant => post(plant_offering),
@@ -669,6 +708,124 @@ async fn storage_roles(
     Ok(Json(serde_json::json!({ "data": { "bank": bank } })))
 }
 
+// ---- bank files: CRUD on a mounted bank's volume ---------------------------
+// The gate is one: `Storage::bank_root` resolves the FQN to a mounted
+// volume; `safe_join` keeps every path under it. The adoption record
+// (`.zen-garden`) is ceremony-owned and never crosses this surface.
+
+/// The one mapping from the storage domain's file refusals onto the
+/// command taxonomy (each refuses as it truly is — R3.3).
+fn files_err(e: crate::offerings::storage::FilesError) -> CommandError {
+    use crate::offerings::storage::FilesError;
+    match &e {
+        FilesError::UnknownBank(_) | FilesError::Missing(_) => {
+            CommandError::NotFound(e.to_string())
+        }
+        FilesError::NotMounted(_) | FilesError::NotThatKind(_) => {
+            CommandError::Conflict(e.to_string())
+        }
+        FilesError::BadPath(_) => CommandError::BadRequest(e.to_string()),
+        FilesError::Io(_) => CommandError::Runtime(
+            crate::offerings::runtime::RuntimeError::Failed(e.to_string()),
+        ),
+    }
+}
+
+/// List a bank directory (`?path=` names a subdirectory; absent = the
+/// bank's root).
+async fn storage_files_list(
+    State(state): State<Arc<AppState>>,
+    Path(fqn): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> ApiResult {
+    use crate::offerings::storage::{list_dir, safe_join};
+    let rel = params.get("path").map(String::as_str).unwrap_or("");
+    let (bank, root) = state.storage.bank_root(&fqn).map_err(files_err)?;
+    let dir = if rel.is_empty() {
+        root.clone()
+    } else {
+        safe_join(&root, rel).map_err(files_err)?
+    };
+    let files = list_dir(&root, &dir).map_err(files_err)?;
+    Ok(Json(
+        serde_json::json!({ "data": { "bank": bank.fqn, "path": rel, "files": files } }),
+    ))
+}
+
+/// Read one file from a bank: the raw bytes ride alone, content-type
+/// guessed from the extension (payload faces are not envelope faces —
+/// the portrait and the pulse set the precedent).
+async fn storage_file_get(
+    State(state): State<Arc<AppState>>,
+    Path((fqn, rel)): Path<(String, String)>,
+) -> Result<axum::response::Response, ApiError> {
+    use crate::offerings::storage::{read_file, safe_join};
+    let (_, root) = state.storage.bank_root(&fqn).map_err(files_err)?;
+    let path = safe_join(&root, &rel).map_err(files_err)?;
+    let bytes = read_file(&root, &path).map_err(files_err)?;
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, content_type_for(&rel))],
+        bytes,
+    )
+        .into_response())
+}
+
+/// Write one file onto a bank: the raw body, parents created.
+async fn storage_file_put(
+    State(state): State<Arc<AppState>>,
+    Path((fqn, rel)): Path<(String, String)>,
+    body: axum::body::Bytes,
+) -> ApiResult {
+    use crate::offerings::storage::{safe_join, write_file};
+    let (bank, root) = state.storage.bank_root(&fqn).map_err(files_err)?;
+    let path = safe_join(&root, &rel).map_err(files_err)?;
+    let n = write_file(&root, &path, &body).map_err(files_err)?;
+    tracing::info!(bank = %bank.fqn, path = %rel, bytes = n, "file written onto a bank");
+    Ok(Json(
+        serde_json::json!({ "data": { "bank": bank.fqn, "path": rel, "size_bytes": n } }),
+    ))
+}
+
+/// Delete one file from a bank.
+async fn storage_file_delete(
+    State(state): State<Arc<AppState>>,
+    Path((fqn, rel)): Path<(String, String)>,
+) -> ApiResult {
+    use crate::offerings::storage::{delete_file, safe_join};
+    let (bank, root) = state.storage.bank_root(&fqn).map_err(files_err)?;
+    let path = safe_join(&root, &rel).map_err(files_err)?;
+    delete_file(&root, &path).map_err(files_err)?;
+    tracing::info!(bank = %bank.fqn, path = %rel, "file deleted from a bank");
+    Ok(Json(
+        serde_json::json!({ "data": { "bank": bank.fqn, "path": rel, "deleted": true } }),
+    ))
+}
+
+/// A small honest content-type table — extension guessed, everything else
+/// rides as octet-stream. No mime crate: the surface stays lean (P5).
+fn content_type_for(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "txt" | "log" | "conf" | "toml" | "yaml" | "yml" | "csv" => "text/plain; charset=utf-8",
+        "json" => "application/json",
+        "html" | "htm" => "text/html; charset=utf-8",
+        "md" => "text/markdown; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "pdf" => "application/pdf",
+        "tar" => "application/x-tar",
+        "gz" => "application/gzip",
+        "zst" => "application/zstd",
+        _ => "application/octet-stream",
+    }
+}
+
 /// The collection: every offering placed on this stone.
 async fn offerings_list(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let rows: Vec<serde_json::Value> =
@@ -949,8 +1106,10 @@ impl From<CommandError> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         use CommandError::*;
-        let status = match self.0 {            NotFound(_) => axum::http::StatusCode::NOT_FOUND,
+        let status = match self.0 {
+            NotFound(_) => axum::http::StatusCode::NOT_FOUND,
             Conflict(_) => axum::http::StatusCode::CONFLICT,
+            BadRequest(_) => axum::http::StatusCode::BAD_REQUEST,
             WorldUnavailable(_) => axum::http::StatusCode::SERVICE_UNAVAILABLE,
             Runtime(_) => axum::http::StatusCode::BAD_GATEWAY,
         };
@@ -1433,6 +1592,181 @@ mod tests {
         assert_eq!(res.status(), StatusCode::CONFLICT);
         let res = send(&app, "POST", "/api/v1/storage/nobody/eject").await;
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ---- bank files: the storage data plane over the real router -------
+
+    /// A test state whose stone holds a bank on a real temp volume.
+    async fn state_with_bank() -> (Arc<AppState>, std::path::PathBuf) {
+        let state = test_state();
+        let tmp = std::env::temp_dir().join(format!("zg-http-files-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        state
+            .storage
+            .adopt(
+                &crate::offerings::storage::VolumeFact {
+                    mount_point: tmp.clone(),
+                    device_id: None,
+                    fqn: None,
+                    capacity_bytes: 1_000_000,
+                    available_bytes: 900_000,
+                },
+                "seed-vault",
+                "0198e0c7-0000-7000-8000-000000000001",
+            )
+            .unwrap();
+        (state, tmp)
+    }
+
+    /// Like `send`, but carrying a raw body (the file verbs' payloads).
+    async fn send_bytes(
+        app: &Router,
+        method: &str,
+        path: &str,
+        body: &[u8],
+    ) -> axum::http::Response<axum::body::Body> {
+        let req = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/octet-stream")
+            .body(axum::body::Body::from(body.to_vec()))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap()
+    }
+
+    async fn body_json(res: &mut axum::http::Response<axum::body::Body>) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(std::mem::take(res).into_body(), 1_000_000)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// The CRUD roundtrip: put creates parents and reports size, get rides
+    /// the raw bytes with a guessed type, list shows files but never the
+    /// adoption record, delete removes, and the gone file answers 404.
+    #[tokio::test]
+    async fn bank_files_crud_over_http() {
+        let (state, tmp) = state_with_bank().await;
+        let app = router(state);
+        let base = "/api/v1/storage/seed-vault/files";
+
+        let mut res =
+            send_bytes(&app, "PUT", &format!("{base}/dumps/notes.txt"), b"hello bank").await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let v = body_json(&mut res).await;
+        assert_eq!(v["data"]["size_bytes"], 10, "the write is sized honestly");
+        assert_eq!(v["data"]["bank"], "seed-vault::default");
+
+        let res = send(&app, "GET", &format!("{base}/dumps/notes.txt")).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            res.headers()[axum::http::header::CONTENT_TYPE],
+            "text/plain; charset=utf-8",
+            "the extension guesses the type"
+        );
+        let bytes = axum::body::to_bytes(res.into_body(), 1_000_000).await.unwrap();
+        assert_eq!(&bytes[..], b"hello bank", "the raw bytes ride alone");
+
+        let mut res = send(&app, "GET", base).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let v = body_json(&mut res).await;
+        let rows = v["data"]["files"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "only dumps shows — the adoption record is invisible");
+        assert_eq!(rows[0]["name"], "dumps");
+        assert_eq!(rows[0]["kind"], "dir");
+
+        let mut res = send(&app, "GET", &format!("{base}?path=dumps")).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let v = body_json(&mut res).await;
+        let rows = v["data"]["files"].as_array().unwrap();
+        assert_eq!(rows[0]["name"], "notes.txt");
+        assert_eq!(rows[0]["size_bytes"], 10);
+
+        let mut res = send(&app, "DELETE", &format!("{base}/dumps/notes.txt")).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let v = body_json(&mut res).await;
+        assert_eq!(v["data"]["deleted"], true);
+
+        let res = send(&app, "GET", &format!("{base}/dumps/notes.txt")).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "gone is gone");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The escape laws hold at the wire: `..` (raw or percent-spelled)
+    /// and the adoption record refuse with a 400 that teaches.
+    #[tokio::test]
+    async fn file_paths_refuse_escapes_and_the_manifest() {
+        let (state, tmp) = state_with_bank().await;
+        let app = router(state);
+        let base = "/api/v1/storage/seed-vault/files";
+
+        for path in [
+            format!("{base}/..%2Fsecret"),
+            format!("{base}/ok/../../secret"),
+            format!("{base}/.zen-garden/manifest.json"),
+        ] {
+            let mut res = send(&app, "GET", &path).await;
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{path}");
+            let v = body_json(&mut res).await;
+            assert!(
+                !v["error"]["message"].as_str().unwrap_or("").is_empty(),
+                "{path} must teach"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The gates before the filesystem: unknown banks 404, ejected banks
+    /// 409 — even before a byte is asked for.
+    #[tokio::test]
+    async fn file_faces_refuse_unknown_and_ejected_banks() {
+        let (state, tmp) = state_with_bank().await;
+        let mut res = send(
+            &router(state.clone()),
+            "GET",
+            "/api/v1/storage/ghost/files",
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        let v = body_json(&mut res).await;
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("no bank"),
+            "the refusal names the miss: {}",
+            v["error"]["message"]
+        );
+
+        state.storage.eject("seed-vault").unwrap();
+        let mut res = send(
+            &router(state),
+            "GET",
+            "/api/v1/storage/seed-vault/files/dumps/notes.txt",
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::CONFLICT, "ejected: no volume");
+        let v = body_json(&mut res).await;
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("ejected"),
+            "{}",
+            v["error"]["message"]
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Verbs and kinds agree at the wire: reading or deleting a directory
+    /// conflicts — the path is real, the verb does not apply.
+    #[tokio::test]
+    async fn directories_refuse_the_file_verbs() {
+        let (state, tmp) = state_with_bank().await;
+        let app = router(state);
+        let base = "/api/v1/storage/seed-vault/files";
+        send_bytes(&app, "PUT", &format!("{base}/dumps/a.txt"), b"x")
+            .await;
+
+        let res = send(&app, "GET", &format!("{base}/dumps")).await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        let res = send(&app, "DELETE", &format!("{base}/dumps")).await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     fn sample_peer() -> StoneView {

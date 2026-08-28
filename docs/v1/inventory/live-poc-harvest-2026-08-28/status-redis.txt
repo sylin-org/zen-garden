@@ -1,0 +1,25 @@
+✓ Command manifest validated: 36 commands registered
+=== stone-emerald-vale =========================================================
+
+ACCESS
+─────────────────────
+    HTTP                                            http://192.168.1.82:7185
+    mDNS                                            stone-emerald-vale.local
+    IP                                              192.168.1.82
+
+SYSTEM
+─────────────────────
+    ARCH                                            x86_64
+    CPU                                             4 cores
+    FLAGS                                           sse4_2
+    MEMORY                                          7 GB
+    OS                                              Debian GNU
+    KERNEL                                          6.12.69+deb13-amd64
+
+AI
+─────────────────────
+    Corporation GeminiLake [UHD Graphics 605] (r... Unknown - Vulkan
+
+HEALTH
+─────────────────────
+    PASS                                            Disk, Docker, Memory

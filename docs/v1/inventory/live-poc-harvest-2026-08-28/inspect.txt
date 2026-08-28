@@ -1,0 +1,21 @@
+=== inspect (readable) ===
+✓ Command manifest validated: 36 commands registered
+=== stone-emerald-vale =========================================================
+
+HARDWARE INSPECTION
+─────────────────────
+  Stone:  stone-emerald-vale  (8f94010a-1071-52ba-b223-702eeedb0501)
+  System: Dell Inc. Wyse 5070 Thin Client
+  Type:   desktop  Serial: CB7LDW2
+  BIOS:   1.1.4 (12/06/2018)
+
+CPU
+─────────────────────
+  Intel(R) Pentium(R) Silver J5005 CPU @ 1.50GHz
+  4 cores, 4 threads, x86_64
+  Features: sse4_2, aes
+
+MEMORY
+─────────────────────
+  7.6 GB
+

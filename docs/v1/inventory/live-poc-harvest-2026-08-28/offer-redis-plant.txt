@@ -1,0 +1,6 @@
+✓ Command manifest validated: 36 commands registered
+[2m2026-08-28T03:34:16.846837Z[0m [33m WARN[0m [2mgarden_common::client::stone_api[0m[2m:[0m pond sign oracle unreachable — sending unsigned [3merror[0m[2m=[0merror sending request for url (http://127.0.0.1:7182/api/v1/pond/sign)
+
+    redis           [accepted create]
+    ───────────────────────────────────────────────
+

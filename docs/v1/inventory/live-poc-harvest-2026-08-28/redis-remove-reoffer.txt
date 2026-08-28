@@ -1,0 +1,13 @@
+=== remove (soft) ===
+✓ Command manifest validated: 36 commands registered
+=== stone-emerald-vale =========================================================
+
+[2m2026-08-28T03:36:40.142679Z[0m [33m WARN[0m [2mgarden_common::client::stone_api[0m[2m:[0m pond sign oracle unreachable — sending unsigned [3merror[0m[2m=[0merror sending request for url (http://127.0.0.1:7182/api/v1/pond/sign)
+    [thriving] Removed redis
+=== list after remove ===
+
+Use: garden-rake offer <service>
+
+=== offer again (to test uproot) ===
+    ───────────────────────────────────────────────
+

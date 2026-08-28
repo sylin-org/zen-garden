@@ -1,0 +1,18 @@
+=== stone ops ===
+✓ Command manifest validated: 36 commands registered
+Manage stone hardware: power control, service installation,
+registry reconciliation, console verbosity, and binary updates.
+
+Usage: garden-rake stone [OPTIONS] [COMMAND]
+
+Commands:
+  wake       Wake a stone via Wake-on-LAN
+  shutdown   Power off a stone
+  reboot     Reboot a stone
+  verbosity  Control console output level
+  install    Install moss as a system service
+=== hey ===
+✓ Command manifest validated: 36 commands registered
+Unknown subcommand: cricket
+Try: garden-rake hey?
+Error: Unknown subcommand: cricket

@@ -1,0 +1,8 @@
+=== election test ===
+✓ Command manifest validated: 36 commands registered
+error: the following required arguments were not provided:
+  <action>
+
+Usage: garden-rake election <action>
+
+For more information, try '--help'.

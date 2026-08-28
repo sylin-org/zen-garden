@@ -1,0 +1,53 @@
+✓ Command manifest validated: 36 commands registered
+--- AVAILABLE OFFERINGS ----------------
+
+    ai          comfyui*        docling*        infinity*       infinity-cpu    
+                kokoro*         libretranslate  ollama          openedai-speech*
+                openedai-speech-minspeaches*       whispercpp      
+
+    auth        authelia        
+
+    automation  n8n             
+
+    cache       memcached       
+
+    communicationntfy            
+
+    dashboard   homepage        
+
+    data        couchbase       elasticsearch   mariadb         mongodb*        
+                opensearch      postgresql      redis           sqlserver       
+
+    devops      registry        zot             
+
+    media       jellyfin        prowlarr        qbittorrent     radarr          
+                sonarr          
+
+    messaging   nats            rabbitmq        
+
+    networking  pihole          wireguard       
+
+    observabilityaspire          grafana         prometheus      uptime-kuma     
+
+    proxy       flaresolverr    traefik         
+
+    search      searxng         
+
+    secrets     vault           vaultwarden     
+
+    storage     minio           nextcloud       
+
+    timeseries  influxdb        
+
+    vector      qdrant          weaviate        
+
+      * restricted (uses compatibility fallback)
+
+    View compatibility details:
+          garden-rake offer comfyui info
+          garden-rake offer docling info
+          garden-rake offer infinity info
+          garden-rake offer kokoro info
+          garden-rake offer mongodb info
+          garden-rake offer openedai-speech info
+          garden-rake offer speaches info

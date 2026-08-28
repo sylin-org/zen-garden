@@ -1,0 +1,21 @@
+=== pond --help (security surface) ===
+✓ Command manifest validated: 36 commands registered
+Manage multi-stone pond security network.
+
+Pond security enables encrypted trust relationships between stones.
+Subcommands: init, status, invite, join, drain, remove, untrust.
+Phase 3b feature - implementation pending.
+
+Usage: garden-rake pond [OPTIONS] [COMMAND]
+
+Commands:
+  init     Initialize pond security
+  status   Show pond status
+  invite   Generate invitation code
+  join     Join pond with invitation code
+=== election start (the designed test) ===
+✓ Command manifest validated: 36 commands registered
+Starting election: UpdateSource
+Timeout: 10s
+[2m2026-08-28T03:38:29.390433Z[0m [33m WARN[0m [2mgarden_common::client::stone_api[0m[2m:[0m Failed to parse ApiResponse [3murl[0m[2m=[0m"http://192.168.1.195:7185/api/v1/election/start" [3merror[0m[2m=[0merror decoding response body
+Error: Stone 'stone-obsidian-summit' error: Processing failed: Failed: failed to parse response: error decoding response body

@@ -1,0 +1,14 @@
+=== capabilities list ===
+✓ Command manifest validated: 36 commands registered
+=== stone-emerald-vale =========================================================
+
+[needs attention] Not found: {"error":{"code":"OFFERING_NOT_FOUND","message":"Offering 'list' is not running on this stone."}}
+=== capabilities --help ===
+✓ Command manifest validated: 36 commands registered
+Discover and manage capabilities for an offering.
+
+Capabilities are models, extensions, modules, or plugins managed by an offering.
+For example, Ollama models, PostgreSQL extensions, or Redis modules.
+
+Subcommands:
+- (bare): List all capabilities for an offering

@@ -1,0 +1,39 @@
+=== backup --help ===
+✓ Command manifest validated: 36 commands registered
+Manage offering snapshots (backup/restore).
+
+View backup status, list available snapshots, trigger backups,
+and restore from local A/B slots or remote seed banks.
+
+Usage: garden-rake backup [OPTIONS] [COMMAND]
+
+Commands:
+  status       Show backup status for offerings
+=== backup status ===
+✓ Command manifest validated: 36 commands registered
+=== stone-emerald-vale =========================================================
+
+
+--- NURTURING STATUS -------------------
+  info No nurturing snapshots configured
+=== backup list ===
+✓ Command manifest validated: 36 commands registered
+error: the following required arguments were not provided:
+  <offering>
+
+Usage: garden-rake backup list <offering>
+
+For more information, try '--help'.
+=== nourish --help ===
+✓ Command manifest validated: 36 commands registered
+Check and apply updates across the garden — offerings, Moss, and firmware/BIOS.
+
+Queries all stones for available updates, then presents an interactive menu:
+[A] All updates (offerings + firmware)
+[O] Offering updates only
+[F] Firmware updates only
+
+Use --updates-only to check without applying.
+Use --yes to auto-confirm all updates (non-interactive).
+
+Usage: garden-rake nourish [OPTIONS] [stone]

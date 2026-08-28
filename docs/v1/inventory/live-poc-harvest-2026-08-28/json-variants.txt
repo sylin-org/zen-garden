@@ -1,0 +1,26 @@
+=== JSON variants ===
+-- status --
+✓ Command manifest validated: 36 commands registered
+error: the following required arguments were not provided:
+  <service>
+
+Usage: garden-rake status --output <output> <service>
+-- find mongodb --
+✓ Command manifest validated: 36 commands registered
+=== stone-emerald-vale =========================================================
+
+{
+  "found": true,
+  "services": [
+    {
+      "offering_id": "019ede0e-8f6e-7883-a4f2-bae2dbebf687",
+      "name": "mongodb",
+      "offering": "mongodb",
+      "category": "data",
+      "tags": [],
+-- observe --
+✓ Command manifest validated: 36 commands registered
+    querying topology from stone-obsidian-summit...
+
+
+    GARDEN OBSERVE — 5 stones, all thriving

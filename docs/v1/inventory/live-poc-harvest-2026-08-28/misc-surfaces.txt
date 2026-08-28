@@ -1,0 +1,25 @@
+=== template list ===
+✓ Command manifest validated: 36 commands registered
+=== stone-emerald-vale =========================================================
+
+
+Available Templates:
+
+=== ceremony ===
+✓ Command manifest validated: 36 commands registered
+
+  ⏳ Ceremony workflows are not yet implemented.
+
+=== store list ===
+✓ Command manifest validated: 36 commands registered
+error: the following required arguments were not provided:
+  <bucket>
+
+Usage: garden-rake store <operation> <bucket> [key] [file]
+=== manifest list ===
+✓ Command manifest validated: 36 commands registered
+error: unrecognized subcommand 'list'
+
+  tip: a similar subcommand exists: 'validate'
+
+Usage: garden-rake manifest [OPTIONS] [COMMAND]

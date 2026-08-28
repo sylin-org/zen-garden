@@ -1,0 +1,9 @@
+✓ Command manifest validated: 36 commands registered
+=== stone-emerald-vale =========================================================
+
+--- SERVICES ---------------------------
+
+    redis                     [thriving]            redis           
+
+
+      1 services (1 running, 0 stopped)

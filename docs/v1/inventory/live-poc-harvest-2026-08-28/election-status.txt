@@ -1,0 +1,3 @@
+=== election status (read-only action?) ===
+✓ Command manifest validated: 36 commands registered
+Error: Unknown election action: 'status'. Use: start

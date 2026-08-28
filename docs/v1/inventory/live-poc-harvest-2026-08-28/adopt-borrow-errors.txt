@@ -1,0 +1,20 @@
+=== adopt (nothing stray) ===
+✓ Command manifest validated: 36 commands registered
+=== stone-emerald-vale =========================================================
+
+    [needs attention] Failed to adopt: 400 Bad Request
+=== borrow ===
+✓ Command manifest validated: 36 commands registered
+error: unexpected argument '--url' found
+
+  tip: to pass '--url' as a value, use '-- --url'
+
+Usage: garden-rake borrow <name>
+
+For more information, try '--help'.
+=== release ===
+✓ Command manifest validated: 36 commands registered
+=== stone-emerald-vale =========================================================
+
+[2m2026-08-28T03:37:14.407288Z[0m [33m WARN[0m [2mgarden_common::client::stone_api[0m[2m:[0m pond sign oracle unreachable — sending unsigned [3merror[0m[2m=[0merror sending request for url (http://127.0.0.1:7182/api/v1/pond/sign)
+    [needs attention] Service 'testsvc' not found or not adopted

@@ -49,6 +49,14 @@ the house's own history → design (DDD monolith, complexity at the seams) →
 verdicts on every PoC element. "Let's work on this" is a mandate to
 research first.
 
+### 0 · The rake surface law (ADR-0007 / R4.8) — implement the decision
+
+Encoding/projection/extraction decided at ONE dispatch point (delete the ~15
+per-verb `if cli.json` branches); `--output json|human` + `RAKE_OUTPUT` env;
+`rake manifest` — the machine-readable command catalog generated from the
+clap tree. The decision is law (ADR-0007, CODE-RULES R4.8); this slice is
+its implementation.
+
 ### 1 · Bank file operations
 CRUD on mounted bank filesystems. Makes a seed bank a real storage destination.
 - GET `/api/v1/storage/{fqn}/files` — list files on the bank
@@ -126,7 +134,7 @@ Live-migration target confirmed.
 3. `docs/v1/CODE-RULES.md` — THE SLICE MANDATE (first section, governs how
    every slice begins); then P0–P5; R3.9 records-are-paths; R1.1 registers
 4. `docs/v1/OFFERINGS.md` — offerings law (§5.1 layered catalogs, FQN namespace)
-5. `docs/v1/decisions/ADR-0001..0006` — directory, ports, FQN namespace,
+5. `docs/v1/decisions/ADR-0001..0007` — directory, ports, FQN namespace,
    discovery envelope, living will, Suzu contract
 6. `src/v1/DEBT.md` (D1–D15; D14 closed), `src/v1/WITNESSES.md` (W1–W7)
 7. `docs/v1/inventory/poc-rake-surfaces.yaml` + `poc-moss-surfaces.yaml` —

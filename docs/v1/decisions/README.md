@@ -26,9 +26,11 @@ is never edited — superseding decisions reference their predecessor.
 | [ADR-0003](ADR-0003-offering-fqn-namespace.md) | Accepted | Offering identity: the FQN namespace, the reserved default, moniker surfaces |
 | [ADR-0004](ADR-0004-discovery-envelope-and-uri-grammar.md) | Accepted | The discovery envelope: depth tiers, revision merges, and the URI grammar |
 | [ADR-0005](ADR-0005-living-will-capture-replant.md) | Accepted | The living will: capture, checkpoints, and replant |
+| [ADR-0006](ADR-0006-suzu-contract.md) | Accepted | The Suzu companion contract |
+| [ADR-0007](ADR-0007-orthogonal-surface-degrees.md) | Accepted | Surface degrees: encoding, projection, extraction are orthogonal |
 
 ## Queued (expected soon)
 
-- ADR-0006 — OCI-unified adapter: docker/podman as one engine, two sockets (§4 bet)
-- ADR-0007 — declared install forms (`inputs:`) replacing env-var incantations (§5.1)
-- ADR-0008 — declarative garden: per-stone plans lifted to `garden.yaml` (M3 bridge)
+- ADR-0008 — declared install forms (`inputs:`) replacing env-var incantations (§5.1)
+- ADR-0009 — declarative garden: per-stone plans lifted to `garden.yaml` (M3 bridge)
+- ADR-0010 — OCI-unified adapter: docker/podman as one engine, two sockets (§4 bet)

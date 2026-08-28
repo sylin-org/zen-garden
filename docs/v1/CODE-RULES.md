@@ -263,6 +263,17 @@ doesn't exist.
 and docs' load-bearing claims are built from the contract. Stale truth is a build
 failure.
 
+**R4.8** Surface degrees are orthogonal and decided once (ADR-0007). A command
+computes an **answer**; it never asks how it will be rendered. **Encoding**
+(`--output json|human`, env `RAKE_OUTPUT`, alias `--json`) is applied at the one
+dispatch point — per-verb rendering branches are bespoke processors and do not
+get written. **Projection** (`--format uri|…`) is a verb-declared view that
+composes with encoding. **Extraction** (`--field dot.path`) implies json and
+composes with both. The CLI self-describes in machine form (`rake manifest`,
+generated from the clap tree): help lives once, in doc comments, and the
+manifest cannot disagree with the behavior — the moss's Face manifest law (L9),
+pointed at the CLI.
+
 ## P5 — The shape of done
 
 A unit of work is done when: contract updated (if touched) → domain boring and

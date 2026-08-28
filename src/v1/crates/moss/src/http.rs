@@ -77,6 +77,7 @@ enum Face {
     OfferingReplant,
     /// The room's banks, projected from the cache (ADR-0004 §4 grid).
     GardenStorage,
+    OfferingList,
     OfferingPlant,
     OfferingShow,
     OfferingRest,
@@ -85,7 +86,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 21] = [
+    const ALL: [Face; 22] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -102,6 +103,7 @@ impl Face {
         Face::OfferingCapture,
         Face::OfferingCaptureLast,
         Face::OfferingReplant,
+        Face::OfferingList,
         Face::OfferingPlant,
         Face::OfferingShow,
         Face::OfferingRest,
@@ -121,7 +123,7 @@ impl Face {
             | Face::Catalog
             | Face::StorageList
             | Face::GardenStorage
-            | Face::OfferingCaptureLast | Face::OfferingShow => "GET",
+            | Face::OfferingCaptureLast | Face::OfferingList | Face::OfferingShow => "GET",
             | Face::StorageAdopt | Face::StorageEject | Face::StorageRoles
             | Face::OfferingCapture | Face::OfferingReplant => "POST",
             Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
@@ -144,6 +146,7 @@ impl Face {
             Face::StorageRoles => "/api/v1/storage/{fqn}/roles",
             Face::StorageEject => "/api/v1/storage/{fqn}/eject",
             Face::GardenStorage => "/api/v1/garden/storage",
+            Face::OfferingList => "/api/v1/offerings",
             Face::OfferingPlant | Face::OfferingShow | Face::OfferingUproot => {
                 "/api/v1/offerings/{fqn}"
             }
@@ -194,6 +197,7 @@ impl Face {
                 "Plant a managed offering {image?, ports:{name:container}, runtime?, \
                  inputs?}; catalog name wins when one exists."
             }
+            Face::OfferingList => "Every offering placed on this stone (the collection).",
             Face::OfferingShow => "The placed record - plan, decisions, ports (OFFERINGS.md §5.3).",
             Face::OfferingCapture => {
                 "Run this offering's declared will: Phase A imprint (quiesce -> copy -> resume), then pack, ferry, commit."
@@ -226,6 +230,7 @@ impl Face {
             Face::StorageRoles => post(storage_roles),
             Face::StorageEject => post(storage_eject),
             Face::GardenStorage => get(garden_storage),
+            Face::OfferingList => get(offerings_list),
             Face::OfferingPlant => post(plant_offering),
             Face::OfferingCapture => post(capture_offer),
             Face::OfferingCaptureLast => get(capture_last),
@@ -600,6 +605,14 @@ async fn storage_roles(
             "no bank '{fqn}' is adopted here - rake storage lists what this stone holds"
         )))?;
     Ok(Json(serde_json::json!({ "data": { "bank": bank } })))
+}
+
+/// The collection: every offering placed on this stone.
+async fn offerings_list(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let rows: Vec<serde_json::Value> =
+        state.garden.snapshot().iter()
+        .map(record_view).collect();
+    Json(serde_json::json!({ "data": { "offerings": rows } }))
 }
 
 #[derive(Debug, Deserialize)]

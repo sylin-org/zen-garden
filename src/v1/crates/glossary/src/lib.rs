@@ -99,6 +99,9 @@ pub mod naming;
 pub mod verbs {
     /// Walk the room: the whole garden as the attached moss sees it.
     pub const OBSERVE: &str = "observe";
+    /// Enumerate what one stone hosts, with how to reach each offering
+    /// (`ls`, for the garden - the connection promise as output).
+    pub const LIST: &str = "list";
     /// Search by name pattern — `grep`, over stones and offerings.
     pub const FIND: &str = "find";
     /// Plant new work from catalog or image — desired state from birth,

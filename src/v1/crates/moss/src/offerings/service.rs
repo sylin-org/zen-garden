@@ -227,6 +227,11 @@ impl OfferingService {
         self.registry.mark_status(offering_id, Status::Degraded);
     }
 
+    /// Every placed offering, sorted by name (the collection face's data).
+    pub fn snapshot(&self) -> Vec<Offering> {
+        self.registry.snapshot()
+    }
+
     pub fn counts(&self) -> Counts {
         Counts {
             active: self.registry.snapshot().len(),

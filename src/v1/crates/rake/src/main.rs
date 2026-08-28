@@ -78,7 +78,13 @@ enum Command {
     /// The garden as an attached moss sees it.
     Observe,
     /// Stones whose name contains the pattern, as the attached moss sees them.
-    Find { pattern: String },
+    Find {
+        pattern: String,
+        /// Output format: human (default) or uri - one offering URI per
+        /// line, nothing else. The connection promise as output.
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Plant an offering by catalog name (or --image for ad-hoc placement).
     Offer {
         /// The offering's name; a catalog manifest wins when one exists.
@@ -112,6 +118,9 @@ enum Command {
         #[command(subcommand)]
         cmd: Option<StorageCmd>,
     },
+    /// List what the attached stone hosts - with each offering's URI.
+    /// The connection promise as output (J1).
+    List,
     /// Run an offering's declared will (ADR-0005): imprint, pack, ferry,
     /// commit. `--last` reports the previous run instead.
     Capture {
@@ -490,6 +499,15 @@ async fn main() {
 
 async fn run(cli: &Cli) -> Result<(), String> {
     match &cli.command {
+        Command::List => {
+            let (_, v) = cli
+                .stone_op("GET", paths::OFFERINGS.to_string(), None)
+                .await?;
+            if cli.json {
+                return emit_pretty(&v);
+            }
+            render_list(&envelope_plain(&v)?)
+        }
         Command::Observe => {
             let stones = cli.garden_view().await?;
             if cli.json {
@@ -501,17 +519,42 @@ async fn run(cli: &Cli) -> Result<(), String> {
                 Ok(())
             }
         }
-        Command::Find { pattern } => {
+        Command::Find { pattern, format } => {
             let needle = pattern.to_lowercase();
             let mut stones = cli.garden_view().await?;
             stones.retain(|s| s.body.stone.name.to_lowercase().contains(&needle));
-            if cli.json {
-                let arr = serde_json::to_value(&stones)
-                    .map_err(|e| format!("could not render json: {e}"))?;
-                emit_pretty(&arr)
-            } else {
-                print_table(&stones);
-                Ok(())
+            match format.as_deref() {
+                Some("uri") | Some("uri-ip") => {
+                    // The connection promise as output: one URI per line.
+                    for s in &stones {
+                        let ip = s.body.stone.network.address.ip;
+                        for svc in s
+                            .body
+                            .inventory
+                            .services
+                            .as_ref()
+                            .map(|b| b.items.as_slice())
+                            .unwrap_or_default()
+                        {
+                            let port = svc.ports.values().next();
+                            match port {
+                                Some(p) => println!("{}://{}:{}", svc.stem, ip, p),
+                                None => println!("{}://{}", svc.stem, ip),
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                _ => {
+                    if cli.json {
+                        let arr = serde_json::to_value(&stones)
+                            .map_err(|e| format!("could not render json: {e}"))?;
+                        emit_pretty(&arr)
+                    } else {
+                        print_table(&stones);
+                        Ok(())
+                    }
+                }
             }
         }
         Command::Offer { .. } | Command::Explain { .. } | Command::Rest { .. }
@@ -640,6 +683,36 @@ fn render_garden_storage(v: &serde_json::Value) -> Result<(), String> {
             }
         }
         _ => println!("The garden holds no banks yet."),
+    }
+    Ok(())
+}
+
+/// `rake list`: what the attached stone hosts, each with its URI —
+/// `stem://host:home`. The connection promise as output (J1).
+fn render_list(v: &serde_json::Value) -> Result<(), String> {
+    let rows = v["offerings"].as_array();
+    match rows {
+        Some(r) if !r.is_empty() => {
+            println!("{:<26} {:<10} {:<12} URI", "OFFERING", "STATUS", "HOME");
+            for o in r {
+                let stem = o["identity"]["stem"].as_str().unwrap_or("?");
+                let home = o["mode"]["port_map"]
+                    .as_object()
+                    .and_then(|m| m.values().next())
+                    .and_then(|p| p.as_u64())
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "-".into());
+                println!(
+                    "{:<26} {:<10} {:<12} {}://{}",
+                    display_name(o["identity"]["name"].as_str().unwrap_or("?")),
+                    o["state"]["status"].as_str().unwrap_or("?"),
+                    home,
+                    stem,
+                    home,
+                );
+            }
+        }
+        _ => println!("Nothing planted on this stone yet. Try: rake offer <name>"),
     }
     Ok(())
 }

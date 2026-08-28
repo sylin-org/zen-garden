@@ -51,11 +51,19 @@ volumes are named as a lie waiting to happen), and the scheduler
 (`run_scheduler`, daily CADENCE_SECS) runs every placed offering's
 trusted will on cadence — pinned by test.
 
-REMAINING in this epic: (small) adopt request carrying roles inline;
-explain showing the last checkpoint age. THEN (6) W7 witness: capture an
-offering on the fleet, let the ferry land it on the seed bank, kill the
-stone (or the container), replant on another stone from the bank —
-connection string unchanged. THE DEMO. Self-contained for a clean
+(6) **W7 WITNESSED (2026-08-28)** — the full story is in
+WITNESSES.md: capture -> ferry -> murder of stone-crystalline-dune ->
+replant on stone-tranquil-pass from the gposingway bank -> same FQN,
+same ledgered home :7301, redis `GET will` = "survives", audit chain
+opens Replanted. The living will is PROVEN on the fleet. Findings
+harvested: D16 opened (imprint via docker cp for 0600
+container-internal files), roles persistence, rich-reply inventory map
+gap (queued as the next slice: DiscoveryResponse carries the full
+InventoryMap; on_response merges by rev).
+
+THE EPIC IS COMPLETE. Next arcs: M1 release pipeline (main + tag ->
+build -> sign -> publish), rich-reply inventory slice, fleet housekeeping
+(.82 done as part of W7; roles persistence). Self-contained for a clean
 context. Verify everything against the tree — trust files over this doc.
 
 ## Project in one paragraph
@@ -281,8 +289,9 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. The living-will machinery is COMPLETE (slices 1-5). What remains is
-   the W7 WITNESS on the live fleet: capture -> ferry to the seed bank ->
-   kill -> replant elsewhere -> the demo. Small leftovers first if
-   desired: roles inline on adopt; checkpoint age in explain. One slice =
-   one commit, gates green at every commit.
+2. The living-will epic is DONE and WITNESSED (W7). Next arc per charter
+   sequencing: M1 release pipeline (main branch + tag->build->sign->
+   publish, gate: a stranger installs from a public artifact), plus the
+   small queued slice: rich replies carry the full inventory map
+   (DiscoveryResponse + on_response merge). One slice = one commit, gates
+   green at every commit.

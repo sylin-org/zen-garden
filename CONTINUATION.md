@@ -289,9 +289,12 @@ W7), Lantern, O3 adoption.
 
 1. Read this + `git log --oneline -5` + `git status` (expect clean tree,
    dev pushed).
-2. The living-will epic is DONE and WITNESSED (W7). Next arc per charter
-   sequencing: M1 release pipeline (main branch + tag->build->sign->
-   publish, gate: a stranger installs from a public artifact), plus the
-   small queued slice: rich replies carry the full inventory map
-   (DiscoveryResponse + on_response merge). One slice = one commit, gates
-   green at every commit.
+2. The living-will epic is DONE and WITNESSED (W7). The rich-reply
+   inventory slice also LANDED (`5d5fdbc9`): DiscoveryResponse carries the
+   full InventoryMap (services + banks + future domains), the responder
+   composes it from song_blocks, on_response merges heard answers into
+   existing peers by rev, fixtures pin the shape - a newcomer learns the
+   whole room in one exchange.
+3. Next arc: M1 release pipeline (main branch + tag->build->sign->
+   publish, gate: a stranger installs from a public artifact). One slice =
+   one commit, gates green at every commit.

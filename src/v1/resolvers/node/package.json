@@ -1,0 +1,18 @@
+{
+  "name": "@zen-garden/resolve",
+  "version": "0.1.0",
+  "description": "Service-type resolution for Zen Garden rooms: ask for a capability, get its connection URI (J1). Zero dependencies.",
+  "type": "module",
+  "main": "src/resolve.js",
+  "bin": {
+    "zen-garden-resolve": "src/cli.js"
+  },
+  "scripts": {
+    "test": "node test/resolve.test.js"
+  },
+  "keywords": ["zen-garden", "discovery", "resolver"],
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18"
+  }
+}

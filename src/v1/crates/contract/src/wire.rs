@@ -10,7 +10,7 @@ use uuid::Uuid;
 /// One garden datagram, decoded. `data` stays opaque here — typed bodies
 /// (`chirp::ChirpBody`) are parsed by the handler that registered for the
 /// `kind` (R2.9).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Announcement {
     /// Time-ordered identity of this datagram; receivers dedup on it for
     /// [`crate::consts::DEDUP_TTL_SECS`]. v1 always sets it; the PoC allowed

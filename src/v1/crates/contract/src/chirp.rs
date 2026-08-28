@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
 /// How to reach a stone's HTTP surface.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PeerAddress {
     /// LAN-routable IP.
     pub ip: IpAddr,
@@ -36,7 +36,7 @@ pub struct PeerAddress {
 }
 
 /// The speaking stone: identity and reachability. Immutable across a boot.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Stone {
     /// Persistent stone identity (GUIDv7).
     pub id: String,
@@ -49,14 +49,14 @@ pub struct Stone {
 }
 
 /// Software identity of the resident daemon.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Moss {
     /// Version, self-reported.
     pub version: String,
 }
 
 /// Everything needed to open a connection — and to wake it later.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Network {
     /// LAN-routable address of the HTTP surface.
     pub address: PeerAddress,
@@ -66,7 +66,7 @@ pub struct Network {
 }
 
 /// The frame's claims about right now.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Presence {
     /// Self-assessed vitality (glossary::health).
     pub health: String,
@@ -76,7 +76,7 @@ pub struct Presence {
 
 /// One offering a stone runs, as seen in presence. Identity fields speak
 /// FQN verbatim (ADR-0003); moniker suppression is a rendering concern.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ServiceEntry {
     /// Stable identity of the offering instance; survives renames.
     #[serde(default)]
@@ -97,7 +97,7 @@ pub struct ServiceEntry {
 }
 
 /// Runtime condition of one offering instance.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ServiceState {
     /// running / stopped / degraded (glossary).
     pub status: String,
@@ -110,7 +110,7 @@ pub struct ServiceState {
 /// the physical device, its state, and roles. Capacity/used are TELEMETRY —
 /// they never trigger frames, they ride along (§8.2's anti-spam law); both
 /// are optional because "unknown" is honest.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BankEntry {
     /// Logical bank identity, FQN per ADR-0003 (`bank::default` communal,
     /// explicit instances private).
@@ -133,7 +133,7 @@ pub struct BankEntry {
 /// A domain inventory block: capped items, declared totals, one revision.
 /// The unit of the inventory map (A2.1) and of framer quantization (A2.3):
 /// a block rides WHOLE or waits — partial item lists are forbidden.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Inventory<T> {
     /// Monotonic per-boot generation of this domain's set. The merge
     /// function: frames compare revisions, mismatches heal by rich ask.
@@ -152,7 +152,7 @@ pub struct Inventory<T> {
 /// garden domains enter here as blocks. Known domains are compile-time
 /// fields; unknown domains from newer stones round-trip losslessly through
 /// the passthrough map (older stones relay without destroying).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct InventoryMap {
     /// Offerings this stone hosts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -287,7 +287,7 @@ pub const DOMAIN_BANKS: &str = "banks";
 pub const INVENTORY_CAP: usize = 24;
 
 /// Frame housekeeping: schema identity and ordering.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FrameMeta {
     /// Wire schema marker; [`crate::consts::PROTO_V1`] when spoken by v1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -306,7 +306,7 @@ pub struct FrameMeta {
 }
 
 /// Position of this frame within a multi-frame announcement.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Part {
     pub n: u32,
     pub of: u32,
@@ -315,7 +315,7 @@ pub struct Part {
 /// Reception facts: when WE first/last heard from this stone. Senders emit
 /// placeholders; every listener overwrites both — they describe the
 /// relationship, not the speaker.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Reception {
     /// First-seen timestamp (listeners overwrite).
     pub discovered_at: DateTime<Utc>,
@@ -326,7 +326,7 @@ pub struct Reception {
 /// The garden frame: one canonical shape spoken on the wire, held in the
 /// topology cache, and projected by HTTP surfaces. Sections, not a flat
 /// field zoo. (No Default: a frame without a speaking stone is meaningless.)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChirpFrame {
     /// WHO speaks: identity and reachability.
     pub stone: Stone,

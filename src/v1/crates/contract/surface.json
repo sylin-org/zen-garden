@@ -1,0 +1,1034 @@
+{
+  "faces": [
+    {
+      "face": "Health",
+      "method": "GET",
+      "path": "/health",
+      "summary": "Liveness probe of this stone and its wire protocol marker."
+    },
+    {
+      "face": "FrontDoor",
+      "method": "GET",
+      "path": "/api/v1",
+      "summary": "This route table - every surface, described in place."
+    },
+    {
+      "face": "StoneSelf",
+      "method": "GET",
+      "path": "/api/v1/stone",
+      "summary": "Me: my frame, sung full-voice (the SelfView projection)."
+    },
+    {
+      "face": "StoneThis",
+      "method": "GET",
+      "path": "/api/v1/stone/this",
+      "summary": "Me, spelled explicitly (same SelfView)."
+    },
+    {
+      "face": "StoneRef",
+      "method": "GET",
+      "path": "/api/v1/stone/{ref}",
+      "summary": "A stone by name or id: mine answered here; others answer 404 with a Location to their home stone (the garden's only true redirect)."
+    },
+    {
+      "face": "StonePosture",
+      "method": "GET",
+      "path": "/api/v1/stone/posture",
+      "summary": "Local data (L22): this moss's live counters - ingest, dispatch, topology, offerings."
+    },
+    {
+      "face": "GardenStones",
+      "method": "GET",
+      "path": "/api/v1/garden/stones",
+      "summary": "Garden data (L22): the room as this moss sees it - self spliced among the peers, every row a canonical frame."
+    },
+    {
+      "face": "Catalog",
+      "method": "GET",
+      "path": "/api/v1/catalog",
+      "summary": "The catalog this stone can place from (derived)."
+    },
+    {
+      "face": "StorageList",
+      "method": "GET",
+      "path": "/api/v1/storage",
+      "summary": "This stone's banks, plus the removable volumes ready for adoption."
+    },
+    {
+      "face": "StorageAdopt",
+      "method": "POST",
+      "path": "/api/v1/storage/adopt",
+      "summary": "The adopt ceremony: {device: mount point, name: bank FQN} - writes the manifest onto the drive and sings the news (ADR-0005 sec 8)."
+    },
+    {
+      "face": "StorageEject",
+      "method": "POST",
+      "path": "/api/v1/storage/{fqn}/eject",
+      "summary": "Eject a bank by name: authoritative absence, sung to the room (ADR-0005 sec 8.3)."
+    },
+    {
+      "face": "StorageRoles",
+      "method": "POST",
+      "path": "/api/v1/storage/{fqn}/roles",
+      "summary": "Declare a bank's roles: {roles: [sink]} - a sink receives checkpoints (ADR-0005 sec 4)."
+    },
+    {
+      "face": "StorageFileList",
+      "method": "GET",
+      "path": "/api/v1/storage/{fqn}/files",
+      "summary": "List a bank directory (optional ?path= subdirectory): the files riding the volume, minus the adoption record. A bank held by a peer answers the garden's redirect (knows_at)."
+    },
+    {
+      "face": "StorageFileGet",
+      "method": "GET",
+      "path": "/api/v1/storage/{fqn}/files/{*path}",
+      "summary": "Read one file from a bank: the raw bytes, content-type guessed from the extension; the path is relative to the bank's root. A peer's bank answers the garden's redirect (knows_at)."
+    },
+    {
+      "face": "StorageFilePut",
+      "method": "PUT",
+      "path": "/api/v1/storage/{fqn}/files/{*path}",
+      "summary": "Write one file onto a bank: the raw body, parent directories created - makes a sink a real storage destination. A peer's bank answers the garden's redirect (knows_at); writes bind at their authority."
+    },
+    {
+      "face": "StorageFileDelete",
+      "method": "DELETE",
+      "path": "/api/v1/storage/{fqn}/files/{*path}",
+      "summary": "Delete one file from a bank. Directories refuse - wholesale removal is the operator's hand. A peer's bank answers the garden's redirect."
+    },
+    {
+      "face": "StorageFileMove",
+      "method": "PATCH",
+      "path": "/api/v1/storage/{fqn}/files/{*path}",
+      "summary": "Move (rename) one file within a bank: {move_to: path} - no re-upload. Never overwrites. A peer's bank answers the garden's redirect."
+    },
+    {
+      "face": "OfferingLogsStream",
+      "method": "GET",
+      "path": "/api/v1/offerings/{fqn}/logs/stream",
+      "summary": "Follow an offering's logs: history first (tail=N bounds it), then live - SSE `log` events, one JSON line each. A peer's offering answers the garden's redirect."
+    },
+    {
+      "face": "OfferingCapture",
+      "method": "POST",
+      "path": "/api/v1/offerings/{fqn}/capture",
+      "summary": "Run this offering's declared will: Phase A imprint (quiesce -> copy -> resume), then pack, ferry, commit."
+    },
+    {
+      "face": "OfferingCaptureLast",
+      "method": "GET",
+      "path": "/api/v1/offerings/{fqn}/capture",
+      "summary": "The last capture run of this offering: phase, checkpoint, ferried sinks."
+    },
+    {
+      "face": "OfferingReplant",
+      "method": "POST",
+      "path": "/api/v1/offerings/{fqn}/replant",
+      "summary": "Replant from a checkpoint {run?}: verify, restore the directory, place from the stored spec - same FQN, same connection strings (ADR-0005 §6)."
+    },
+    {
+      "face": "JobList",
+      "method": "GET",
+      "path": "/api/v1/jobs",
+      "summary": "Every async operation on this stone, newest first."
+    },
+    {
+      "face": "JobDetail",
+      "method": "GET",
+      "path": "/api/v1/jobs/{id}",
+      "summary": "One job by id: kind, subject, status, error, result."
+    },
+    {
+      "face": "Portrait",
+      "method": "GET",
+      "path": "/portrait",
+      "summary": "This stone's living landing page: identity, offerings, banks, the room."
+    },
+    {
+      "face": "Root",
+      "method": "GET",
+      "path": "/",
+      "summary": "Lands on the portrait."
+    },
+    {
+      "face": "PulsePage",
+      "method": "GET",
+      "path": "/pulse",
+      "summary": "The live page: stones, offerings, and the event ring as they happen."
+    },
+    {
+      "face": "PulseStream",
+      "method": "GET",
+      "path": "/pulse/stream",
+      "summary": "SSE firehose: topology events (seen/goodbye/expired) and offering changes."
+    },
+    {
+      "face": "GardenStorage",
+      "method": "GET",
+      "path": "/api/v1/garden/storage",
+      "summary": "Garden data (L22): every bank in the room, self included, from the one cache."
+    },
+    {
+      "face": "OfferingList",
+      "method": "GET",
+      "path": "/api/v1/offerings",
+      "summary": "Every offering placed on this stone (the collection)."
+    },
+    {
+      "face": "OfferingPlant",
+      "method": "POST",
+      "path": "/api/v1/offerings/{fqn}",
+      "summary": "Plant a managed offering {image?, ports:{name:container}, runtime?, inputs?}; catalog name wins when one exists."
+    },
+    {
+      "face": "OfferingShow",
+      "method": "GET",
+      "path": "/api/v1/offerings/{fqn}",
+      "summary": "The placed record - plan, decisions, ports (OFFERINGS.md §5.3)."
+    },
+    {
+      "face": "OfferingRest",
+      "method": "POST",
+      "path": "/api/v1/offerings/{fqn}/rest",
+      "summary": "Rest a managed offering - stopped, and reconcile will keep it so."
+    },
+    {
+      "face": "OfferingWake",
+      "method": "POST",
+      "path": "/api/v1/offerings/{fqn}/wake",
+      "summary": "Wake a rested offering; resurrects from its stored spec if reality lost it."
+    },
+    {
+      "face": "OfferingUproot",
+      "method": "DELETE",
+      "path": "/api/v1/offerings/{fqn}",
+      "summary": "Uproot - remove the workload and forget the offering."
+    }
+  ],
+  "proto": "zg/1",
+  "types": {
+    "Announcement": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One garden datagram, decoded. `data` stays opaque here — typed bodies\n(`chirp::ChirpBody`) are parsed by the handler that registered for the\n`kind` (R2.9).",
+      "properties": {
+        "data": {
+          "description": "Opaque payload — the handler that claimed this type gives it meaning."
+        },
+        "msg_id": {
+          "description": "Time-ordered identity of this datagram; receivers dedup on it for\n[`crate::consts::DEDUP_TTL_SECS`]. v1 always sets it; the PoC allowed\nabsence (such datagrams bypass dedup — a PoC quirk we do not inherit).",
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sender_cert": {
+          "description": "Signer certificate (PEM) — future; v1 emits unsigned.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signature": {
+          "description": "Pond signature (base64) — future; v1 emits unsigned.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "Discriminator; see [`crate::consts::announcement`].",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "title": "Announcement",
+      "type": "object"
+    },
+    "ChirpFrame": {
+      "$defs": {
+        "BankEntry": {
+          "description": "One storage bank in presence (ADR-0005 §8): logical FQN identity plus\nthe physical device, its state, and roles. Capacity/used are TELEMETRY —\nthey never trigger frames, they ride along (§8.2's anti-spam law); both\nare optional because \"unknown\" is honest.",
+          "properties": {
+            "capacity_bytes": {
+              "description": "Total bytes, when measured.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "device_id": {
+              "description": "Physical device identity (GUIDv7, per-device).",
+              "type": "string"
+            },
+            "fqn": {
+              "description": "Logical bank identity, FQN per ADR-0003 (`bank::default` communal,\nexplicit instances private).",
+              "type": "string"
+            },
+            "roles": {
+              "description": "Declared roles (sink today; the set grows with ADR-0005's tiers).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "state": {
+              "description": "mounted | ejected (glossary::bank).",
+              "type": "string"
+            },
+            "used_bytes": {
+              "description": "Used bytes, when measured.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "fqn",
+            "device_id",
+            "state"
+          ],
+          "type": "object"
+        },
+        "FrameMeta": {
+          "description": "Frame housekeeping: schema identity and ordering.",
+          "properties": {
+            "boot_id": {
+              "description": "Identity of this boot — peers distinguish restart from heartbeat.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "part": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Part"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Quantization position when one announcement spans several frames\n(ADR-0004 A2.3). Purely informational: consumers never wait or\nreassemble — revs make every frame independently mergeable."
+            },
+            "proto": {
+              "description": "Wire schema marker; [`crate::consts::PROTO_V1`] when spoken by v1.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "seq": {
+              "description": "Monotonic chirp counter for this boot — gap detection, ordering.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "Inventory": {
+          "description": "A domain inventory block: capped items, declared totals, one revision.\nThe unit of the inventory map (A2.1) and of framer quantization (A2.3):\na block rides WHOLE or waits — partial item lists are forbidden.",
+          "properties": {
+            "items": {
+              "description": "The (possibly capped) items themselves.",
+              "items": {
+                "$ref": "#/$defs/ServiceEntry"
+              },
+              "type": "array"
+            },
+            "rev": {
+              "description": "Monotonic per-boot generation of this domain's set. The merge\nfunction: frames compare revisions, mismatches heal by rich ask.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "total": {
+              "description": "Total items hosted when `items` is truncated to the wire cap;\nabsent = everything fit (truncation declared, never silent).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "Inventory2": {
+          "description": "A domain inventory block: capped items, declared totals, one revision.\nThe unit of the inventory map (A2.1) and of framer quantization (A2.3):\na block rides WHOLE or waits — partial item lists are forbidden.",
+          "properties": {
+            "items": {
+              "description": "The (possibly capped) items themselves.",
+              "items": {
+                "$ref": "#/$defs/BankEntry"
+              },
+              "type": "array"
+            },
+            "rev": {
+              "description": "Monotonic per-boot generation of this domain's set. The merge\nfunction: frames compare revisions, mismatches heal by rich ask.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "total": {
+              "description": "Total items hosted when `items` is truncated to the wire cap;\nabsent = everything fit (truncation declared, never silent).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "InventoryMap": {
+          "additionalProperties": true,
+          "description": "The inventory MAP (ADR-0004 A2.1): rootspace of the frame is closed;\ngarden domains enter here as blocks. Known domains are compile-time\nfields; unknown domains from newer stones round-trip losslessly through\nthe passthrough map (older stones relay without destroying).",
+          "properties": {
+            "banks": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Inventory2"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Storage banks this stone holds (ADR-0005 §8)."
+            },
+            "services": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Inventory"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Offerings this stone hosts."
+            }
+          },
+          "type": "object"
+        },
+        "Moss": {
+          "description": "Software identity of the resident daemon.",
+          "properties": {
+            "version": {
+              "description": "Version, self-reported.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "version"
+          ],
+          "type": "object"
+        },
+        "Network": {
+          "description": "Everything needed to open a connection — and to wake it later.",
+          "properties": {
+            "address": {
+              "$ref": "#/$defs/PeerAddress",
+              "description": "LAN-routable address of the HTTP surface."
+            },
+            "mac": {
+              "description": "MAC for wake-on-LAN; absent where unknown.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        },
+        "Part": {
+          "description": "Position of this frame within a multi-frame announcement.",
+          "properties": {
+            "n": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "of": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "n",
+            "of"
+          ],
+          "type": "object"
+        },
+        "PeerAddress": {
+          "description": "How to reach a stone's HTTP surface.",
+          "properties": {
+            "ip": {
+              "description": "LAN-routable IP.",
+              "format": "ip",
+              "type": "string"
+            },
+            "port": {
+              "description": "HTTP port.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tls_port": {
+              "description": "HTTPS port when pond security is active; absent otherwise.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "ip",
+            "port"
+          ],
+          "type": "object"
+        },
+        "Presence": {
+          "description": "The frame's claims about right now.",
+          "properties": {
+            "health": {
+              "description": "Self-assessed vitality (glossary::health).",
+              "type": "string"
+            },
+            "status": {
+              "description": "Membership state as spoken (glossary::presence).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "health",
+            "status"
+          ],
+          "type": "object"
+        },
+        "Reception": {
+          "description": "Reception facts: when WE first/last heard from this stone. Senders emit\nplaceholders; every listener overwrites both — they describe the\nrelationship, not the speaker.",
+          "properties": {
+            "discovered_at": {
+              "description": "First-seen timestamp (listeners overwrite).",
+              "format": "date-time",
+              "type": "string"
+            },
+            "last_seen": {
+              "description": "Last-seen timestamp (listeners overwrite).",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "discovered_at",
+            "last_seen"
+          ],
+          "type": "object"
+        },
+        "ServiceEntry": {
+          "description": "One offering a stone runs, as seen in presence. Identity fields speak\nFQN verbatim (ADR-0003); moniker suppression is a rendering concern.",
+          "properties": {
+            "category": {
+              "description": "Catalog category (glossary noun).",
+              "type": "string"
+            },
+            "name": {
+              "description": "Fully-qualified offering name (e.g. `memcached::default`).",
+              "type": "string"
+            },
+            "offering_id": {
+              "default": "",
+              "description": "Stable identity of the offering instance; survives renames.",
+              "type": "string"
+            },
+            "ports": {
+              "additionalProperties": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "description": "Actual host ports by name (\"default\", \"management\"...) — populated\nonly where remapped from manifest defaults (PORT-0001 inherited).\nAbsent/empty = defaults stand.",
+              "type": "object"
+            },
+            "state": {
+              "$ref": "#/$defs/ServiceState",
+              "description": "How the instance is doing: runtime status + orchestration role."
+            },
+            "stem": {
+              "description": "Catalog stem this instance was planted from (provenance).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "stem",
+            "category",
+            "state"
+          ],
+          "type": "object"
+        },
+        "ServiceState": {
+          "description": "Runtime condition of one offering instance.",
+          "properties": {
+            "role": {
+              "description": "Orchestration role when active: primary | replica | joining.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "description": "running / stopped / degraded (glossary).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        "Stone": {
+          "description": "The speaking stone: identity and reachability. Immutable across a boot.",
+          "properties": {
+            "id": {
+              "description": "Persistent stone identity (GUIDv7).",
+              "type": "string"
+            },
+            "moss": {
+              "$ref": "#/$defs/Moss",
+              "description": "The moss build speaking."
+            },
+            "name": {
+              "description": "Human-facing name; also the mDNS label.",
+              "type": "string"
+            },
+            "network": {
+              "$ref": "#/$defs/Network",
+              "description": "How to reach it, plus wake-on-LAN material."
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "moss",
+            "network"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "The garden frame: one canonical shape spoken on the wire, held in the\ntopology cache, and projected by HTTP surfaces. Sections, not a flat\nfield zoo. (No Default: a frame without a speaking stone is meaningless.)",
+      "properties": {
+        "inventory": {
+          "$ref": "#/$defs/InventoryMap",
+          "default": {},
+          "description": "Its inventory domains (services today; banks next; unknown preserved)."
+        },
+        "meta": {
+          "$ref": "#/$defs/FrameMeta",
+          "default": {},
+          "description": "Frame housekeeping."
+        },
+        "presence": {
+          "$ref": "#/$defs/Presence",
+          "description": "WHAT it claims right now."
+        },
+        "received": {
+          "$ref": "#/$defs/Reception",
+          "description": "Reception facts — senders emit placeholders, listeners overwrite."
+        },
+        "stone": {
+          "$ref": "#/$defs/Stone",
+          "description": "WHO speaks: identity and reachability."
+        }
+      },
+      "required": [
+        "stone",
+        "presence",
+        "received"
+      ],
+      "title": "ChirpFrame",
+      "type": "object"
+    },
+    "DiscoveryRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "What a discovery request asks for. `\"moss\"` finds stones ([`TARGET_MOSS`]).",
+      "properties": {
+        "discover": {
+          "description": "What kind of speaker we are looking for.",
+          "type": "string"
+        },
+        "request_id": {
+          "description": "Echoed by responders' logs; correlates one round of answers.",
+          "type": "string"
+        },
+        "requester": {
+          "description": "Who is asking (a stone name or client label).",
+          "type": "string"
+        },
+        "rich": {
+          "description": "Rich ask (ADR-0004 §1): responders include their service inventory\nso a newcomer populates its cache in one exchange. Absent from the\nwire while false — legacy request bytes stay lean.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "discover",
+        "request_id",
+        "requester"
+      ],
+      "title": "DiscoveryRequest",
+      "type": "object"
+    },
+    "DiscoveryResponse": {
+      "$defs": {
+        "BankEntry": {
+          "description": "One storage bank in presence (ADR-0005 §8): logical FQN identity plus\nthe physical device, its state, and roles. Capacity/used are TELEMETRY —\nthey never trigger frames, they ride along (§8.2's anti-spam law); both\nare optional because \"unknown\" is honest.",
+          "properties": {
+            "capacity_bytes": {
+              "description": "Total bytes, when measured.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "device_id": {
+              "description": "Physical device identity (GUIDv7, per-device).",
+              "type": "string"
+            },
+            "fqn": {
+              "description": "Logical bank identity, FQN per ADR-0003 (`bank::default` communal,\nexplicit instances private).",
+              "type": "string"
+            },
+            "roles": {
+              "description": "Declared roles (sink today; the set grows with ADR-0005's tiers).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "state": {
+              "description": "mounted | ejected (glossary::bank).",
+              "type": "string"
+            },
+            "used_bytes": {
+              "description": "Used bytes, when measured.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "fqn",
+            "device_id",
+            "state"
+          ],
+          "type": "object"
+        },
+        "Inventory": {
+          "description": "A domain inventory block: capped items, declared totals, one revision.\nThe unit of the inventory map (A2.1) and of framer quantization (A2.3):\na block rides WHOLE or waits — partial item lists are forbidden.",
+          "properties": {
+            "items": {
+              "description": "The (possibly capped) items themselves.",
+              "items": {
+                "$ref": "#/$defs/ServiceEntry"
+              },
+              "type": "array"
+            },
+            "rev": {
+              "description": "Monotonic per-boot generation of this domain's set. The merge\nfunction: frames compare revisions, mismatches heal by rich ask.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "total": {
+              "description": "Total items hosted when `items` is truncated to the wire cap;\nabsent = everything fit (truncation declared, never silent).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "Inventory2": {
+          "description": "A domain inventory block: capped items, declared totals, one revision.\nThe unit of the inventory map (A2.1) and of framer quantization (A2.3):\na block rides WHOLE or waits — partial item lists are forbidden.",
+          "properties": {
+            "items": {
+              "description": "The (possibly capped) items themselves.",
+              "items": {
+                "$ref": "#/$defs/BankEntry"
+              },
+              "type": "array"
+            },
+            "rev": {
+              "description": "Monotonic per-boot generation of this domain's set. The merge\nfunction: frames compare revisions, mismatches heal by rich ask.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "total": {
+              "description": "Total items hosted when `items` is truncated to the wire cap;\nabsent = everything fit (truncation declared, never silent).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "InventoryMap": {
+          "additionalProperties": true,
+          "description": "The inventory MAP (ADR-0004 A2.1): rootspace of the frame is closed;\ngarden domains enter here as blocks. Known domains are compile-time\nfields; unknown domains from newer stones round-trip losslessly through\nthe passthrough map (older stones relay without destroying).",
+          "properties": {
+            "banks": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Inventory2"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Storage banks this stone holds (ADR-0005 §8)."
+            },
+            "services": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Inventory"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Offerings this stone hosts."
+            }
+          },
+          "type": "object"
+        },
+        "Moss": {
+          "description": "Software identity of the resident daemon.",
+          "properties": {
+            "version": {
+              "description": "Version, self-reported.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "version"
+          ],
+          "type": "object"
+        },
+        "Network": {
+          "description": "Everything needed to open a connection — and to wake it later.",
+          "properties": {
+            "address": {
+              "$ref": "#/$defs/PeerAddress",
+              "description": "LAN-routable address of the HTTP surface."
+            },
+            "mac": {
+              "description": "MAC for wake-on-LAN; absent where unknown.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "address"
+          ],
+          "type": "object"
+        },
+        "PeerAddress": {
+          "description": "How to reach a stone's HTTP surface.",
+          "properties": {
+            "ip": {
+              "description": "LAN-routable IP.",
+              "format": "ip",
+              "type": "string"
+            },
+            "port": {
+              "description": "HTTP port.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tls_port": {
+              "description": "HTTPS port when pond security is active; absent otherwise.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "ip",
+            "port"
+          ],
+          "type": "object"
+        },
+        "ServiceEntry": {
+          "description": "One offering a stone runs, as seen in presence. Identity fields speak\nFQN verbatim (ADR-0003); moniker suppression is a rendering concern.",
+          "properties": {
+            "category": {
+              "description": "Catalog category (glossary noun).",
+              "type": "string"
+            },
+            "name": {
+              "description": "Fully-qualified offering name (e.g. `memcached::default`).",
+              "type": "string"
+            },
+            "offering_id": {
+              "default": "",
+              "description": "Stable identity of the offering instance; survives renames.",
+              "type": "string"
+            },
+            "ports": {
+              "additionalProperties": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "description": "Actual host ports by name (\"default\", \"management\"...) — populated\nonly where remapped from manifest defaults (PORT-0001 inherited).\nAbsent/empty = defaults stand.",
+              "type": "object"
+            },
+            "state": {
+              "$ref": "#/$defs/ServiceState",
+              "description": "How the instance is doing: runtime status + orchestration role."
+            },
+            "stem": {
+              "description": "Catalog stem this instance was planted from (provenance).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "stem",
+            "category",
+            "state"
+          ],
+          "type": "object"
+        },
+        "ServiceState": {
+          "description": "Runtime condition of one offering instance.",
+          "properties": {
+            "role": {
+              "description": "Orchestration role when active: primary | replica | joining.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "description": "running / stopped / degraded (glossary).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        "Stone": {
+          "description": "The speaking stone: identity and reachability. Immutable across a boot.",
+          "properties": {
+            "id": {
+              "description": "Persistent stone identity (GUIDv7).",
+              "type": "string"
+            },
+            "moss": {
+              "$ref": "#/$defs/Moss",
+              "description": "The moss build speaking."
+            },
+            "name": {
+              "description": "Human-facing name; also the mDNS label.",
+              "type": "string"
+            },
+            "network": {
+              "$ref": "#/$defs/Network",
+              "description": "How to reach it, plus wake-on-LAN material."
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "moss",
+            "network"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Where a willing respondent lives, and (when the ask was rich) what it\nhosts. The `stone:` block always answers \"who are you\"; the inventory\nMAP answers \"what do you have\" — every domain, identical shapes to the\nchirp frame's (A2.1: the revision vector is a shape, not a field list).",
+      "properties": {
+        "inventory": {
+          "$ref": "#/$defs/InventoryMap",
+          "description": "The full inventory map, iff the request carried rich:true — services\nAND banks AND whatever domains the future brings (W7 finding: a\nnewcomer learns the whole room in one exchange)."
+        },
+        "lantern_endpoint": {
+          "description": "Legacy Lantern registry endpoint (v0 field; v1 emits absent).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stone": {
+          "$ref": "#/$defs/Stone",
+          "description": "WHO answered: identity and reachability (frame's `stone:` block)."
+        }
+      },
+      "required": [
+        "stone"
+      ],
+      "title": "DiscoveryResponse",
+      "type": "object"
+    }
+  }
+}

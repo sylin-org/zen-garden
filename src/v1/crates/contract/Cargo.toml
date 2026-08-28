@@ -10,6 +10,7 @@ serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+schemars = { version = "1", features = ["chrono04", "uuid1"] }
 
 [lints]
 workspace = true

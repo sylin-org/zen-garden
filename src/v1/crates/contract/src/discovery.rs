@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub const TARGET_MOSS: &str = "moss";
 
 /// What a discovery request asks for. `"moss"` finds stones ([`TARGET_MOSS`]).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscoveryRequest {
     /// What kind of speaker we are looking for.
     pub discover: String,
@@ -51,7 +51,7 @@ impl DiscoveryRequest {
 /// hosts. The `stone:` block always answers "who are you"; the inventory
 /// MAP answers "what do you have" — every domain, identical shapes to the
 /// chirp frame's (A2.1: the revision vector is a shape, not a field list).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(schemars::JsonSchema, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscoveryResponse {
     /// WHO answered: identity and reachability (frame's `stone:` block).
     pub stone: crate::chirp::Stone,

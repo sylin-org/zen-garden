@@ -26,7 +26,7 @@ pub enum Cause {
 
 /// One announcement request: the domains to speak, already composed.
 /// (The composer hands blocks over; the framer owns only quantization.)
-#[derive(Debug, Clone, Default)]
+#[derive(schemars::JsonSchema, Debug, Clone, Default)]
 pub struct Announcement {
     /// Ordered by framer priority (services > banks > future).
     pub blocks: Vec<(String, serde_json::Value)>,

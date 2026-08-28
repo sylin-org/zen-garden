@@ -29,9 +29,10 @@ is never edited — superseding decisions reference their predecessor.
 | [ADR-0006](ADR-0006-suzu-contract.md) | Accepted | The Suzu companion contract |
 | [ADR-0007](ADR-0007-orthogonal-surface-degrees.md) | Accepted | Surface degrees: encoding, projection, extraction are orthogonal |
 | [ADR-0008](ADR-0008-catalog-sourcing-and-layering.md) | Accepted | Catalog sourcing: the approved set is embedded, operators layer on top |
+| [ADR-0009](ADR-0009-contract-first-codegen.md) | Accepted | Contract-first codegen: the faces table is generated truth |
 
 ## Queued (expected soon)
 
-- ADR-0009 — declared install forms (`inputs:`) replacing env-var incantations (§5.1)
-- ADR-0010 — declarative garden: per-stone plans lifted to `garden.yaml` (M3 bridge)
-- ADR-0011 — OCI-unified adapter: docker/podman as one engine, two sockets (§4 bet)
+- ADR-0010 — declared install forms (`inputs:`) replacing env-var incantations (§5.1)
+- ADR-0011 — declarative garden: per-stone plans lifted to `garden.yaml` (M3 bridge)
+- ADR-0012 — OCI-unified adapter: docker/podman as one engine, two sockets (§4 bet)

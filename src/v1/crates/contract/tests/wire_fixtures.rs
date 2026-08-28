@@ -9,8 +9,8 @@
 #![allow(clippy::unwrap_used)]
 
 use garden_contract::chirp::{
-    ChirpFrame, Inventory, Moss, Network, PeerAddress, Presence, Reception, ServiceEntry,
-    ServiceState, Stone, INVENTORY_CAP,
+    ChirpFrame, Inventory, InventoryMap, Moss, Network, PeerAddress, Presence, Reception,
+    ServiceEntry, ServiceState, Stone, INVENTORY_CAP,
 };
 use garden_contract::consts::{self, announcement};
 use garden_contract::wire::Announcement;
@@ -176,12 +176,15 @@ fn discovery_grammar_rich_and_lean() {
             },
         },
         lantern_endpoint: None,
-        services: Some(Inventory { rev: Some(3), total: Some(24), items: vec![] }),
+        inventory: InventoryMap {
+            services: Some(Inventory { rev: Some(3), total: Some(24), items: vec![] }),
+            ..Default::default()
+        },
     };
     let v = serde_json::to_value(&res).unwrap();
     assert_eq!(v["stone"]["name"], "stone-rich");
-    assert_eq!(v["services"]["rev"], 3);
-    assert_eq!(v["services"]["total"], 24);
+    assert_eq!(v["inventory"]["services"]["rev"], 3);
+    assert_eq!(v["inventory"]["services"]["total"], 24);
 }
 
 /// The wire cap is part of the protocol — pinned so nobody "improves" it

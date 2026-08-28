@@ -249,8 +249,13 @@ impl Topology {
             return;
         }
         {
-            let peers = self.peers.lock();
-            if peers.map.contains_key(&resp.stone.id) {
+            let mut peers = self.peers.lock();
+            if let Some(peer) = peers.map.get_mut(&resp.stone.id) {
+                // Live truth present: the answer still fills GAPS — its
+                // inventory blocks merge by rev (W7 finding: a newcomer's
+                // boot ask teaches the whole room; heard answers keep it
+                // fresh between songs).
+                peer.body.inventory.merge_frame(&resp.inventory);
                 return;
             }
         }
@@ -548,11 +553,14 @@ mod tests {
                 },
             },
             lantern_endpoint: None,
-            services: Some(Inventory {
-                rev: Some(7),
-                total: None,
-                items: Vec::new(),
-            }),
+            inventory: garden_contract::chirp::InventoryMap {
+                services: Some(Inventory {
+                    rev: Some(7),
+                    total: None,
+                    items: Vec::new(),
+                }),
+                ..Default::default()
+            },
         }
     }
 
@@ -595,7 +603,12 @@ mod tests {
         assert_eq!(cands.len(), 1, "only the identified rumor lands");
         assert_eq!(cands[0].response.stone.name, "stone-rumor");
         assert_eq!(
-            cands[0].response.services.as_ref().and_then(|i| i.rev),
+            cands[0]
+                .response
+                .inventory
+                .services
+                .as_ref()
+                .and_then(|i| i.rev),
             Some(7),
             "the rich answer's inventory rides the rumor"
         );

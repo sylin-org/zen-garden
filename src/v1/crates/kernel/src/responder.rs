@@ -55,24 +55,17 @@ async fn answer(
     .map(|req| req.rich)
     .unwrap_or(false);
     let body = source.body();
-    let services = if rich {
-        source
-            .song_blocks()
-            .into_iter()
-            .find(|(domain, _)| domain == garden_contract::chirp::DOMAIN_SERVICES)
-            .and_then(|(_, block)| {
-                serde_json::from_value::<garden_contract::chirp::Inventory<
-                    garden_contract::chirp::ServiceEntry,
-                >>(block)
-                .ok()
-            })
+    let inventory = if rich {
+        // Every domain the stone has something to say about (A2.1: the map,
+        // not a field list - a newcomer learns the whole room at once).
+        garden_contract::chirp::InventoryMap::from_pairs(source.song_blocks())
     } else {
-        None
+        garden_contract::chirp::InventoryMap::default()
     };
     let response = DiscoveryResponse {
         stone: body.stone.clone(),
         lantern_endpoint: None,
-        services,
+        inventory,
     };
     let ann = garden_contract::wire::Announcement::new(
         announcement::DISCOVERY_RESPONSE,
@@ -229,16 +222,17 @@ mod tests {
     #[tokio::test]
     async fn rich_ask_gets_the_inventory() {
         let resp = answered_for(DiscoveryRequest::for_moss_rich("tester")).await;
-        let inv = resp.services.expect("rich ask earns the inventory");
-        assert_eq!(inv.rev, Some(4));
-        assert_eq!(inv.items[0].name, "memcached::default");
+        let services = resp.inventory.services.expect("rich ask earns the map");
+        assert_eq!(services.rev, Some(4));
+        assert_eq!(services.items[0].name, "memcached::default");
+        assert!(resp.inventory.banks.is_none(), "the double speaks one domain only");
         assert_eq!(resp.stone.name, "stone-tells");
     }
 
     #[tokio::test]
     async fn lean_ask_gets_the_card_only() {
         let resp = answered_for(DiscoveryRequest::for_moss("tester")).await;
-        assert!(resp.services.is_none(), "lean asks must not pay fat replies");
+        assert!(resp.inventory.is_empty(), "lean asks must not pay fat replies");
         assert_eq!(resp.stone.id, "sid-answer");
     }
 
@@ -247,7 +241,7 @@ mod tests {
     #[tokio::test]
     async fn undecodable_ask_gets_the_card() {
         let resp = answered_with_raw(serde_json::json!({"discover": 42})).await;
-        assert!(resp.services.is_none(), "no depth can be earned by garbage");
+        assert!(resp.inventory.is_empty(), "no depth can be earned by garbage");
         assert_eq!(resp.stone.name, "stone-tells");
     }
 }

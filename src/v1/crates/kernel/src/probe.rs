@@ -157,7 +157,7 @@ mod tests {
                     },
                 },
                 lantern_endpoint: None,
-                services: None,
+                inventory: Default::default(),
             };
             let ann = Announcement::new(
                 announcement::DISCOVERY_RESPONSE,
@@ -248,23 +248,26 @@ mod tests {
                     },
                 },
                 lantern_endpoint: None,
-                services: None,
+                inventory: Default::default(),
             };
-            resp.services = Some(garden_contract::chirp::Inventory {
-                rev: Some(3),
-                total: None,
-                items: vec![garden_contract::chirp::ServiceEntry {
-                    offering_id: "oid-1".into(),
-                    name: "redis::default".into(),
-                    stem: "redis".into(),
-                    category: "data".into(),
-                    state: garden_contract::chirp::ServiceState {
-                        status: "running".into(),
-                        role: None,
-                    },
-                    ports: Default::default(),
-                }],
-            });
+            resp.inventory = garden_contract::chirp::InventoryMap {
+                services: Some(garden_contract::chirp::Inventory {
+                    rev: Some(3),
+                    total: None,
+                    items: vec![garden_contract::chirp::ServiceEntry {
+                        offering_id: "oid-1".into(),
+                        name: "redis::default".into(),
+                        stem: "redis".into(),
+                        category: "data".into(),
+                        state: garden_contract::chirp::ServiceState {
+                            status: "running".into(),
+                            role: None,
+                        },
+                        ports: Default::default(),
+                    }],
+                }),
+                ..Default::default()
+            };
             let ann = Announcement::new(
                 announcement::DISCOVERY_RESPONSE,
                 serde_json::to_value(&resp).unwrap(),
@@ -283,7 +286,11 @@ mod tests {
             .unwrap();
         responder.await.unwrap();
 
-        let inv = found[0].services.as_ref().expect("rich answer carries inventory");
+        let inv = found[0]
+            .inventory
+            .services
+            .as_ref()
+            .expect("rich answer carries inventory");
         assert_eq!(inv.items[0].name, "redis::default");
         assert_eq!(inv.rev, Some(3));
     }

@@ -197,6 +197,11 @@ impl InventoryMap {
         self.extra.insert(key, value);
     }
 
+    /// True when the map says nothing about any domain (skipped on the wire).
+    pub fn is_empty(&self) -> bool {
+        self.services.is_none() && self.banks.is_none() && self.extra.is_empty()
+    }
+
     /// Merge `newer` over `self` per-domain by revision (A2.1): absent key
     /// keeps what we have; present block's rev decides. Unknown-domain
     /// blocks merge by their embedded `rev` when comparable.

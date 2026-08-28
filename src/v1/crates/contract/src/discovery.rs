@@ -49,7 +49,8 @@ impl DiscoveryRequest {
 
 /// Where a willing respondent lives, and (when the ask was rich) what it
 /// hosts. The `stone:` block always answers "who are you"; the inventory
-/// answers "what do you have" — identical shapes to the chirp frame's.
+/// MAP answers "what do you have" — every domain, identical shapes to the
+/// chirp frame's (A2.1: the revision vector is a shape, not a field list).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscoveryResponse {
     /// WHO answered: identity and reachability (frame's `stone:` block).
@@ -57,7 +58,9 @@ pub struct DiscoveryResponse {
     /// Legacy Lantern registry endpoint (v0 field; v1 emits absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lantern_endpoint: Option<String>,
-    /// Inventory present iff the request carried rich:true.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub services: Option<crate::chirp::Inventory<crate::chirp::ServiceEntry>>,
+    /// The full inventory map, iff the request carried rich:true — services
+    /// AND banks AND whatever domains the future brings (W7 finding: a
+    /// newcomer learns the whole room in one exchange).
+    #[serde(default, skip_serializing_if = "crate::chirp::InventoryMap::is_empty")]
+    pub inventory: crate::chirp::InventoryMap,
 }

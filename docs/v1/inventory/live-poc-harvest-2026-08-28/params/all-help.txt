@@ -1,0 +1,94 @@
+=== offer (catalog) ===
+✓ Command manifest validated: 36 commands registered
+--- SERVICES ---------------------------
+
+    mongodb                   [thriving]            mongodb         
+    qdrant                    [thriving]            qdrant          
+    searxng                   [thriving]            searxng         
+
+
+      3 services (3 running, 0 stopped)
+
+
+--- AVAILABLE OFFERINGS ----------------
+=== capabilities --help ===
+✓ Command manifest validated: 36 commands registered
+Discover and manage capabilities for an offering.
+
+Capabilities are models, extensions, modules, or plugins managed by an offering.
+For example, Ollama models, PostgreSQL extensions, or Redis modules.
+
+=== nourish --help ===
+✓ Command manifest validated: 36 commands registered
+Check and apply updates across the garden — offerings, Moss, and firmware/BIOS.
+
+Queries all stones for available updates, then presents an interactive menu:
+[A] All updates (offerings + firmware)
+[O] Offering updates only
+[F] Firmware updates only
+
+Use --updates-only to check without applying.
+Use --yes to auto-confirm all updates (non-interactive).
+=== stone --help ===
+✓ Command manifest validated: 36 commands registered
+Manage stone hardware: power control, service installation,
+registry reconciliation, console verbosity, and binary updates.
+
+Usage: garden-rake stone [OPTIONS] [COMMAND]
+
+Commands:
+  wake       Wake a stone via Wake-on-LAN
+  shutdown   Power off a stone
+  reboot     Reboot a stone
+  verbosity  Control console output level
+  install    Install moss as a system service
+=== pond --help ===
+✓ Command manifest validated: 36 commands registered
+Manage multi-stone pond security network.
+
+Pond security enables encrypted trust relationships between stones.
+Subcommands: init, status, invite, join, drain, remove, untrust.
+Phase 3b feature - implementation pending.
+
+Usage: garden-rake pond [OPTIONS] [COMMAND]
+
+Commands:
+  init     Initialize pond security
+  status   Show pond status
+  invite   Generate invitation code
+  join     Join pond with invitation code
+=== manifest --help ===
+✓ Command manifest validated: 36 commands registered
+Author and manage offering manifest files.
+
+Subcommands:
+- init: Scaffold manifest files from a Docker image via inspection
+- validate: Check manifest files for errors (runs locally)
+- test: Validate and test-deploy a manifest on a stone
+- export: Download manifest files for an installed offering
+- enrich: Add missing compatibility/guidance templates
+
+Usage: garden-rake manifest [OPTIONS] [COMMAND]
+
+=== watch --help ===
+✓ Command manifest validated: 36 commands registered
+Stream real-time events from moss operations.
+
+Watch provides live updates on container lifecycle, offering installations, and system events.
+Can monitor general events or specific offering logs.
+
+Usage: garden-rake watch [OPTIONS] [COMMAND]
+
+=== backup --help ===
+✓ Command manifest validated: 36 commands registered
+Manage offering snapshots (backup/restore).
+
+View backup status, list available snapshots, trigger backups,
+and restore from local A/B slots or remote seed banks.
+
+Usage: garden-rake backup [OPTIONS] [COMMAND]
+
+Commands:
+  status       Show backup status for offerings
+  list         List available snapshots
+  trigger      Trigger backup for an offering

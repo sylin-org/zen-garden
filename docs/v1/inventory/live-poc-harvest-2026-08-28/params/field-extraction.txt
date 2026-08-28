@@ -1,0 +1,9 @@
+=== config --field ===
+✓ Command manifest validated: 36 commands registered
+mongodb://192.168.1.155:27017
+=== find --field name ===
+✓ Command manifest validated: 36 commands registered
+mongodb
+=== find --field uris ===
+✓ Command manifest validated: 36 commands registered
+mongodb://192.168.1.155:27017

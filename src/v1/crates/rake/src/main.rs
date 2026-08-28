@@ -155,6 +155,18 @@ enum Command {
     /// The machine-readable catalog of every verb, argument, and help
     /// text — how agents discover rake (ADR-0007).
     Manifest,
+    /// Ask the garden to make it true: if <name> grows anywhere in the
+    /// room, answer where; otherwise plant it here and wait until it
+    /// answers (the PoC's --ensure, promoted to a verb).
+    Ensure {
+        /// The offering's name — a catalog stem, FQN, or an existing
+        /// offering's name anywhere in the room.
+        name: String,
+        /// Give up after this many seconds (bounds the readiness wait;
+        /// the plant call itself rides the mutation budget).
+        #[arg(long, default_value_t = 240)]
+        timeout: u64,
+    },
     /// Replant an offering from its checkpoint: verify, restore, place.
     /// Same FQN, same connection strings - the incarnation returns.
     Replant {
@@ -1022,6 +1034,7 @@ async fn run(cli: &Cli) -> Result<(), String> {
         | Command::Replant { .. } => cmd_stone_op(cli).await?,
         Command::Storage { cmd } => cmd_storage(cli, cmd.as_ref()).await?,
         Command::Watch { name, cmd } => cmd_watch(cli, name, cmd.as_ref()).await?,
+        Command::Ensure { name, timeout } => cmd_ensure(cli, name, *timeout).await?,
     };
     emit(cli, answer)
 }
@@ -1124,6 +1137,168 @@ async fn stream_logs(
         }
     }
     Ok(Answer::empty())
+}
+
+/// `rake ensure <name>` — the growth promise (J1): if it grows anywhere
+/// in the room, answer where; otherwise plant it here and wait until it
+/// answers. Garden-wide first, never reinstall what already grows.
+/// Exits: 0 ready · 2 unknown name · 4 gave up waiting.
+async fn cmd_ensure(cli: &Cli, name: &str, timeout: u64) -> Result<Answer, String> {
+    let fqn = garden_glossary::fqn::canonicalize(name)
+        .map_err(|e| format!("'{name}' does not speak the name grammar: {e}"))?;
+    let stem = fqn.split("::").next().unwrap_or(name).to_string();
+    // Bareness rides from the wish as typed: canonicalizing a bare stem
+    // mints ::default, but `ensure witness-db` still accepts any
+    // instance of the capability — `ensure witness-db::garden` does not.
+    let wished_instance = name.contains("::");
+
+    // 1. Does it grow anywhere in the room? Never reinstall what grows.
+    let room = cli.garden_envelope().await?;
+    for s in envelope_plain(&room)?["stones"].as_array().into_iter().flatten() {
+        let stone = s["stone"]["name"].as_str().unwrap_or("?").to_string();
+        let ip = s["stone"]["network"]["address"]["ip"]
+            .as_str()
+            .unwrap_or("?")
+            .to_string();
+        for svc in s["inventory"]["services"]["items"].as_array().into_iter().flatten() {
+            let svc_name = svc["name"].as_str().unwrap_or("");
+            if !service_matches(&fqn, &stem, wished_instance, svc_name) {
+                continue;
+            }
+            let port = svc["ports"]
+                .as_object()
+                .and_then(|m| m.values().next())
+                .and_then(|p| p.as_u64());
+            let status = svc["state"]["status"].as_str().unwrap_or("unknown").to_string();
+            let uri = connection_uri(svc["stem"].as_str().unwrap_or("?"), &ip, port);
+            let value = serde_json::json!({
+                "data": {
+                    "ensured": true,
+                    "how": "found",
+                    "name": svc_name,
+                    "stone": stone,
+                    "uri": uri,
+                    "status": status,
+                    "offering": svc,
+                }
+            });
+            return Ok(Answer::new(value)
+                .human(|v| {
+                    println!(
+                        "{} grows on {} — {}",
+                        display_name(v["data"]["name"].as_str().unwrap_or("?")),
+                        v["data"]["stone"].as_str().unwrap_or("?"),
+                        v["data"]["uri"].as_str().unwrap_or("(no published port)")
+                    );
+                    Ok(())
+                })
+                .view(
+                    "uri",
+                    |v| Ok(serde_json::json!([v["data"]["uri"]])),
+                    |v| {
+                        for u in v.as_array().into_iter().flatten() {
+                            println!("{}", u.as_str().unwrap_or(""));
+                        }
+                        Ok(())
+                    },
+                ));
+        }
+    }
+
+    // 2. Plant it here (catalog name wins; the pull rides the plant
+    // budget). 409 means it is already planted HERE — stale cache or a
+    // race; good, use it.
+    let body = serde_json::json!({});
+    if let Err(msg) = cli.stone_op("POST", paths::record(name), Some(&body)).await
+        && LAST_REFUSAL.load(std::sync::atomic::Ordering::Relaxed) != 409
+    {
+        return Err(msg); // 404 unknown name -> exit 2; the rest as-is
+    }
+
+    // 3. Wait until the record answers: running (edge polling, L21).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+    let (cand, data, status) = loop {
+        let (cand, v) = cli.stone_op("GET", paths::record(name), None).await?;
+        let data = envelope_plain(&v)?;
+        let status = data["offering"]["state"]["status"].as_str().unwrap_or("").to_string();
+        if status == garden_glossary::offering::RUNNING {
+            break (cand, data, status);
+        }
+        if std::time::Instant::now() >= deadline {
+            LAST_REFUSAL.store(503, std::sync::atomic::Ordering::Relaxed);
+            return Err(format!(
+                "'{name}' did not become ready within {timeout}s — it may still be pulling;                  rake list shows the state"
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    };
+
+    // 4. The answer: the connection promise as data.
+    let ip = cand.ip.to_string();
+    let stem = data["offering"]["identity"]["stem"]
+        .as_str()
+        .unwrap_or(&stem)
+        .to_string();
+    let port = data["offering"]["mode"]["port_map"]
+        .as_object()
+        .and_then(|m| m.values().next())
+        .and_then(|p| p.as_u64());
+    let uri = connection_uri(&stem, &ip, port);
+    let value = serde_json::json!({
+        "data": {
+            "ensured": true,
+            "how": "planted",
+            "name": fqn,
+            "stone": cand.label(),
+            "uri": uri,
+            "status": status,
+            "offering": data["offering"],
+        }
+    });
+    Ok(Answer::new(value)
+        .human(|v| {
+            println!(
+                "{} ensured — {}",
+                display_name(v["data"]["name"].as_str().unwrap_or("?")),
+                v["data"]["uri"].as_str().unwrap_or("(no published port)")
+            );
+            Ok(())
+        })
+        .view(
+            "uri",
+            |v| Ok(serde_json::json!([v["data"]["uri"]])),
+            |v| {
+                for u in v.as_array().into_iter().flatten() {
+                    println!("{}", u.as_str().unwrap_or(""));
+                }
+                Ok(())
+            },
+        ))
+}
+
+/// The ensure lookup rule: a room service satisfies the wish when its
+/// full FQN matches the canonical wish, or when its stem matches the
+/// wished stem — any instance of the capability counts.
+fn service_matches(
+    wish_fqn: &str,
+    wish_stem: &str,
+    wish_named_instance: bool,
+    service_name: &str,
+) -> bool {
+    if service_name == wish_fqn {
+        return true;
+    }
+    // A bare-stem wish accepts any instance of the capability; a named
+    // instance wants exactly itself.
+    !wish_named_instance && service_name.split("::").next() == Some(wish_stem)
+}
+
+/// The connection promise (J1) for one capability.
+fn connection_uri(stem: &str, ip: &str, port: Option<u64>) -> String {
+    match port {
+        Some(p) => format!("{stem}://{ip}:{p}"),
+        None => format!("{stem}://{ip}"),
+    }
 }
 
 async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<Answer, String> {
@@ -2122,6 +2297,32 @@ mod tests {
             "nothing answers at 'x' on this bank"
         );
         assert_eq!(raw_refusal(502, b"<html>gateway</html>"), "HTTP 502");
+    }
+
+    /// The ensure lookup rule: full FQN is exact; a stem matches any
+    /// instance of the capability; strangers don't.
+    #[test]
+    fn ensure_lookup_matches_stems_and_fqns() {
+        assert!(service_matches("redis::default", "redis", false, "redis::default"));
+        assert!(
+            service_matches("witness-db::default", "witness-db", false, "witness-db::garden"),
+            "a bare-stem wish accepts any instance"
+        );
+        assert!(!service_matches("redis::default", "redis", false, "mongodb::garden"));
+        assert!(
+            !service_matches("redis::prod", "redis", true, "redis::default"),
+            "a named instance wants exactly itself"
+        );
+        assert!(service_matches("redis::prod", "redis", true, "redis::prod"));
+    }
+
+    /// The connection promise (J1) as a pure string.
+    #[test]
+    fn connection_uri_carries_the_port_when_there_is_one() {
+        use std::net::Ipv4Addr;
+        let ip = Ipv4Addr::new(192, 168, 1, 195).to_string();
+        assert_eq!(connection_uri("redis", &ip, Some(6379)), "redis://192.168.1.195:6379");
+        assert_eq!(connection_uri("redis", &ip, None), "redis://192.168.1.195");
     }
 
     /// The script-visible vocabulary (R3.3): a script can branch on WHY

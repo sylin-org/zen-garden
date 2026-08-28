@@ -122,6 +122,10 @@ pub mod verbs {
     /// Render the placed record by hand: what runs and WHY it decided
     /// so (`describe`, in the k8s sense).
     pub const EXPLAIN: &str = "explain";
+    /// Ask the garden to make it true: present, running, and answering —
+    /// the growth promise (J1; infra's `ensure`, the PoC's `--ensure`
+    /// promoted to a verb).
+    pub const ENSURE: &str = "ensure";
 }
 
 /// Bounded contexts — module and event-domain names.

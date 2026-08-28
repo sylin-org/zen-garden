@@ -83,7 +83,12 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// The garden as an attached moss sees it.
-    Observe,
+    Observe {
+        /// Output format: human (default) or uri — one offering URI per
+        /// line, across every stone. The connection promise as output.
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Stones whose name contains the pattern, as the attached moss sees them.
     Find {
         pattern: String,
@@ -127,7 +132,12 @@ enum Command {
     },
     /// List what the attached stone hosts - with each offering's URI.
     /// The connection promise as output (J1).
-    List,
+    List {
+        /// Output format: human (default) or uri — one offering URI per
+        /// line. The connection promise as output (J1).
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Run an offering's declared will (ADR-0005): imprint, pack, ferry,
     /// commit. `--last` reports the previous run instead.
     Capture {
@@ -460,6 +470,10 @@ impl Cli {
         match exec(cand.clone()).await {
             Ok(answer) => Ok(Some((cand.clone(), answer))),
             Err(e) => {
+                // The refusal's kind is script-visible at exit (R3.3).
+                if let AttachError::ResponseError(status, _) = &e {
+                    LAST_REFUSAL.store(*status, std::sync::atomic::Ordering::Relaxed);
+                }
                 eprintln!("note: {} ({}) — {}", cand.endpoint(), cand.origin_label(), e);
                 if e.is_connection_failed() {
                     // Soft memory of a dead stone: flush and move on
@@ -591,10 +605,16 @@ impl Cli {
         let (cand, status, bytes) =
             self.stone_bytes(method, path.clone(), content_type, owned.clone()).await?;
         let Some(home) = not_here_home(status, &bytes) else {
+            if status != 200 {
+                LAST_REFUSAL.store(status, std::sync::atomic::Ordering::Relaxed);
+            }
             return Ok((cand, status, bytes));
         };
         eprintln!("rake: the bank grows elsewhere - asking {home}");
         let (status, bytes) = reissue_at_home(method, &home, &path, content_type, owned.as_deref()).await?;
+        if status != 200 {
+            LAST_REFUSAL.store(status, std::sync::atomic::Ordering::Relaxed);
+        }
         Ok((cand, status, bytes))
     }
 }
@@ -651,20 +671,32 @@ async fn reissue_at_home(
 // ---------------------------------------------------------------------------
 
 /// Exit codes (R3.3: the process answers with a code, not just a message).
-/// The full vocabulary lands with the typed error refactor; GENERAL is
-/// wired now, the rest are declared so callers can plan against them.
+/// The moss's HTTP status of the last refusal decides the kind a script
+/// sees.
 mod exit {
     pub const GENERAL: i32 = 1;
-    /// Not yet wired: arrives with typed errors carrying their own code.
-    #[allow(dead_code)]
+    /// The named thing is not here (HTTP 404).
     pub const NOT_FOUND: i32 = 2;
-    /// Not yet wired: same.
-    #[allow(dead_code)]
+    /// The command doesn't apply / the request was malformed (409, 400).
     pub const CONFLICT: i32 = 3;
-    /// Not yet wired: same.
-    #[allow(dead_code)]
+    /// A world or volume the command needs is not answering (503).
     pub const UNAVAILABLE: i32 = 4;
+
+    /// Map the moss's refusal status onto the script-visible code.
+    pub fn for_status(status: u16) -> i32 {
+        match status {
+            404 => NOT_FOUND,
+            409 => CONFLICT,
+            503 => UNAVAILABLE,
+            _ => GENERAL,
+        }
+    }
 }
+
+/// The last refusal's HTTP status, set at the one shared refusal point
+/// ([`Cli::attempt`]) and read at exit. rake walks sequentially, so the
+/// value is always the answer the command died on.
+static LAST_REFUSAL: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 
 #[tokio::main]
 async fn main() {
@@ -679,30 +711,50 @@ async fn main() {
         } else {
             eprintln!("rake: {msg}");
         }
-        std::process::exit(exit::GENERAL);
+        std::process::exit(exit::for_status(LAST_REFUSAL.load(std::sync::atomic::Ordering::Relaxed)));
     }
 }
 
 async fn run(cli: &Cli) -> Result<(), String> {
     match &cli.command {
-        Command::List => {
-            let (_, v) = cli
+        Command::List { format } => {
+            let (cand, v) = cli
                 .stone_op("GET", paths::OFFERINGS.to_string(), None)
                 .await?;
+            if format.as_deref() == Some("uri") || format.as_deref() == Some("uri-ip") {
+                // The connection promise for THIS stone's offerings: the
+                // attached moss's own address names the home.
+                for o in envelope_plain(&v)?["offerings"].as_array().into_iter().flatten() {
+                    let stem = o["identity"]["stem"].as_str().unwrap_or("?");
+                    match o["mode"]["port_map"].as_object().and_then(|m| m.values().next()) {
+                        Some(p) => println!("{}://{}:{}", stem, cand.ip, p),
+                        None => println!("{}://{}", stem, cand.ip),
+                    }
+                }
+                return Ok(());
+            }
             if cli.json {
                 return emit_output(&v, cli);
             }
             render_list(&envelope_plain(&v)?)
         }
-        Command::Observe => {
+        Command::Observe { format } => {
             let stones = cli.garden_view().await?;
-            if cli.json {
-                let arr = serde_json::to_value(&stones)
-                    .map_err(|e| format!("could not render json: {e}"))?;
-                emit_output(&arr, cli)
-            } else {
-                print_table(&stones);
-                Ok(())
+            match format.as_deref() {
+                Some("uri") | Some("uri-ip") => {
+                    print_uris(&stones);
+                    Ok(())
+                }
+                _ => {
+                    if cli.json {
+                        let arr = serde_json::to_value(&stones)
+                            .map_err(|e| format!("could not render json: {e}"))?;
+                        emit_output(&arr, cli)
+                    } else {
+                        print_table(&stones);
+                        Ok(())
+                    }
+                }
             }
         }
         Command::Find { pattern, format } => {
@@ -711,24 +763,7 @@ async fn run(cli: &Cli) -> Result<(), String> {
             stones.retain(|s| s.body.stone.name.to_lowercase().contains(&needle));
             match format.as_deref() {
                 Some("uri") | Some("uri-ip") => {
-                    // The connection promise as output: one URI per line.
-                    for s in &stones {
-                        let ip = s.body.stone.network.address.ip;
-                        for svc in s
-                            .body
-                            .inventory
-                            .services
-                            .as_ref()
-                            .map(|b| b.items.as_slice())
-                            .unwrap_or_default()
-                        {
-                            let port = svc.ports.values().next();
-                            match port {
-                                Some(p) => println!("{}://{}:{}", svc.stem, ip, p),
-                                None => println!("{}://{}", svc.stem, ip),
-                            }
-                        }
-                    }
+                    print_uris(&stones);
                     Ok(())
                 }
                 _ => {
@@ -1039,6 +1074,28 @@ fn render_list(v: &serde_json::Value) -> Result<(), String> {
         _ => println!("Nothing planted on this stone yet. Try: rake offer <name>"),
     }
     Ok(())
+}
+
+/// The connection promise as output (J1): one offering URI per line,
+/// `stem://ip:port`, across the given stones. The `--format uri` face
+/// of observe and find.
+fn print_uris(stones: &[GardenStone]) {
+    for s in stones {
+        let ip = s.body.stone.network.address.ip;
+        for svc in s
+            .body
+            .inventory
+            .services
+            .as_ref()
+            .map(|b| b.items.as_slice())
+            .unwrap_or_default()
+        {
+            match svc.ports.values().next() {
+                Some(p) => println!("{}://{}:{}", svc.stem, ip, p),
+                None => println!("{}://{}", svc.stem, ip),
+            }
+        }
+    }
 }
 
 /// The banks table: what this stone holds, and what it could adopt.
@@ -1745,6 +1802,18 @@ mod tests {
             "nothing answers at 'x' on this bank"
         );
         assert_eq!(raw_refusal(502, b"<html>gateway</html>"), "HTTP 502");
+    }
+
+    /// The script-visible vocabulary (R3.3): a script can branch on WHY
+    /// a command died — miss, conflict, unavailability — not just "no".
+    #[test]
+    fn exit_codes_distinguish_the_refusal_kinds() {
+        assert_eq!(exit::for_status(404), exit::NOT_FOUND, "a miss is a miss");
+        assert_eq!(exit::for_status(409), exit::CONFLICT);
+        assert_eq!(exit::for_status(400), exit::GENERAL, "malformed is not a conflict");
+        assert_eq!(exit::for_status(503), exit::UNAVAILABLE);
+        assert_eq!(exit::for_status(500), exit::GENERAL);
+        assert_eq!(exit::for_status(0), exit::GENERAL, "no refusal = general");
     }
 
     /// The garden's only true redirect, client-side: a 404 that says

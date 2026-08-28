@@ -1,0 +1,1230 @@
+# PoC rake surfaces — deep inventory (2026-08-28 read-everything pass)
+# Survey method: full read of src/poc/rake/src (~26.6k lines); manifest as checklist, implementations read per command.
+# All paths relative to src/poc/rake/src/ unless prefixed. Endpoints verified against
+# src/poc/common/src/client/stone_api.rs (StoneApi) plus raw ctx.client calls in each command.
+# v1 baseline = enum Command in src/v1/crates/rake/src/main.rs:77 (observe, find, offer, explain,
+# rest, wake, uproot, storage{list,adopt,roles,garden,eject}, capture, replant).
+
+# ============================ DISCOVERY ============================
+
+- id: rake-observe
+  name: observe
+  kind: command
+  category: Discovery
+  flags: ["[stone] positional filter", "--offering <comma-list>", "global: --fresh (handled, warns unsupported)"]
+  endpoint: "GET /api/v1/garden/topology (via tending::execute_on_stone with mDNS fallback); fallback GET {lantern}/api/v1/stones"
+  what: >
+    Garden-wide overview table. Queries the tended stone's topology cache (chirp-populated),
+    with parallel-discovery fallback to another stone and a final Lantern registry fallback.
+    Renders NAME / OS / CORES / MEM / AI / OFFERINGS columns with vitality coloring,
+    a summary header ("N stones, all thriving"), adaptive legend, and tended marker.
+  how: >
+    Local command (requires_endpoint=false). tending::execute_on_stone races tended stone
+    vs delayed UDP discovery (3s delay, biased toward tended). Topology rows with no
+    capabilities are skipped (verbose notes them). Offline stones force-classified dormant.
+    Lantern path renders a degraded table (no hardware data, dashes).
+  rendering: >
+    Human table only. NO JSON mode (ignores ctx.output_format). Colors: gold tended name,
+    green/yellow/red/gray vitality, emoji OS icons (or [W]/[L]), ─ dividers. Footer hint
+    "garden-rake <stone>? for details". --fresh prints "Fresh mode not yet supported".
+  evidence:
+    - "commands/discovery/observe.rs:53-72 — Command impl, requires_endpoint=false"
+    - "commands/discovery/observe.rs:142-264 — execute_on_stone + api.garden().observe()"
+    - "commands/discovery/observe.rs:279-310 — Lantern fallback GET /api/v1/stones"
+    - "commands/discovery/observe.rs:133-139 — --fresh warns 'not yet supported'"
+    - "route.rs:122-129 — Inv::local"
+  gaps:
+    - "--fresh advertised via global flag + observe hint 'Try: garden-rake observe --fresh' but explicitly unsupported (observe.rs:133-139)"
+    - "No JSON/--output json support despite global -o json flag"
+    - "MANIFEST see_also references 'pulse' but suggestions system takes only first 3"
+  maturity: live-proven
+  v1: yes
+  v1_note: >
+    v1 observe exists but renders the v1 wire/cache garden (ChirpFrame GardenStone rows);
+    PoC observe renders the topology-cache table. Same intent, different data plane.
+
+- id: rake-pulse
+  name: pulse
+  kind: command
+  category: Discovery
+  flags: ["--at <stone>"]
+  endpoint: "GET /api/v1/stone/pulse/stream (SSE firehose) + GET /api/v1/garden/topology polled every 10s"
+  what: >
+    Permanent full-screen terminal monitor: live gauges (CPU/MEM/DSK/GPU/NET), offerings
+    status line, scrolling wire feed of domain.* + transport.* events, garden topology
+    sidebar/summary, diagnostics footer (connected duration, evt/min, last chirp age).
+    Auto-reconnects on stone restart; exits cleanly on server.shutdown.
+  how: >
+    Consumes SSE; pulse.snapshot hydrates PresenceSnapshot, domain.stone.load.updated updates
+    gauges, transport.stone_chirp/election_*/storage_beacon/tools_beacon become wire lines with
+    budget-fitted detail items. Frame buffer rendering: cursor-home, exact row budget (rows-1
+    newlines), 250ms min redraw interval, single stdout write per frame. Layout: Split
+    (wire | sidebar) >=79 cols, Stacked (wire + 2-per-row garden) >=50, Narrow below.
+    Reconnect backoff 1s doubling to 30s; Ctrl+C restores cursor and exits.
+  rendering: >
+    Full-screen ANSI frame (ESC[2J once, then ESC[H overwrite). Color + unicode adaptive
+    (unicode off by default on Windows unless GARDEN_UNICODE=1). ASCII fallbacks everywhere.
+  evidence:
+    - "commands/pulse.rs:299-399 — connect/reconnect loop, backoff, server.shutdown exit"
+    - "commands/pulse.rs:402-473 — stream_loop select: SSE / topology tick / ctrl_c"
+    - "commands/pulse.rs:480-529 — SSE dispatch (pulse.snapshot, domain.*, transport.*)"
+    - "commands/pulse.rs:925-1052 — frame buffer composite + row budget"
+    - "common/src/presence/event_types.rs:9 — PULSE_STREAM_PATH = /api/v1/stone/pulse/stream"
+  gaps:
+    - "No persistence/log export; ring buffer capped at 200 events"
+    - "Wire feed newest-at-top (reversed); undocumented"
+  maturity: live-proven
+  v1: MISSING
+  v1_note: v1 rake has no monitoring/live view at all.
+
+- id: rake-watch
+  name: watch
+  kind: command
+  category: Discovery
+  flags: ["--until <string>", "at global", "sub: offering <name> logs [--timestamps]", "sub: stone <name> logs [--timestamps]"]
+  endpoint: "GET /api/v1/stone/presence/stream (SSE, bare watch); GET /api/v1/stone/services/{name}/logs?timestamps=true (SSE, offering logs)"
+  what: >
+    Streams live stone events (with --until exit-on-pattern) or offering container logs.
+    Log lines colorized red for stderr; events rendered "[HH:MM:SS] <symbol> message" with
+    level symbols i/!/x/*/o.
+  how: >
+    Bare watch consumes presence stream SSE. `watch stone <name> logs` re-resolves the stone
+    by UDP discovery + capabilities name match, then... is a stub (see gaps). `logs` command
+    delegates to watch offering logs (route.rs:133-140).
+  rendering: >
+    Plain streaming text; SSE parsed manually; error events prefixed "!". No JSON.
+  evidence:
+    - "commands/discovery/watch.rs:216-305 — watch_events with until-pattern exit"
+    - "commands/discovery/watch.rs:126-202 — offering logs SSE with stderr coloring"
+    - "route.rs:143-174 — watch subcommand routing"
+  gaps:
+    - "`watch stone <name> logs` is a STUB: prints 'Stone-wide log streaming not yet implemented' (watch.rs:205-213) even though StoneApi has GET /api/v1/stone/logs/stream (stone_api.rs:1190-1191) unused"
+    - "manifest example 'watch at stone-01 until completed' implies --until after --at; clap accepts either order but help only shows flag form"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-logs
+  name: logs
+  kind: command
+  category: Discovery
+  flags: ["<service> positional (required)", "--timestamps"]
+  endpoint: "GET /api/v1/stone/services/{name}/logs?timestamps=true (SSE)"
+  what: >
+    Shortcut for `watch offering <name> logs` — streams one service's container logs.
+  how: >
+    Route constructs WatchCommand::offering_logs directly (route.rs:133-140).
+  rendering: stdout log lines, red stderr; "x Offering 'x' not found" on 404.
+  evidence:
+    - "command_manifest.rs:384-412 — manifest entry"
+    - "route.rs:133-140 — delegation to WatchCommand::offering_logs"
+  gaps: []
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-list
+  name: list
+  kind: command
+  category: Discovery
+  flags: ["--at <stone>"]
+  endpoint: "GET /api/v1/stone/services"
+  what: >
+    Lists services on the target stone with status, offering, and (when present) a
+    sub-capability summary column ("12 models"). Footer counts running/stopped plus
+    registered orchestrators separately ([registered] in blue).
+  how: >
+    Raw GET via ctx.client; parses ApiResponse<ServiceDiscoveryResponse>.
+  rendering: >
+    Human table via TableBuilder; empty state with hint "Use: garden-rake offer <service>".
+    No JSON mode.
+  evidence:
+    - "commands/discovery/list.rs:33-68 — execute"
+    - "commands/discovery/list.rs:72-172 — render_services_table + registered split"
+  gaps:
+    - "No JSON mode despite global -o json"
+  maturity: live-proven
+  v1: partial
+  v1_note: v1 observe shows placed offerings; no dedicated per-stone service list.
+
+- id: rake-status
+  name: status
+  kind: command
+  category: Discovery
+  flags: ["<service> positional (required per manifest)", "--at <stone>"]
+  endpoint: "GET /api/v1/stone/capabilities/core + GET /api/v1/stone/health"
+  what: >
+    Per-manifest "show service status", but the implementation shows STONE system info:
+    ACCESS (HTTP/mDNS/IP), SYSTEM (ARCH/CPU/FLAGS/MEMORY/OS/KERNEL), AI (GPUs with VRAM +
+    runtimes), HEALTH (pass/fail checks). The <service> positional accepted by clap is
+    completely ignored by the route and implementation.
+  how: >
+    Two calls; health fetched as raw text then parsed leniently. Detection-in-progress
+    notice when capabilities detection_status != Complete.
+  rendering: >
+    section_header_v2 blocks + place_value aligned key-values. No JSON. Always prints an
+    eprintln tip (ignores quiet semantics partially — gated on quiet but not on JSON).
+  evidence:
+    - "command_manifest.rs:849-875 — manifest says 'Show service status' with required <service>"
+    - "commands/discovery/status.rs:24-68 — ignores service; queries stone capabilities/health"
+    - "route.rs:61 — StatusCommand::new(g.quiet), service arg never read"
+  gaps:
+    - "MANIFEST-VS-REALITY: advertised per-service status does not exist; positional <service> is dead. Real per-service detail lives in `config` or `find`"
+    - "No JSON mode"
+  maturity: code-complete-unsoaked
+  v1: partial
+  v1_note: v1 has no status; observe covers stone health coarsely.
+
+- id: rake-find
+  name: find
+  kind: command
+  category: Discovery
+  flags: ["<query> (name | c:category | t:tag | FQN | FQN[type:item,...])", "--format human|json|uri|uri-ip", "--ensure (flag)", "--at"]
+  endpoint: "GET /api/v1/garden/services?q=<query>[&fresh=true]; ensure path: GET /api/v1/stone/offerings/{name}, POST /api/v1/stone/services, GET /api/v1/stone/offerings/{name}/capabilities, POST /api/v1/stone/offerings/{name}/capabilities, GET /api/v1/garden/tools/stream?fqid=...&capability=... (SSE readiness wait)"
+  what: >
+    Garden-wide service lookup returning connection URIs; cache-first (topology), with
+    sanitization of queries. Ensure mode auto-provisions: installs the offering, waits on
+    the tools SSE stream for readiness (240s), re-queries; also understands capability
+    wishes like `ollama[model:llama3.2]`. Exit codes: 1 not-found, 3 provisioning failed.
+  how: >
+    Query → server-side search. Not-found + --ensure + name-search → offering install
+    (job-id parsed from prose "Job ID:" fallback) → retry. Capability-wish path parses
+    selectors, ensures base offering, adds capabilities, waits for tool upsert matching
+    fqid + selectors.
+  rendering: >
+    human (name (category) on stone + first URI + multi-result summary + JSON hint),
+    json (pretty ServiceDiscoveryResponse), uri/uri-ip (bare URI lines, IP = uris[1]),
+    --field dot/bracket extraction (e.g. services[0].connection.uris[0]).
+  evidence:
+    - "commands/discovery/find.rs:121-175 — execute + format dispatch"
+    - "commands/discovery/find.rs:199-247 — GET /api/v1/garden/services?q="
+    - "commands/discovery/find.rs:284-359 — install_offering + job-id prose parsing"
+    - "commands/discovery/find.rs:591-687 — wait_for_tool_ready SSE"
+    - "commands/discovery/find.rs:839 — suggestion prints 'find <q> ensure' syntax"
+    - "command_manifest.rs:732-734 — example 'garden-rake find mongodb ensure'"
+  gaps:
+    - "BUG: manifest example and find's own not-found hint say `find mongodb ensure` (trailing word) but --ensure is a FLAG; trailing 'ensure' is an unexpected positional and fails clap parsing (find.rs:839, command_manifest.rs:732-734 vs route.rs:89)"
+    - "install_offering parses job_id out of the human-readable 'message' string when structured job_id absent (find.rs:316-330) — brittle"
+  maturity: live-proven
+  v1: yes
+  v1_note: v1 find matches pattern → stones; PoC find returns connection URIs with ensure-provisioning — significantly richer.
+
+- id: rake-config
+  name: config
+  kind: command
+  category: Discovery
+  flags: ["<service> (required)", "--output human|json", "--field <dot.path>", "--at"]
+  endpoint: "GET /api/v1/garden/services?q=<service> (exact-name reuse of find endpoint)"
+  what: >
+    Automation-oriented single-service config: builds ServiceConfigResponse (connection
+    uri/uris/hostname/ip/port/protocol, ports.native) from the first found service.
+    --field extracts one value; json mode prints the object.
+  how: >
+    Same garden/services endpoint as find; service missing → exit 1 (silent in json/field).
+  rendering: human block, JSON, or bare field value.
+  evidence:
+    - "commands/discovery/config.rs:100-185 — execute + not-found exits"
+    - "commands/discovery/config.rs:194-218 — build_config (version=protocol hint, health always 'unknown')"
+  gaps:
+    - "Placeholder fields: version echoes protocol, health hardcoded 'unknown' (config.rs:198-200)"
+    - "Not-found hint suggests `offer <name> --ensure` but offer has no --ensure flag (config.rs:158)"
+  maturity: live-proven
+  v1: partial
+  v1_note: v1 find returns URIs; PoC config adds field extraction for scripts.
+
+- id: rake-inspect
+  name: inspect (alias: hw)
+  kind: command
+  category: Discovery
+  flags: ["--save <path> / -s", "--json", "--at", "sub: all [file] [--json] [--expanded]"]
+  endpoint: "GET /api/v1/stone/capabilities (single, Tier1+Tier2); GET /api/v1/garden/inspect (all)"
+  what: >
+    Deep hardware inspection (ARCH-0014): Tier 1 (CPU/GPU/memory) + Tier 2 (system identity,
+    BIOS, PCIe devices with negotiated width/gen, Thunderbolt, M.2 slots, USB, NICs with
+    firmware, fingerprint). `inspect all` fans out garden-wide, writes JSON to file
+    (default garden-inspect.json), renders GPU/RAM/DISK leaderboards with ASCII bars,
+    network speed histogram, fingerprint-coalesced FLEET table (or --expanded per-stone),
+    TOTALS line.
+  how: >
+    Single: full FullCapabilities render with Tier-2-missing notice. All: garden inspect
+    payload -> per-stone StoneSummary (model label derived product > board > mfr+CPU,
+    BIOS-placeholder filtering), 3-pass measure/render.
+  rendering: formatted sections or --json raw; bars "CPU [====----]" style.
+  evidence:
+    - "commands/discovery/inspect.rs:34-177 — InspectCommand render"
+    - "commands/discovery/inspect.rs:211-270 — InspectAllCommand (file write + leaderboards)"
+    - "commands/discovery/inspect.rs:460-677 — render_all leaderboards/FLEET/TOTALS"
+  gaps:
+    - "Tier-2-missing hint says 'Trigger with: rake inspect --refresh' (inspect.rs:173) — no --refresh flag exists on inspect, and binary is garden-rake"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-api
+  name: api
+  kind: command
+  category: Discovery
+  flags: ["[endpoint] positional", "--category <name>", "--examples", "--at"]
+  endpoint: "GET /api/v1/manifest"
+  what: >
+    Live Moss HTTP API reference: lists categories/endpoints (method, path, description),
+    per-endpoint detail (path/query params, body schema, response type, curl examples, notes).
+  how: >
+    Bypasses the Command trait: route pre-resolves endpoint and calls execute_api_command
+    directly (route.rs:677-690). Path filter matches exact or contains('*'->':').
+  rendering: plain text reference listing.
+  evidence:
+    - "commands/api.rs:10-35 — execute_api_command"
+    - "commands/api.rs:109-187 — endpoint detail"
+    - "route.rs:677-690 — direct execution"
+  gaps: []
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+# ============================ LIFECYCLE ============================
+
+- id: rake-offer
+  name: offer (alias: explore)
+  kind: command
+  category: Lifecycle
+  flags: ["[offering] positional (omit=list; 'refresh'=refresh)", "sub: info", "sub: image <ref> [--instance <name>] [--info-only]", "--prefer <csv>", "--anywhere-on-fail", "--placement-mode interactive|auto", "--at (and --at anywhere)"]
+  endpoint: >
+    list: GET /api/v1/stone/offerings + GET /api/v1/stone/services; refresh: POST /api/v1/stone/offerings/refresh;
+    info: GET /api/v1/stone/offerings/{name}; query/search: GET /api/v1/stone/offerings/search?q=&prefer=&limit=;
+    install: POST /api/v1/stone/services then poll GET /api/v1/jobs/{job_id} (500ms, 5min);
+    image info: GET /api/v1/stone/offerings/inspect?image=; image deploy: POST /api/v1/stone/services (image:<ref>[::<instance>]);
+    placement: POST /api/v1/garden/recommend (pond-signed) + GET /api/v1/garden/topology; alternatives on compat-fail via search.
+  what: >
+    The install/list/search surface. Bare: category grid of offerings (incompatible filtered,
+    fallback-tagged with * legend) + running services table. Named + known: install with
+    job progress (percentage, elapsed, failure → non-zero exit), already-installed branch,
+    400 COMPATIBILITY_FAILED → derived-query alternatives (+ --anywhere-on-fail garden sweep).
+    Unknown name → top-3 server-scored recommendations. --at anywhere aggregates search
+    across UDP-discovered stones with local prefer scoring (ssd/nvme/hdd). --placement-mode
+    drives POST /garden/recommend: interactive ranked selection (compat icon, tended star,
+    mem/cpu/storage metrics, exclusion summary) or quiet auto-install of top stone.
+  how: >
+    route_offer pre-resolves endpoint to decide known-offering vs query. Install payload
+    {offering: fqn, ports: [], environment: {}}; job_id from structured field else prose
+    "/api/jobs/<uuid>" fallback. Placement uses signed raw POST with audience=candidate name.
+  rendering: >
+    CategoryGrid multi-column list; install line "name  [status action]" + divider + SSE-less
+    polling progress with \r updates; suggestions block from ApiResponse.suggestions; placement
+    interactive [Y/n] / 1-N/q picker. No JSON mode.
+  evidence:
+    - "commands/offering/mod.rs:310-416 — print_offerings_index"
+    - "commands/offering/mod.rs:688-875 — stream_job_progress polling"
+    - "commands/offering/mod.rs:881-1244 — placement recommend interactive/quiet"
+    - "commands/offering/mod.rs:1422-1699 — Install branch (dup-check, create, 400 alternatives)"
+    - "commands/offering/mod.rs:1701-1834 — Image info/deploy (image:<ref>[::instance])"
+    - "route.rs:712-818 — route_offer branching"
+  gaps:
+    - "Already-installed suggestions reference non-existent commands: garden-rake show / start / stop / restart (offering/mod.rs:1446-1470); real verbs are status/wake/rest"
+    - "JSON mode unsupported for every offer action"
+    - "install failure inside job polling correctly bails non-zero (added fix noted at mod.rs:800-808)"
+  maturity: live-proven
+  v1: yes
+  v1_note: >
+    v1 offer plants by catalog name or --image with --port NAME=PORT / --input KEY=VALUE /
+    --runtime / --category. PoC offer loses --port/--input/--runtime (ports/environment
+    hardcoded empty) but gains search, placement recommendation, image-inspect, alternatives.
+
+- id: rake-rest
+  name: rest
+  kind: command
+  category: Lifecycle
+  flags: ["<service> (required)", "--at"]
+  endpoint: "POST /api/v1/stone/services/{name}/rest (send_signed_raw — pond-signed)"
+  what: >
+    Stops a service (rest mode); container stopped, data preserved.
+  how: >
+    Signed raw POST; parses message/status/suggestions from body; 404 → not-found message.
+  rendering: one-line status + optional server suggestions; no JSON.
+  evidence:
+    - "commands/lifecycle/rest.rs:24-121"
+  gaps: []
+  maturity: live-proven
+  v1: yes
+
+- id: rake-wake
+  name: wake
+  kind: command
+  category: Lifecycle
+  flags: ["<service> (required)", "--at"]
+  endpoint: "POST /api/v1/stone/services/{name}/wake (typed StoneApi)"
+  what: >
+    Starts a rested service; resumes with previous data/config.
+  rendering: one-line status + suggestions; 404-aware via is_not_found.
+  evidence:
+    - "commands/lifecycle/wake.rs:24-101"
+  gaps: []
+  maturity: live-proven
+  v1: yes
+
+- id: rake-remove
+  name: remove
+  kind: command
+  category: Lifecycle
+  flags: ["<service> (required)", "--yes/-y", "--at"]
+  endpoint: "pre-check GET /api/v1/stone/services/{name}; then DELETE /api/v1/stone/services/{name} (send_signed_raw)"
+  what: >
+    Soft delete: stops and removes container, PRESERVES volumes; container becomes a stray.
+    Confirmation prompt [y/N] unless --yes or quiet (quiet bypasses prompt — dangerous combo).
+  rendering: confirmation text + result line + suggestions.
+  evidence:
+    - "commands/lifecycle/remove.rs:31-154"
+  gaps:
+    - "--yes AND quiet both skip confirmation; quiet is also used for scripting, so a quiet remove is unconfirmed"
+  maturity: live-proven
+  v1: MISSING
+  v1_note: v1 only has hard delete (uproot); no soft-remove/volume-preserving path.
+
+- id: rake-uproot
+  name: uproot
+  kind: command
+  category: Lifecycle
+  flags: ["<service> (required)", "--yes/-y", "--at"]
+  endpoint: "pre-check GET /api/v1/stone/services/{name}; then POST /api/v1/stone/services/{name}/destroy (send_signed_raw)"
+  what: >
+    Hard delete: permanently destroys container and volumes. Typed 'y' confirmation unless
+    --yes/quiet.
+  how: >
+    Uses POST .../destroy — an endpoint NOT present in StoneApi (raw path); message read
+    from data.message (wrapped envelope).
+  rendering: WARNING prompt + result line.
+  evidence:
+    - "commands/lifecycle/uproot.rs:30-137"
+  gaps:
+    - "destroy endpoint is raw/undocumented in StoneApi; response expects {data:{message}} envelope unlike siblings"
+  maturity: live-proven
+  v1: yes
+
+- id: rake-upgrade
+  name: upgrade
+  kind: command
+  category: Lifecycle
+  flags: ["[service] (optional)", "--all", "--at"]
+  endpoint: "GET /api/v1/stone/services (batch path); POST /api/v1/stone/services/{name}/upgrade"
+  what: >
+    Upgrades one service or all services to latest image. Batch lists then upgrades each,
+    reporting upgraded/failed lists. 202 → "under maintenance".
+  rendering: one-line results; no JSON.
+  evidence:
+    - "commands/lifecycle/upgrade.rs:28-172"
+  gaps:
+    - "IDENTITY CONFUSION: Command::name() returns \"nourish\" and suggestions print for 'nourish' (upgrade.rs:169,176) — wrong see-also in self-teaching output"
+    - "--all has no per-service confirmation"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-nourish
+  name: nourish
+  kind: command
+  category: Lifecycle
+  flags: ["[stone] positional (omit=garden-wide)", "--updates-only", "--yes/-y"]
+  endpoint: "GET /api/v1/garden/updates; POST /api/v1/garden/updates/execute (pond-signed); GET /api/v1/stone/updates/stream/{job_id} (SSE per-stone progress)"
+  what: >
+    Garden-wide update check+apply across offerings, Moss itself, and firmware (tested vs
+    suggested/LVFS confidence tiers, blocked list with reasons). Interactive [A]ll/[O]fferings/
+    [F]irmware/[ESC] menu; --yes auto-applies all; --updates-only check-only. After execute,
+    prints per-stone job states (running/success/failed/unreachable/pending icons) and tails
+    live SSE progress per stone (10-min timeout).
+  how: >
+    Local command using execute_on_stone; execute is signed (audience = orchestrating stone);
+    progress streamed sequentially per stone job endpoint from the response.
+  rendering: box-drawn summary, emoji icons, "⟲ = reboot required" legend; no JSON.
+  evidence:
+    - "commands/nourish.rs:34-150 — check + interactive menu"
+    - "commands/nourish.rs:170-361 — display_nourishment"
+    - "commands/nourish.rs:395-511 — execute_with_scope (signed) + job streaming"
+  gaps:
+    - "No JSON mode; interactive prompt not gated on TTY detection"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-capabilities
+  name: capabilities (alias: cap)
+  kind: command
+  category: Lifecycle
+  flags: ["<offering> (required)", "sub: add <name> [--type <t>] [--dry-run]", "sub: remove <name> [--type <t>]", "sub: refresh [--type <t>] [--dry-run]", "sub: mirror <from|to args...>", "--at"]
+  endpoint: >
+    GET /api/v1/stone/offerings/{name}/capabilities; POST .../capabilities (add);
+    DELETE .../capabilities/{name}[?type=] (remove); POST .../capabilities/refresh;
+    POST .../capabilities/mirror.
+  what: >
+    Manage offering capabilities (Ollama models, PG extensions, Redis modules): list by
+    collection with size column; add (job-based: exists/dry_run/in_progress/started with
+    truncated Job ID); remove; refresh (dry-run table, in-progress percent); mirror copies
+    capabilities between stones (`from <stone>` / `to <stone>` tokens, defaults local =
+    tended stone for the missing side, refuses from==to).
+  how: >
+    Tagged-enum response parsing per operation; add body {name, type?, dry_run}.
+  rendering: section headers + tables; no JSON.
+  evidence:
+    - "commands/discovery/capabilities.rs:36-126 — list"
+    - "commands/discovery/capabilities.rs:221-340 — add tagged responses"
+    - "commands/discovery/capabilities.rs:558-711 — refresh"
+    - "commands/discovery/capabilities.rs:713-835 — mirror + parse_mirror_targets"
+  gaps:
+    - "Help text references 'rake jobs <id>' and bare 'rake capabilities ...' (capabilities.rs:326,675,697) — no `jobs` command exists in rake, wrong binary name"
+    - "mirror dry_run hardcoded false; no --dry-run passthrough"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-manifest
+  name: manifest
+  kind: command
+  category: Lifecycle
+  flags: ["sub: init <image-ref> [--output <dir>] [--name] [--category] [--at]", "sub: validate [path]", "sub: test [path] [--at]", "sub: export <offering> [--output <dir>] [--at]", "sub: enrich [path] [--auto]"]
+  endpoint: "init: GET /api/v1/stone/offerings/inspect?image=; test: POST /api/v1/stone/manifests/test (signed); export: GET /api/v1/stone/offerings/{name}/export (raw); validate/enrich: local"
+  what: >
+    Authoring toolchain for offering manifests (.snippet.yaml/.frontmatter.json/
+    .compatibility.yaml/.guidance.md): scaffold from image inspection, validate (dir or
+    single file, severity-coded findings, exit 1 on errors), test-deploy (validate-then-POST,
+    prints job id + cleanup hint), export installed manifest files, enrich missing
+    compatibility/guidance templates (prompt or --auto).
+  how: >
+    Validation and generation live in garden_common::manifests. Enrich synthesizes a
+    placeholder inspection JSON (image {name}:latest, empty ports) rather than inspecting.
+  rendering: finding lines "ERROR/WARN/INFO [code] file: message"; success blocks; no JSON.
+  evidence:
+    - "commands/manifest/mod.rs:157-240 — init"
+    - "commands/manifest/mod.rs:246-355 — validate (exit 1 on errors)"
+    - "commands/manifest/mod.rs:361-463 — test (signed POST /api/v1/stone/manifests/test)"
+    - "commands/manifest/mod.rs:469-543 — export (raw endpoint 'not in StoneApi yet')"
+    - "commands/manifest/mod.rs:549-662 — enrich placeholder inspection"
+  gaps:
+    - "enrich generates templates from fabricated inspection data, not the real image (manifest/mod.rs:606-634)"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+# ============================ ADOPTION ============================
+
+- id: rake-adopt
+  name: adopt
+  kind: command
+  category: Adoption
+  flags: ["<target> (container or offering name, required)", "--at"]
+  endpoint: "POST /api/v1/stone/offerings/{name}/adopt (raw ctx.client — UNSIGNED)"
+  what: >
+    Claims an existing container/detected service into moss management. 409 → already
+    adopted; 404 → not adoptable.
+  rendering: one-line success with adopted-as name.
+  evidence:
+    - "commands/adoption/adopt.rs:24-88"
+  gaps:
+    - "UNSIGNED mutation — unlike release/return/remove which send signed requests (adopt.rs:28-33 vs release.rs:28-35). Envelope/security inconsistency"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+  v1_note: v1 storage adopt is storage-only; container/service adoption absent in v1.
+
+- id: rake-release
+  name: release
+  kind: command
+  category: Adoption
+  flags: ["<service> (required)", "--at"]
+  endpoint: "DELETE /api/v1/stone/offerings/{name}/adopt (send_signed_raw)"
+  what: >
+    Releases an adopted service from management; keeps running, no longer monitored.
+  evidence:
+    - "commands/adoption/release.rs:24-75"
+  gaps: []
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-borrow
+  name: borrow
+  kind: command
+  category: Adoption
+  flags: ["<name> (required)", "--from <url> (required)", "--at"]
+  endpoint: "POST /api/v1/stone/offerings/borrow (raw ctx.client — UNSIGNED)"
+  what: >
+    Registers an external network service (name + connection string) so others can
+    discover/connect to it. 409 already-borrowed; 400 invalid URL.
+  evidence:
+    - "commands/adoption/borrow.rs:29-89"
+  gaps:
+    - "UNSIGNED mutation while sibling `return` is signed (return_borrowed.rs:28-35) — inconsistent"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-return
+  name: return
+  kind: command
+  category: Adoption
+  flags: ["<name> (required)", "--at"]
+  endpoint: "DELETE /api/v1/stone/offerings/borrow/{name} (send_signed_raw)"
+  what: >
+    Unregisters a borrowed service; external service unaffected.
+  evidence:
+    - "commands/adoption/return_borrowed.rs:24-75"
+  gaps: []
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-adopted-borrowed-locate-strays
+  name: adopted / borrowed / locate-strays (dead implementations)
+  kind: command
+  category: Adoption
+  flags: []
+  endpoint: "GET /api/v1/stone/offerings/adopted; GET /api/v1/stone/offerings/borrowed; GET /api/v1/stone/offerings/adoptable"
+  what: >
+    Three fully-implemented list commands (AdoptedCommand, BorrowedCommand, LocateStraysCommand)
+    that render adopted/borrowed/stray-container lists. NONE are in the manifest, NONE are
+    routed in route.rs — unreachable dead code.
+  rendering: simple lists with hints ("Use 'garden-rake adopt <name>'").
+  evidence:
+    - "commands/discovery/adopted.rs:22-80 (GET .../adopted)"
+    - "commands/discovery/borrowed.rs:22-83 (GET .../borrowed)"
+    - "commands/adoption/locate_strays.rs:22-94 (GET .../adoptable)"
+    - "route.rs:56-702 — no match arms for any of the three"
+    - "command_manifest.rs:2064-2115 — validate list omits them"
+  gaps:
+    - "MANIFEST-VS-REALITY: implemented but unreachable; locate_strays suggestions key 'locate' also absent from manifest so its see-also is always empty"
+  maturity: scaffolded
+  v1: MISSING
+
+# ============================ MANAGEMENT ============================
+
+- id: rake-tend
+  name: tend
+  kind: command
+  category: Management
+  flags: ["[target] this|local|auto|another|<url>|<stone-name>", "--clear", "--verbose/-v (count>0)"]
+  endpoint: "GET /api/v1/stone/capabilities/core (validation per target); POST /api/v1/stone/presence/notify (tended event for companion glow)"
+  what: >
+    Sets/inspects which stone commands target. this/local → localhost:7185; auto → clear +
+    fresh UDP discovery; another → discovery excluding current; URL or bare stone name →
+    resolve_target cascade (.local probe, cache, UDP, Lantern). Writes .tending file with
+    stone_name + endpoint + cached capabilities; notifies the stone (tended event) for
+    companion visual feedback. Bare: prints current tending (verbose adds age).
+  how: >
+    Local command; TendingState has NO TTL (is_valid always true) — validity is
+    reachability-at-use via the Resilient layer.
+  rendering: plain lines ("Now tending to: X (endpoint)"); no JSON.
+  evidence:
+    - "commands/management/tend.rs:33-247 — all target modes"
+    - "commands/management/tend.rs:270-290 — notify_tending POST /api/v1/stone/presence/notify"
+    - "tending.rs:38-50,81-92 — TendingState, no TTL"
+  gaps:
+    - "MANIFEST-VS-REALITY: manifest long_description says tending 'persists for 90 seconds' (command_manifest.rs:945); implementation persists indefinitely with no TTL (tending.rs:38-39,82-86)"
+  maturity: live-proven
+  v1: partial
+  v1_note: v1 rake honors tending state (tending::read_from) and env/flag cascade but exposes no tend command to set it.
+
+- id: rake-pond
+  name: pond
+  kind: command
+  category: Pond
+  flags: ["sub: init [--passphrase] [--profile]", "sub: status", "sub: invite --passphrase <p>", "sub: join <code>", "sub: trust", "sub: unlock [--passphrase | --totp <code>]", "sub: drain", "sub: remove <stone>", "sub: untrust <stone>", "sub: promote <stone> --passphrase <p>", "sub: rename <name>", "at global"]
+  endpoint: >
+    init: POST /api/v1/pond/ceremony (server-driven ceremony loop); status: GET /api/v1/pond/status;
+    invite: POST /api/v1/pond/invite; join: POST /api/v1/pond/join; unlock: POST /api/v1/pond/unlock;
+    drain: DELETE /api/v1/pond; remove/untrust: DELETE /api/v1/pond/stones/{name}; promote: POST /api/v1/pond/promote;
+    rename: PUT /api/v1/pond/name. trust: LOCAL ONLY (os-truststore install of enrolled CA).
+  what: >
+    Multi-stone PKI trust network: keystone init via interactive server-driven ceremony
+    (renders messages/QR/summary boxes, collects prompts), TOTP invitation flow, join,
+    CA unlock (passphrase or TOTP), drain (destroy CA + all certs), revoke member stones,
+    standby-CA promote (requires passphrase), decorative rename. `trust` installs the pond
+    CA into the OS trust store (admin check; Windows net session / Unix id -u).
+  how: >
+    Status supports JSON mode (raw API value). trust short-circuits before endpoint
+    resolution (requires_endpoint=false for Trust only). Promotion ignores the <stone>
+    positional — promotes THE TARGET stone ("this stone" per doc comment).
+  rendering: >
+    ceremony render loop: markdown→ANSI (headings/bold/italic), QR (UTF8 art / otpauth URI /
+    base64-PNG notice), boxed Summary, SelectOne menus with defaults, Secret/SecretConfirm,
+    Code, Entropy collectors. Status renders identity/cornerstone/fingerprint/stones list.
+  evidence:
+    - "commands/management/pond.rs:69-136 — dispatch incl. Trust local path"
+    - "commands/management/pond.rs:138-207 — init via run_ceremony_http POST /api/v1/pond/ceremony"
+    - "commands/management/pond.rs:209-340 — status (JSON supported)"
+    - "commands/management/pond.rs:449-518 — trust local CA install"
+    - "commands/ceremony_render.rs:93-147 — ceremony HTTP loop"
+    - "route.rs:378-418 — pond action mapping"
+  gaps:
+    - "Manifest describes trust as 'Trust a stone in the pond' with required <stone>; reality is a LOCAL OS-truststore install that takes no stone (command_manifest.rs:1028-1033 vs pond.rs:37,448-518)"
+    - "promote's required <stone> positional is parsed by clap then DROPPED — route passes only passphrase; promotes the connected stone (route.rs:404-406, pond.rs:50)"
+    - "manifest 'Phase 3b feature - implementation pending' long_description is stale; implementation is substantially present"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-ceremony
+  name: ceremony
+  kind: command
+  category: Management
+  flags: ["[workflow] bootstrap|migrate|backup"]
+  endpoint: "local"
+  what: >
+    Explicit placeholder: prints "Ceremony workflows are not yet implemented" and lists the
+    planned bootstrap/migrate/backup flows. (Distinct from the pond init ceremony which IS
+    implemented via ceremony_render.)
+  evidence:
+    - "commands/local/ceremony.rs:23-54"
+  gaps:
+    - "Pure placeholder by design"
+  maturity: scaffolded
+  v1: MISSING
+
+- id: rake-template
+  name: template
+  kind: command
+  category: Management
+  flags: ["sub: list", "sub: show <name>", "at global"]
+  endpoint: "list: GET /api/v1/stone/services/manifests; show: GET /api/v1/stone/services/{name}/manifest"
+  what: >
+    Lists service templates grouped by category, or shows one template's docker-compose YAML
+    with parsed Image/Version/Container/Ports/Env/Volumes/Networks plus raw content.
+  rendering: category-grouped list; YAML pretty-print sections. Exit 1 on missing template.
+  evidence:
+    - "commands/local/template.rs:72-119 — list"
+    - "commands/local/template.rs:122-284 — show (serde_yml parse)"
+  gaps:
+    - "MANIFEST-VS-REALITY (reverse): manifest labels template 'coming soon' / 'implementation pending' (command_manifest.rs:1129-1162) but it is fully implemented"
+    - "Error icon rendered as literal 'X'/'x' strings (template.rs:80,135)"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+# ============================ SYSTEM ============================
+
+- id: rake-stone
+  name: stone
+  kind: command
+  category: System
+  flags: ["sub: wake <stone>", "sub: shutdown [stone]", "sub: reboot [stone]", "sub: verbosity <sing|quiet|silent|minimal> [--forever]", "sub: install [--yes] [--dry-run]", "sub: reconcile [--drop-invalid]", "sub: refresh <moss|rake> --from <path>", "at global"]
+  endpoint: >
+    wake: POST /api/v1/admin/stone/{name}/wake; shutdown: POST /api/v1/admin/stone/shutdown;
+    reboot: POST /api/v1/admin/stone/reboot; verbosity: POST /api/v1/console/mode;
+    install: POST {endpoint}/admin/take-root (NO /api/v1 prefix); reconcile: POST /api/v1/stone/services/reconcile;
+    refresh: POST /api/v1/admin/moss/refresh {component, binary_data base64}.
+  what: >
+    Grouped stone administration. wake = Wake-on-LAN via topology cache (prints MAC).
+    shutdown/reboot power ops. verbosity maps sing/quiet/silent/minimal to console modes
+    (sing w/o --forever = 30min timeout, else persistent). install instructs moss to install
+    itself as a system service. reconcile syncs registry with containers (adopted/dropped/
+    left counts). refresh reads a local ELF binary, base64-encodes, uploads, waits for moss
+    health after moss refresh (12x2s polls).
+  how: >
+    shutdown/reboot pass the positional stone name (or --at) as the resolution target.
+    refresh bypasses Runtime; validates ELF magic, prints size/progress, handles Http/HttpRaw
+    errors, post-restart health probing.
+  rendering: status one-liners; refresh has step-by-step console output with emoji.
+  evidence:
+    - "commands/admin/stone_admin.rs:30-223 — Rouse/Slumber/Stir"
+    - "commands/admin/install_service.rs:44-141 — POST /admin/take-root"
+    - "commands/management/make.rs:40-119 — console mode"
+    - "commands/management/reconcile.rs:27-81"
+    - "route.rs:424-481 — stone routing; route.rs:995-1089 — refresh_component"
+  gaps:
+    - "stone install IGNORES its advertised --yes and --dry-run flags (route.rs:454-459 constructs take_root(g.quiet) only)"
+    - "install endpoint POST /admin/take-root lacks the /api/v1 prefix used everywhere else (install_service.rs:48)"
+    - "take-root/'make' cmd constants referenced for suggestions but are not manifest commands → suggestions always empty (install_service.rs:126, make.rs:61)"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-election
+  name: election
+  kind: command
+  category: System
+  flags: ["<action=start> (required)", "--election-type <t> (default update_source)", "--criteria <json>", "--timeout <secs> (default 10)"]
+  endpoint: "POST /api/v1/election/start (via execute_on_stone fallback)"
+  what: >
+    Triggers a distributed election (update_source, ceremony_coordinator, replica_target,
+    backup_source, offering_primary:<fqn>, or Custom) with BSON-ish criteria JSON, prints
+    the winner stone or "No candidates responded within timeout".
+  how: >
+    Bypasses Command trait; route_election builds the typed ElectionType (undocumented
+    offering_primary: prefix accepted) and calls handle_election directly (route.rs:692, 945-989).
+  rendering: plain text with CliFormatter success/warning marks.
+  evidence:
+    - "commands/election.rs:50-151 — handle_start"
+    - "route.rs:955-988 — election_type parsing incl. offering_primary:"
+  gaps:
+    - "offering_primary:<fqn> and Custom passthrough undocumented in manifest"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-firefly
+  name: firefly
+  kind: command
+  category: System
+  flags: ["sub: inventory", "sub: roster push <stone>"]
+  endpoint: "local (roster file) + subprocess scp/ssh to stone@<name>"
+  what: >
+    Operator tooling for Firefly LED companions: inventory pretty-prints the local roster
+    (device_id, variant, minted at/by, firmware, assigned stone); roster push scp's the
+    roster to /tmp on the stone then sudo-moves it into the managed path via ssh.
+  how: >
+    Shells out to scp/ssh with StrictHostKeyChecking=accept-new; validates roster parses
+    before pushing.
+  rendering: plain inventory block; push progress lines.
+  evidence:
+    - "commands/firefly.rs:60-114 — inventory"
+    - "commands/firefly.rs:120-194 — roster push (scp_upload/ssh_exec)"
+  gaps:
+    - "Windows-friendly claim notwithstanding, remote path /var/lib/zen-garden and sudo assume Linux stones"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-launch
+  name: launch
+  kind: command
+  category: System
+  flags: ["--at <stone>"]
+  endpoint: "none beyond resolution (GET-free; opens {endpoint} base URL in browser)"
+  what: >
+    Opens the stone portrait page (endpoint base URL) in the default browser via the `open`
+    crate; pre-resolves endpoint in route (tending/discovery) before executing locally.
+  evidence:
+    - "commands/local/launch.rs:23-65"
+    - "route.rs:668-675 — pre-resolve then Inv::local"
+  gaps: []
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-commands
+  name: commands
+  kind: command
+  category: System
+  flags: ["[name] positional", "--category <c>", "--zen", "--normative"]
+  endpoint: "local"
+  what: >
+    Meta-command browsing the manifest: full categorized directory, per-category listing, or
+    detailed help for one command (parameters, examples, see-also). Same renderer as bare
+    `garden-rake` and `?command`.
+  how: >
+    Route constructs BrowseCommand with zen=false normative=false HARDCODED — the two flags
+    are parsed by clap then discarded.
+  rendering: CliFormatter directory (titles/dividers/commands/hints).
+  evidence:
+    - "commands/local/browse.rs:33-102 — BrowseCommand"
+    - "commands/help.rs:13-182 — display_command_detail / category / all"
+    - "route.rs:503-508 — commands => BrowseCommand::new(..., false, false)"
+  gaps:
+    - "DEAD FLAGS: --zen and --normative advertised but hardcoded false at route (route.rs:503-508); help.rs params are _zen_only/_normative_only unused"
+    - "Category filter accepts only discovery|lifecycle|management|system|pond (browse.rs:57-76) — adoption/storage/companion categories exist in the manifest and are REJECTED here"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+# ============================ STORAGE ============================
+
+- id: rake-storage
+  name: storage
+  kind: command
+  category: Storage
+  flags: >
+    bare = list; sub: add [target] [--name] [--roles csv] [--format] [--fs ext4|btrfs (default btrfs)]
+    [--encrypted] [--yes/-y]; list; status; release <name|all>; pin <name>; unpin <name>;
+    adopt [target] [--set <name>] [--roles csv] [--encrypted] [--explain] [--yes/-y];
+    format [target] [--set <name>] [--roles csv] [--fs] [--encrypted] [--yes/-y];
+    info <name>; --at
+  endpoint: >
+    add/adopt/format: POST /api/v1/stone/storage/add; list: GET /api/v1/stone/storage/banks +
+    GET /api/v1/stone/storage (overview) + GET /api/v1/stone/storage/candidates;
+    status: banks + overview; release: POST /api/v1/stone/storage/banks/{name}/release,
+    all: POST /api/v1/stone/storage/release-all; pin/unpin: POST /api/v1/stone/storage/banks/{name}/pin|unpin (raw);
+    info: GET banks then local filter.
+  what: >
+    Unified storage management. Bare/list: storages grouped by replica-set name with
+    per-volume stone/role rows plus ELIGIBLE DEVICES and PHYSICAL MEDIA (needs setup)
+    sections from candidates, including connectivity-recovery notes. add: interactive device
+    picker when target omitted; format confirmation requires typing 'yes'. adopt (STORAGE-0019):
+    preserving verb with three-bullet plain-language confirmation, optional --explain caveats
+    (POSIX flattening, read-only tiers), post-adoption migrate tip for foreign filesystems.
+    format: raw-device discovery, typed-'yes' destructive consent. status: per-bank
+    capacity/used/available/device/mount/replica-set + TOTALS. info: filesystem tier +
+    capability matrix (case-sensitivity, POSIX perms, xattrs, atomic rename, sparse) + levers.
+  how: >
+    adopt/format route through the same POST /storage/add with format=false/true.
+    pin/unpin use raw un-encoded path interpolation. fs token falls back to legacy btrfs:bool
+    for old servers.
+  rendering: >
+    Section headers + status icons; bar-free numeric lists; confirmation dialogs with bullets;
+    no JSON mode.
+  evidence:
+    - "commands/storage.rs:130-308 — add + pick_target"
+    - "commands/storage.rs:415-619 — list (banks+overview+candidates+recovery notes)"
+    - "commands/storage.rs:644-747 — pin/unpin (raw POST)"
+    - "commands/storage.rs:1417-1552 — status + TOTALS"
+    - "commands/storage.rs:1603-1802 — adopt (+discover_adoptable, --explain)"
+    - "commands/storage.rs:1843-1974 — format (+discover_formattable)"
+    - "commands/storage.rs:1996-2124 — info (filesystem tier + levers)"
+  gaps:
+    - "pin/unpin interpolate name without urlencoding (storage.rs:651-655,709-713)"
+    - "'storage migrate' referenced as planned/forward-compatible (info lever, adopt tip) — not implemented"
+    - "No JSON mode anywhere in storage"
+  maturity: live-proven
+  v1: partial
+  v1_note: >
+    v1 storage covers list (bare), adopt ceremony (garden manifest onto removable + announce),
+    roles, garden (room banks), eject. PoC keeps list/release(≈eject)/roles-via-add but has
+    NO equivalent of v1's adopt ceremony semantics (announce-to-room), no eject song, and v1
+    has none of PoC's pin/unpin/format/info/status/replica-sets.
+
+- id: rake-store
+  name: store
+  kind: command
+  category: Storage
+  flags: ["<operation> put|get|ls|list|rm|delete|head|info (required)", "<bucket> (required)", "[key]", "[file]", "--prefix", "--app (default zen-garden)", "--delimiter", "--at"]
+  endpoint: "PUT/GET/DELETE/HEAD /api/v1/storage/s3/{app}/{bucket}/{key}; GET /api/v1/storage/s3/{app}?prefix={app}/{bucket}/[&delimiter=] (S3 XML list)"
+  what: >
+    S3-compatible object storage on seed banks: put (mime-guessed content-type, ETag echo),
+    get (file or stdout; text passthrough), ls (S3 XML parsed with a hand-rolled extractor;
+    PRE common prefixes; truncation notice), rm (204 tolerated), head (header dump).
+    Keys namespaced as {app}/{bucket}/{key} with app defaulting to "zen-garden".
+  how: >
+    route_store validates operation/arg combos. List parsing is string find-based XML
+    extraction with entity unescaping — not a real XML parser.
+  rendering: object rows "size date key"; no JSON.
+  evidence:
+    - "commands/storage.rs:773-788 — app prefix helpers"
+    - "commands/storage.rs:814-875 — put; 910-998 — get; 1058-1153 — ls"
+    - "commands/storage.rs:1156-1232 — hand-rolled ListBucketResult XML parse"
+    - "commands/storage.rs:1256-1305 — rm; 1323-1394 — head"
+    - "route.rs:821-883 — route_store"
+  gaps:
+    - "MANIFEST-VS-REALITY: manifest says objects stored under 'garden/storage/{bucket}/{key}' (command_manifest.rs:1428); actual endpoint is /api/v1/storage/s3/{app}/{bucket}/{key} (storage.rs:833-838)"
+    - "Hand-rolled XML parser is fragile (namespaces, self-closing tags, CDATA unhandled)"
+    - "--delimiter accepted for ls but IsTruncated/marker continuation unimplemented ('Use marker to continue' with no marker flag)"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-backup
+  name: backup
+  kind: command
+  category: Storage
+  flags: ["sub: status [offering]", "sub: list <offering> [--local] [--remote]", "sub: trigger <offering>", "sub: trigger-all", "sub: restore <offering> from slot A|B | from seed-bank <name> [--dry-run] [--snapshot-id <id>]", "at global"]
+  endpoint: >
+    status: GET /api/v1/stone/snapshots + GET /api/v1/stone/storage/bank (SINGULAR — see gaps);
+    list/detail: GET /api/v1/stone/snapshots/{offering} + GET /api/v1/stone/snapshots/remote/{bank};
+    restore local: POST /api/v1/stone/snapshots/{offering}/restore (signed);
+    restore remote: POST /api/v1/stone/snapshots/{offering}/restore-remote (signed);
+    trigger: POST /api/v1/snapshots/{offering}/trigger; trigger-all: POST /api/v1/snapshots/trigger-all
+    (both MISSING the /stone segment, raw unsigned).
+  what: >
+    Snapshot management (renamed from nurturing): A/B slot status overview + per-offering
+    detail with remote seed-bank snapshots, list with local/remote filters, trigger single/all
+    with WorkflowResult summaries, restore preview (harvest id/created/size) with --dry-run
+    from local slot (current-slot default) or remote seed bank (latest or specific harvest).
+  how: >
+    restore source parsed from free-text trailing words ("from slot A" / "from seed-bank X" /
+    "seedbank"); route reads --harvest-id while manifest advertises --snapshot-id.
+  rendering: NURTURING headers (legacy branding), slot tables, preview blocks; no JSON.
+  evidence:
+    - "commands/nurturing.rs:69-207 — RestoreLocalCommand (slots + signed restore)"
+    - "commands/nurturing.rs:243-389 — RestoreRemoteCommand"
+    - "commands/nurturing.rs:411-648 — status/detail"
+    - "commands/nurturing.rs:676-825 — list"
+    - "commands/nurturing.rs:856-968 — trigger/trigger-all"
+    - "route.rs:635-662 + 886-943 — backup/restore routing"
+  gaps:
+    - "DEAD FLAG: manifest documents --snapshot-id (command_manifest.rs:1903) but route reads opt(m,'harvest-id') (route.rs:894) which clap never defines → always None; --snapshot-id parsed then discarded"
+    - "SUSPECT ENDPOINT: status/list/trigger fetch seed banks via GET /api/v1/stone/storage/bank (singular; nurturing.rs:441,575,753) while the real banks endpoint is /banks plural (stone_api.rs:783-785) → silently zero online banks"
+    - "Trigger endpoints POST /api/v1/snapshots/... omit the /stone segment used by every sibling snapshots endpoint (nurturing.rs:873,914) and are unsigned"
+    - "Renderers still brand everything NURTURING though the command is backup"
+    - "harvest_id[..8]/[..12] slicing will panic on ids shorter than 8/12 chars"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+# ============================ COMPANION ============================
+
+- id: rake-hey
+  name: hey
+  kind: command
+  category: Companion
+  flags: ["trailing tell args: tell | tell <companion>? | tell <companion> up|down | tell <companion> [args...] | <stone> tell ...", "--at"]
+  endpoint: "GET /api/v1/stone/companions; GET /api/v1/stone/companions/{id}; POST /api/v1/stone/companions/{id}/command; POST .../up; POST .../down"
+  what: >
+    Thin pass-through to Companion (Cricket/Firefly) command surfaces: list registered
+    companions (version/running/PID), fetch a companion's command manifest (?-help), start/
+    stop via up/down, send raw commands whose output/status/suggestions are echoed.
+  how: >
+    `hey <stone> tell ...` resolves the target as naively http://{stone}:7185 (no mDNS
+    cascade unlike --at). Manifest-driven help renders each companion command with args
+    syntax and first example.
+  rendering: plain lists/help; response prefixed with "?" glyphs.
+  evidence:
+    - "commands/hey.rs:51-120 — parser (incl. up/down lifecycle)"
+    - "commands/hey.rs:238-249 — print_tell_help (says on/off)"
+    - "commands/hey.rs:160-172 — naive stone endpoint resolution"
+    - "commands/hey.rs:420-467 — send_companion_command"
+  gaps:
+    - "HELP/PARSER MISMATCH: help text documents `on`/`off` (hey.rs:245-246) but parser only accepts `up`/`down` (hey.rs:104-110)"
+    - "ENCODING ARTIFACTS: several glyphs collapsed to literal '?' — status_icon = \"?\" (hey.rs:300), install hints '? Install...' (hey.rs:273,276-277), response prefixes '? {}' for success/warning/error and suggestions (hey.rs:439,443,447,454)"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+# ============================ CROSS-CUTTING SUBSYSTEMS ============================
+
+- id: rake-connection-attachment-cascade
+  name: connection / attachment cascade (RAKE-0011)
+  kind: subsystem
+  category: core
+  flags: ["--at <stone|url|host:port|name>", "--fresh (clear cached tending)", "env GARDEN_STONE / ZG_STONE"]
+  endpoint: "GET {target}/health (800ms probes); GET /api/v1/stone/capabilities/core (name resolution); GET {lantern}/api/v1/stones (fallback)"
+  what: >
+    Three-layer resolution stack: Layer 3 resolution (--at > GARDEN_STONE env > cached
+    .tending > UDP auto-discovery, each with provenance Origin Flag/Env/Tending/Discovered
+    and is_soft() recovery policy); Layer 2 Stone bind (endpoint + client + lazy StoneBag,
+    seeded from tending capabilities when available); Layer 1 Resilient wrapper (on
+    TCP-level connect/timeout failure of a soft origin: flush tending, re-resolve, retry
+    once; HTTP errors never trigger recovery). Target forms: full URL, host:port,
+    host.local, dotted host (https probe first when enrolled), bare stone name
+    (cache → mDNS https/http → UDP sweep name/id match → Lantern).
+  how: >
+    dispatch::Runtime::execute resolves → binds → wraps every requires_endpoint command;
+    contexts sign mutating requests through the LOCAL moss loopback sign oracle
+    (http://127.0.0.1:{MOSS_SIGN_LOOPBACK}/api/v1/pond/sign) with audience bound to the
+    target stone name; unknown stone name sends unsigned. mTLS identity loaded from
+    enrollment certs into the shared reqwest client at startup (main.rs:119-137).
+  rendering: discovery/flush messages via status indicators; stone name banner before command output (skipped in JSON mode or when show_stone_header=false).
+  evidence:
+    - "connection.rs:1-11 — layer doc"
+    - "connection/resolution.rs:71-195 — resolve cascade + failed_endpoint flush"
+    - "connection/resolution.rs:207-373 — resolve_target name cascade"
+    - "connection/resilient.rs:54-121 — Resilient.execute + is_connection_failure"
+    - "connection/stone.rs:25-75 — Stone bind/seed"
+    - "dispatch.rs:78-150 — Runtime.execute"
+    - "context.rs:76-94 — PondSigning oracle wiring"
+    - "main.rs:104-137 — pooled client, X-Quiet header, mTLS"
+  gaps:
+    - "Legacy parallel path tending::execute_on_stone (3s-delayed discovery race, auto-tend on fallback) still used by observe/nourish/election/offer-placement alongside the newer Resilient path — two recovery regimes coexist"
+    - "is_connection_failure treats reqwest timeouts as connection failures, which can re-resolve on slow (not dead) stones"
+  maturity: live-proven
+  v1: yes
+  v1_note: >
+    v1 main.rs re-implements the same cascade (Origin enum, immediate_candidates phases 1-4,
+    hard/soft provenance) — the PoC's most directly ported subsystem.
+
+- id: rake-discovery-plane
+  name: discovery (UDP broadcast + Lantern)
+  kind: subsystem
+  category: core
+  flags: ["--fresh (bypass caches where supported)"]
+  endpoint: "UDP broadcast on DISCOVERY_UDP port; GET {lantern}/api/v1/stones (LanternTopology)"
+  what: >
+    Garden-discovery crate re-exported as crate::discovery (DISC-0001): UDP broadcast sweep
+    with streaming callbacks (discover_all_moss_stream[_async]), single-winner
+    discover_moss[_auto], background Lantern discovery with cached endpoint, and a
+    KnownStone cache (Discovery::get/insert by name/id) surfaced to rake through
+    CachedStoneOps.
+  how: >
+    Used by observe fallback, name resolution, offer --at anywhere, watch stone logs,
+    election/offer-placement via execute_on_stone.
+  rendering: n/a (infrastructure).
+  evidence:
+    - "discovery.rs:1-9 — re-export shim + DISC-0001 pointer"
+    - "stone_cache.rs:14,46-80 — STONE singleton, STONE_ARC, CachedStoneOps impl, fetch_and_cache_stone"
+    - "discovery_tests.rs:7-27 — UDP paths tested manually only"
+  gaps:
+    - "Discovery unit tests are a no-op placeholder (assert!(true)); UDP paths rely on manual testing"
+  maturity: live-proven
+  v1: yes
+  v1_note: v1 replaces UDP broadcast with the v1 multicast/chirp plane (DISCOVERY_PORT_V1 / MULTICAST_GROUP_V1 in main.rs).
+
+- id: rake-tending-cache
+  name: tending cache (.tending)
+  kind: subsystem
+  category: core
+  flags: ["tend ... writes", "tend --clear / --fresh clears", "--at overrides per-call"]
+  endpoint: "local file {XDG_DATA_HOME|~/.zen-garden|/tmp/zen-garden}/.tending"
+  what: >
+    Persistent JSON TendingState {stone_name, endpoint, last_seen (ISO8601), cached
+    capabilities}. No TTL: validity = reachability at use. Seeding from cached capabilities
+    gives zero-HTTP hot path for name/banner; legacy files without capabilities tolerated.
+    BOM-stripped read; XDG → home → /tmp fallback chain (Linux).
+  how: >
+    execute_on_stone (legacy path) auto-tends to fallback stones on success; Resilient path
+    flushes on TCP failure instead.
+  rendering: tend output lines; resolution warnings on flush.
+  evidence:
+    - "tending.rs:38-50 — state struct, no TTL"
+    - "tending.rs:94-134 — dir priority + BOM strip"
+    - "tending.rs:228-366 — execute_on_stone race"
+    - "connection/resilient.rs:100-110 — bind_stone seeding"
+  gaps:
+    - "Manifest claims 90s persistence; reality indefinite (see rake-tend gaps)"
+    - "/tmp/zen-garden fallback warns but is world-readable/writable shared state"
+  maturity: live-proven
+  v1: partial
+  v1_note: v1 reads the same tending file concept (tending::read_from / default_path in v1 main.rs) but writes it via no PoC-style tend command.
+
+- id: rake-stone-bag-and-cache
+  name: stone_bag / stone_cache (identity headers + lazy capabilities)
+  kind: subsystem
+  category: core
+  flags: []
+  endpoint: "GET /api/v1/stone/capabilities/core (cold path, at most once per invocation)"
+  what: >
+    StoneBag: OnceCell-lazy capabilities bag per invocation; from_tending pre-seeds so
+    stone_name/is_reachable cost zero HTTP. StoneIdentity extracts X-Stone-Name /
+    X-Stone-Id injected by moss >= 0.48 on every response, letting callers identify stones
+    without a dedicated call. stone_cache wires the garden-discovery cache into
+    CachedStoneOps used by resolution and Resilient.
+  how: >
+    dispatch passes Some(&*STONE)/STONE_ARC into resolve/Resilient so discovered endpoints
+    and names are cached process-wide.
+  rendering: n/a.
+  evidence:
+    - "stone_bag.rs:40-137 — StoneBag lazy/seeded"
+    - "stone_bag.rs:148-186 — extract_stone_identity (X-Stone-Id/Name headers)"
+    - "stone_cache.rs:12-59 — STONE_ARC + trait impl"
+  gaps:
+    - "StoneIdentity/extract_stone_identity appears unused by command code (headers never read on hot paths) — capability present but unwired"
+  maturity: code-complete-unsoaked
+  v1: partial
+  v1_note: v1 gets identity from chirp frames, not headers.
+
+- id: rake-enrollment-mtls
+  name: enrollment (pond client certs + mTLS + trust store)
+  kind: subsystem
+  category: core
+  flags: []
+  endpoint: "local cert store {data_dir}/koi/certs/{hostname}/{ca,cert,key}.pem; POST /api/v1/pond/sign (loopback oracle, via common)"
+  what: >
+    If enrolled (cert.pem+key.pem exist for this hostname), rake builds its reqwest client
+    with the pond CA as root and the client cert/key as identity — every command speaks
+    mTLS to https stones. Resolution probes https://host:{MOSS_HTTPS} first when enrolled.
+    install_ca_in_trust_store / is_ca_installed delegate to os-truststore (ADR-019) for
+    OS-level trust (used by `pond trust`).
+  how: >
+    Cert paths intentionally match moss's layout so a future moss install inherits
+    enrollment. Cert dir on Windows documented as cwd-relative .zen-garden fallback.
+  rendering: n/a.
+  evidence:
+    - "enrollment.rs:14-69 — certs_dir/is_enrolled/load_tls_materials/truststore"
+    - "main.rs:118-137 — mTLS client build"
+    - "connection/resolution.rs:229-243,281-302 — https-first probes when enrolled"
+  gaps:
+    - "Windows cert path comment says 'relative to cwd' — data_dir dependent, brittle"
+  maturity: code-complete-unsoaked
+  v1: MISSING
+
+- id: rake-self-teaching-suggestions
+  name: suggestions (self-teaching see-also)
+  kind: subsystem
+  category: core
+  flags: ["-q/--quiet or GARDEN_QUIET suppresses"]
+  endpoint: "local"
+  what: >
+    After-command "Related commands:" hints derived from each manifest entry's see_also
+    (max 3), formatted "name  description". Several responses also carry server-provided
+    suggestion arrays rendered by rest/wake/remove/upgrade/offer.
+  how: >
+    Keyed by Command::name(); names that are not manifest keys (locate, take-root, make,
+    install-service, nourish-from-upgrade) yield empty output silently.
+  rendering: indented hint block.
+  evidence:
+    - "suggestions.rs:9-42 — manifest-derived suggestions"
+    - "commands/lifecycle/upgrade.rs:169 — suggestions::print_suggestions(\"nourish\")"
+  gaps:
+    - "Silent no-ops for non-manifest keys hide wiring mistakes (see upgrade identity bug)"
+  maturity: live-proven
+  v1: MISSING
+
+- id: rake-cli-builder-and-help
+  name: manifest-driven CLI builder + help system
+  kind: subsystem
+  category: core
+  flags: ["-q/--quiet", "--fresh", "-v/-vv/-vvv", "-o/--output human|json", "--field <dot.path[icons]>"]
+  endpoint: "local"
+  what: >
+    Single source of truth: command_manifest.rs (36 CommandDefs) generates the clap app via
+    cli_build (positional/flag/option/count/multi-option/trailing ArgSpecs, visible aliases,
+    subcommand_negates_reqs). Help surfaces: bare invocation directory, `commands`,
+    `?cmd` / `cmd?` query syntax (main.rs:71-92), --help from clap. Debug builds validate
+    the manifest against a 36-name list at startup.
+  how: >
+    GlobalFlags parsed pre-tracing via raw-arg verbosity count; X-Quiet header sent to moss
+    in quiet mode; --field forces JSON + per-command field extraction.
+  rendering: CliFormatter gray-scale content / cyan metadata / traffic-light-reserved palette (colors.rs).
+  evidence:
+    - "command_manifest.rs:219-2058 — 36 manifest.add calls"
+    - "command_manifest.rs:2062-2129 — validate_manifest (36 expected)"
+    - "cli_build.rs:32-93 — build_clap_app + globals"
+    - "main.rs:43-99 — parse + help-query syntax"
+  gaps:
+    - "Manifest/route drift cases catalogued per command above (zen/normative dead flags, find-ensure syntax, snapshot-id, pond promote/trust docs, tend TTL prose)"
+    - "-o json only honored by find/config/pond status/backup-restore paths; most commands ignore it"
+  maturity: live-proven
+  v1: partial
+  v1_note: v1 rake is a hand-rolled clap CLI without a manifest layer; v1 HAS explain/capture/replant which the PoC manifest lacks entirely.
+
+- id: rake-pulse-rendering-conventions
+  name: rendering conventions (ui/*)
+  kind: subsystem
+  category: core
+  flags: ["NO_COLOR", "GARDEN_UNICODE=1 (Windows)"]
+  endpoint: "local"
+  what: >
+    Shared output kit: TerminalInfo (width, supports_color via supports-color + NO_COLOR,
+    unicode off on Windows by default), OutputWriter (success/error/info/warn/pending/bullet),
+    stone banners ("=== name ==="), section headers v1 (--- TITLE ---) and v2 (underlined),
+    place_value column alignment (VALUE_COLUMN=49), ANSI-aware visible_length/pad_visible/
+    truncate_visible, TableBuilder, CategoryGrid, vitality status_indicator mapping
+    (running→[thriving], stopped→[dormant], error→[needs attention]), gold tended marker
+    (255,215,0), compact observe helpers (os icons, fit_items budget fitting), full-screen
+    primitives (terminal_dimensions, format_separator, extract_sse_time), gauge bars with
+    60/85 thresholds matching the Firefly LED companion, tag-based Layout indent system
+    (Page/Card/Section/Content/Detail), CliFormatter semantic palette.
+  how: >
+    Every command detects the terminal independently (TerminalInfo::detect called in
+    multiple places) rather than receiving one shared instance.
+  rendering: this subsystem IS the rendering layer; unicode/color ASCII fallbacks throughout.
+  evidence:
+    - "ui/rendering.rs:15-43 — TerminalInfo.detect"
+    - "ui/rendering.rs:479-566 — status_indicator vitality mapping"
+    - "ui/rendering.rs:661-676 — gold tended name"
+    - "ui/rendering.rs:1031-1058 — TUI primitives"
+    - "ui/gauge.rs:8-77 — gauges + Firefly-matched thresholds"
+    - "ui/layout.rs:1-103 — IndentLevel/Layout"
+    - "ui/colors.rs:1-125 — visual dictionary + CliFormatter"
+  gaps:
+    - "Repeated TerminalInfo::detect() per call site can diverge mid-run and costs syscalls"
+    - "Verbosity enum (-v0..-v3 from_arg) exists in rendering.rs:159-180 but nothing consumes it — dead API"
+  maturity: live-proven
+  v1: partial
+  v1_note: v1 rake renders minimal plain text; this kit is PoC-side polish not yet ported.
+
+# ============================ COMMANDS TABLE ============================
+
+commands_table:
+  # name | category | endpoint (short) | v1
+  - "observe | Discovery | GET /api/v1/garden/topology (+Lantern fallback) | yes"
+  - "pulse | Discovery | GET /api/v1/stone/pulse/stream (SSE) + GET /api/v1/garden/topology | MISSING"
+  - "watch | Discovery | GET /api/v1/stone/presence/stream; GET /api/v1/stone/services/{n}/logs | MISSING"
+  - "logs | Discovery | GET /api/v1/stone/services/{n}/logs (SSE) | MISSING"
+  - "list | Discovery | GET /api/v1/stone/services | partial"
+  - "status | Discovery | GET /api/v1/stone/capabilities/core + /health (service arg DEAD) | partial"
+  - "find | Discovery | GET /api/v1/garden/services?q= (+ensure: offerings/services/capabilities/tools-stream) | yes"
+  - "config | Discovery | GET /api/v1/garden/services?q= | partial"
+  - "inspect (hw) | Discovery | GET /api/v1/stone/capabilities; GET /api/v1/garden/inspect | MISSING"
+  - "api | Discovery | GET /api/v1/manifest | MISSING"
+  - "offer (explore) | Lifecycle | offerings list/search/inspect + POST /api/v1/stone/services + jobs poll + POST /api/v1/garden/recommend | yes"
+  - "rest | Lifecycle | POST /api/v1/stone/services/{n}/rest (signed) | yes"
+  - "wake | Lifecycle | POST /api/v1/stone/services/{n}/wake | yes"
+  - "remove | Lifecycle | DELETE /api/v1/stone/services/{n} (signed) | MISSING"
+  - "uproot | Lifecycle | POST /api/v1/stone/services/{n}/destroy (signed) | yes"
+  - "upgrade | Lifecycle | POST /api/v1/stone/services/{n}/upgrade (+batch list) | MISSING"
+  - "nourish | Lifecycle | GET /api/v1/garden/updates; POST /api/v1/garden/updates/execute (signed); GET /api/v1/stone/updates/stream/{job} | MISSING"
+  - "capabilities (cap) | Lifecycle | GET/POST/DELETE /api/v1/stone/offerings/{n}/capabilities[/refresh|/mirror] | MISSING"
+  - "manifest | Lifecycle | GET offerings/inspect; POST /api/v1/stone/manifests/test (signed); GET offerings/{n}/export; validate/enrich local | MISSING"
+  - "adopt | Adoption | POST /api/v1/stone/offerings/{n}/adopt (unsigned) | MISSING"
+  - "release | Adoption | DELETE /api/v1/stone/offerings/{n}/adopt (signed) | MISSING"
+  - "borrow | Adoption | POST /api/v1/stone/offerings/borrow (unsigned) | MISSING"
+  - "return | Adoption | DELETE /api/v1/stone/offerings/borrow/{n} (signed) | MISSING"
+  - "tend | Management | local + GET capabilities/core + POST /api/v1/stone/presence/notify | partial"
+  - "pond | Pond | /api/v1/pond/* (ceremony/status/invite/join/unlock/DELETE pond/stones/{n}/promote/name) + local trust | MISSING"
+  - "ceremony | Management | local placeholder | MISSING"
+  - "template | Management | GET /api/v1/stone/services/manifests; GET /api/v1/stone/services/{n}/manifest | MISSING"
+  - "election | System | POST /api/v1/election/start | MISSING"
+  - "hey | Companion | GET/POST /api/v1/stone/companions[/{id}[/command|up|down]] | MISSING"
+  - "stone | System | admin wake/shutdown/reboot (/api/v1/admin/*), console/mode, /admin/take-root, services/reconcile, admin/moss/refresh | MISSING"
+  - "firefly | System | local roster + scp/ssh | MISSING"
+  - "launch | System | local browser open (endpoint base) | MISSING"
+  - "commands | System | local manifest browser (--zen/--normative dead) | MISSING"
+  - "storage | Storage | /api/v1/stone/storage(+ /banks, /candidates, /add, banks/{n}/release|pin|unpin, release-all) | partial"
+  - "store | Storage | PUT/GET/DELETE/HEAD /api/v1/storage/s3/{app}/{bucket}/{key} | MISSING"
+  - "backup | Storage | /api/v1/stone/snapshots[/remote/{bank}|/restore|/restore-remote] (signed) + /api/v1/snapshots/... trigger (suspect) | MISSING"
+  # Manifest registers exactly 36 top-level commands; route.rs wires all 36.
+  # Additionally implemented but UNROUTED (dead code): adopted, borrowed, locate-strays.
+  # v1-only commands with NO PoC equivalent: explain, capture, replant; v1 storage adopt
+  # ceremony/eject/roles/garden semantics partially diverge from PoC storage.

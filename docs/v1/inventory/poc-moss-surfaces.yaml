@@ -1,0 +1,969 @@
+# PoC moss surfaces — deep inventory (2026-08-28 read-everything pass)
+# Survey method: full read of src/poc/moss/src/api (all 40 files); the route
+# table src/poc/moss/src/bootstrap/router.rs walked entry by entry; every
+# handler read (large files read handler-by-handler). Embedded HTML pages and
+# infra/listeners/pulse.rs skimmed for the pages/stream story. v1 comparison
+# from src/v1/crates/moss/src/http.rs (Face enum, read in full).
+
+# ---------------------------------------------------------------------------
+# ROUTE ACCOUNTING
+# ---------------------------------------------------------------------------
+# - 281 `.route()` registrations in bootstrap/router.rs (the "~281 claim" is
+#   exactly the count of `.route(` calls: 281, split across TWO routers —
+#   `configure_public()` lobby (~86 method bindings) and `configure()` full set).
+# - 301 method bindings total (182 GET / 75 POST / 20 DELETE / 11 PUT /
+#   6 PATCH / 5 HEAD / 2 any-catchall). Lobby routes are re-registered inside
+#   configure(), so UNIQUE method+path pairs on the full router ≈ 215
+#   (~86 of them also on the plain-HTTP lobby when pond is active).
+# - Advertised by /api/v1/manifest: 29 endpoint-spec entries = 27 unique paths
+#   (presence/stream is pushed twice). Of those 27, 7 name paths that do NOT
+#   exist in the router (stale pre-/stone-nesting spellings) → only ~20
+#   advertised paths actually route. Delta vs ~215 routed pairs: ~195 routed
+#   method-pairs are UNADVERTISED.
+# - axum 0.8.9 / matchit 0.8.4: duplicate-path `.route()` calls MERGE their
+#   method routers (verified in vendored axum source
+#   routing/path_router.rs:88-101) — the ~30 same-path double registrations
+#   are legal, not a boot bug.
+
+# ---------------------------------------------------------------------------
+# ROUTES TABLE (full router `configure()`; "L" = also on HTTP lobby).
+# Envelope: wrapped = ApiResponse{data, suggestions?} · bare = raw JSON/other.
+# ---------------------------------------------------------------------------
+routes_table:
+  # Root / pages
+  - "GET / — portrait.rs:354 — bare HTML — L — advertised: no"
+  - "GET /pulse — pulse.rs:26 — bare HTML — L — advertised: no"
+  - "GET /greenhouse — greenhouse.rs:184 — bare HTML — L — advertised: no"
+  - "GET /pond — pond.rs:300 — bare HTML — L — advertised: no"
+  - "GET /health — health.rs:15 — bare DaemonHealthStatus — L — advertised: yes"
+  # Stone identity / info
+  - "GET /api/v1/stone — garden.rs:121 — wrapped — L — advertised: no"
+  - "GET /api/v1/stone/info — stone.rs:50 — wrapped — L — advertised: yes"
+  - "GET /api/v1/stone/portrait — portrait.rs:370 — bare JSON — L — advertised: no"
+  - "GET /api/v1/stone/portrait/guidance — portrait.rs:699 — bare markdown+ETag (204 if empty) — L — advertised: no"
+  - "GET /api/v1/stone/capabilities — capabilities.rs:25 — wrapped — L — advertised: yes (as stale /capabilities)"
+  - "GET /api/v1/stone/capabilities/core — capabilities.rs:38 — wrapped — L — advertised: no"
+  - "GET /api/v1/stone/capabilities/topology — capabilities.rs:48 — wrapped (204 while probing) — L — advertised: no"
+  - "POST /api/v1/stone/capabilities/refresh — capabilities.rs:62 — bare 202 — L — advertised: no"
+  - "GET /api/v1/stone/resources — resources.rs:34 — wrapped — L — advertised: yes (as stale /resources)"
+  # Tasks & metrics
+  - "GET /api/v1/stone/tasks — router.rs:1182 — wrapped — L — advertised: no (category list mentions it)"
+  - "GET /api/v1/stone/tasks/{name} — router.rs:1205 — wrapped (404 raw {error,message}) — L — advertised: yes"
+  - "GET /api/v1/stone/metrics — metrics.rs:44 — wrapped — L — advertised: yes"
+  - "GET /api/v1/stone/metrics/global — metrics.rs:51 — wrapped — L — advertised: yes"
+  - "GET /api/v1/stone/metrics/domains — metrics.rs:58 — wrapped — L — advertised: yes"
+  - "GET /api/v1/stone/metrics/domains/{name} — metrics.rs:67 — wrapped (404 raw) — L — advertised: yes"
+  - "GET /api/v1/stone/metrics/tasks — metrics.rs:85 — wrapped — L — advertised: yes"
+  - "GET /api/v1/stone/metrics/tasks/{name} — metrics.rs:100 — wrapped (404 raw) — L — advertised: yes"
+  - "GET /api/v1/stone/metrics/stream — metrics.rs:129 — SSE — L — advertised: yes"
+  # Stone lifecycle
+  - "POST /api/v1/stone/upgrade — stone.rs:90 — bare {status,message} — L — advertised: no"
+  - "POST /api/v1/stone/deploy — stone.rs:283 — bare {status,message} — L — advertised: no"
+  # Offerings
+  - "GET /api/v1/stone/offerings — offerings.rs:57 — wrapped — L — advertised: yes (as stale /api/v1/offerings)"
+  - "POST /api/v1/stone/offerings — offerings.rs:262 — bare (delegates to services::create, unwraps .data) — advertised: yes (as stale /api/v1/offerings)"
+  - "GET /api/v1/stone/offerings/search — offerings.rs:496 — wrapped — L — advertised: yes (stale path)"
+  - "GET /api/v1/stone/offerings/inspect — offerings.rs:408 — bare — advertised: no"
+  - "POST /api/v1/stone/offerings/heal — offerings.rs:321 — bare (delegates to services::reconcile) — advertised: no"
+  - "POST /api/v1/stone/offerings/refresh — offerings.rs:340 — bare — advertised: no"
+  - "GET /api/v1/stone/offerings/adoptable — adoption.rs:29 — wrapped — advertised: no"
+  - "GET /api/v1/stone/offerings/adopted — adoption.rs:255 — wrapped — advertised: no"
+  - "GET /api/v1/stone/offerings/borrowed — adoption.rs:271 — wrapped — advertised: no"
+  - "GET /api/v1/stone/offerings/{name} — offerings.rs:152 — wrapped — L — advertised: yes (stale path)"
+  - "DELETE /api/v1/stone/offerings/{name} — offerings.rs:295 — bare (delegates to services::delete, unwraps .data) — advertised: yes (stale path)"
+  - "GET /api/v1/stone/offerings/{name}/manifest — offerings.rs:220 — bare YAML text — L — advertised: no"
+  - "GET /api/v1/stone/offerings/{name}/export — offerings.rs:805 — bare — L — advertised: no"
+  - "POST /api/v1/stone/manifests/test — offerings.rs:683 — bare — advertised: no"
+  # Offering volumes (ORCH-0019)
+  - "PUT /api/v1/stone/offerings/{fqn}/volumes/{volume}/{*path} — offering_volumes.rs:35 — bare (201/204/JSON error{error:{code}})"
+  - "GET /api/v1/stone/offerings/{fqn}/volumes/{volume}/{*path} — offering_volumes.rs:117 — bare streamed bytes"
+  - "HEAD /api/v1/stone/offerings/{fqn}/volumes/{volume}/{*path} — offering_volumes.rs:162 — bare"
+  - "GET /api/v1/stone/offerings/{fqn}/volumes/{volume} — offering_volumes.rs:212 — bare {fqn,volume,files,count,total_bytes}"
+  # Greenhouse
+  - "GET /api/v1/stone/greenhouse/containers — greenhouse.rs:749 — bare — L — advertised: no"
+  - "POST /api/v1/stone/greenhouse/validate — greenhouse.rs:789 — bare"
+  - "POST /api/v1/stone/greenhouse/generate — greenhouse.rs:810 — bare"
+  - "GET /api/v1/stone/greenhouse/file — greenhouse.rs:564 — bare text/plain — L — advertised: no"
+  - "PUT /api/v1/stone/greenhouse/file — greenhouse.rs:611 — bare {success,path}"
+  - "DELETE /api/v1/stone/greenhouse/file — greenhouse.rs:657 — bare {success,reset_to_builtin}"
+  - "GET /api/v1/stone/greenhouse/catalog — greenhouse.rs:200 — bare — L — advertised: no"
+  - "GET /api/v1/stone/greenhouse/export — greenhouse.rs:710 — bare — L — advertised: no"
+  # Offering capabilities
+  - "GET /api/v1/stone/offerings/{name}/capabilities — offering_capabilities.rs:74 — wrapped — L — advertised: no"
+  - "POST /api/v1/stone/offerings/{name}/capabilities — offering_capabilities.rs:235 — wrapped tagged-enum (exists/dry_run/in_progress/started)"
+  - "POST /api/v1/stone/offerings/{name}/capabilities/refresh — offering_capabilities.rs:641 — wrapped tagged-enum"
+  - "POST /api/v1/stone/offerings/{name}/capabilities/mirror — offering_capabilities.rs:794 — wrapped (cross-stone, signed)"
+  - "DELETE /api/v1/stone/offerings/{name}/capabilities/{capability} — offering_capabilities.rs:404 — wrapped"
+  # Offering snapshots (seeds)
+  - "POST /api/v1/stone/offerings/{name}/snapshots — offering_snapshots.rs:153 — wrapped (async job_id)"
+  - "GET /api/v1/stone/offerings/{name}/snapshots — offering_snapshots.rs:291 — wrapped"
+  - "GET /api/v1/stone/offerings/{name}/snapshots/{id} — offering_snapshots.rs:313 — wrapped manifest"
+  - "DELETE /api/v1/stone/offerings/{name}/snapshots/{id} — offering_snapshots.rs:438 — wrapped (idempotent)"
+  - "GET /api/v1/stone/offerings/{name}/snapshots/{id}/files/{kind}/{artifact} — offering_snapshots.rs:344 — streamed artifact"
+  - "POST /api/v1/stone/offerings/{name}/plant — offering_snapshots.rs:518 — wrapped (async job_id, cross-stone from_stone)"
+  # Adoption / borrowing
+  - "POST /api/v1/stone/offerings/{offering}/adopt — adoption.rs:83 — wrapped"
+  - "DELETE /api/v1/stone/offerings/{offering}/adopt — adoption.rs:289 — wrapped (string message body)"
+  - "POST /api/v1/stone/offerings/borrow — adoption.rs:382 — wrapped (credentials → Koi vault)"
+  - "DELETE /api/v1/stone/offerings/borrow/{name} — adoption.rs:481 — wrapped"
+  # Services (technical layer)
+  - "GET /api/v1/stone/services — services.rs:98 — wrapped — L — advertised: yes (stale /api/v1/services)"
+  - "POST /api/v1/stone/services — services.rs:239 — wrapped (async job_id for installs)"
+  - "GET /api/v1/stone/services/manifests — services.rs:455 — wrapped — L — advertised: no"
+  - "POST /api/v1/stone/services/reconcile — services.rs:772 — bare"
+  - "POST /api/v1/stone/services/refresh — services.rs:794 — bare"
+  - "POST /api/v1/stone/services/refresh-capabilities — services.rs:912 — bare"
+  - "GET /api/v1/stone/services/{name}/manifest — services.rs:482 — bare YAML text"
+  - "GET /api/v1/stone/services/{service}/capabilities — services.rs:831 — wrapped"
+  - "GET /api/v1/stone/services/{service} — services.rs:196 — wrapped — L — advertised: no"
+  - "DELETE /api/v1/stone/services/{service} — services.rs:398 — wrapped (keeps volumes)"
+  - "GET /api/v1/stone/services/{service}/logs — services.rs:510 — SSE — L — advertised: yes (stale path)"
+  - "GET /api/v1/stone/services/{service}/env — services.rs:571 — quasi-envelope {data,manageable}"
+  - "PATCH /api/v1/stone/services/{service}/env — services.rs:639 — bare {applied,restart_required}"
+  - "POST /api/v1/stone/services/{service}/restart — services.rs:718 — bare"
+  - "POST /api/v1/stone/services/{service}/rest — services.rs:310 — wrapped"
+  - "POST /api/v1/stone/services/{service}/wake — services.rs:336 — wrapped"
+  - "POST /api/v1/stone/services/{service}/upgrade — services.rs:362 — wrapped (nourish)"
+  - "POST /api/v1/stone/services/{service}/destroy — services.rs:425 — wrapped (uproot)"
+  - "POST /api/v1/stone/services/{service}/reassign — services.rs:1029 — bare (rename container+FQN)"
+  - "POST /api/v1/stone/services/{service}/cordon — services.rs:740 — wrapped"
+  - "GET /api/v1/stone/services/{service}/config — config.rs:81 — bare ConfigResponse — L — advertised: no"
+  - "PATCH /api/v1/stone/services/{service}/config — config.rs:131 — bare (validated overlays, auto cycle)"
+  - "DELETE /api/v1/stone/services/{service}/config — config.rs:275 — bare (?owner= required)"
+  # Companions
+  - "GET /api/v1/stone/companions — companions.rs:37 — wrapped — L — advertised: yes"
+  - "POST /api/v1/stone/companions/refresh — companions.rs:442 — wrapped"
+  - "GET /api/v1/stone/companions/{id} — companions.rs:72 — wrapped"
+  - "POST /api/v1/stone/companions/{id}/command — companions.rs:95 — BARE CommandResponse (drift) — L — advertised: yes"
+  - "POST /api/v1/stone/companions/{id}/up — companions.rs:380 — wrapped"
+  - "POST /api/v1/stone/companions/{id}/down — companions.rs:419 — wrapped"
+  # Garden storage (STORAGE-0009)
+  - "GET /api/v1/garden/storage — garden_storage/mod.rs:474 — wrapped — L — advertised: no"
+  - "GET /api/v1/garden/storage/{name} — garden_storage/mod.rs:544 — wrapped (replicas + S3 block)"
+  - "GET /api/v1/garden/storage/{name}/fs — garden_storage/files.rs:227 — wrapped (S3/GCS-style listing, ?path&depth)"
+  - "GET /api/v1/garden/storage/{name}/fs/{*path} — garden_storage/files.rs:243 — file bytes / dir listing (wrapped)"
+  - "PUT /api/v1/garden/storage/{name}/fs/{*path} — garden_storage/files.rs:409 — file write"
+  - "POST /api/v1/garden/storage/{name}/fs/{*path} — garden_storage/files.rs:556 — mkdir"
+  - "PATCH /api/v1/garden/storage/{name}/fs/{*path} — garden_storage/files.rs:633 — move/rename"
+  - "DELETE /api/v1/garden/storage/{name}/fs/{*path} — garden_storage/files.rs:473 — delete"
+  - "HEAD /api/v1/garden/storage/{name}/fs/{*path} — garden_storage/files.rs:717 — existence"
+  - "GET /api/v1/garden/storage/{name}/objects/{*path} — garden_storage/objects.rs:46 — object read / bucket list"
+  - "PUT /api/v1/garden/storage/{name}/objects/{*path} — garden_storage/objects.rs:184 — object write"
+  - "DELETE /api/v1/garden/storage/{name}/objects/{*path} — garden_storage/objects.rs:298 — object delete"
+  - "HEAD /api/v1/garden/storage/{name}/objects/{*path} — garden_storage/objects.rs:390 — object meta"
+  - "GET /api/v1/garden/storage/{name}/snapshots — garden_storage/snapshots.rs:186 — wrapped (memories index)"
+  - "GET /api/v1/garden/storage/{name}/snapshots/{offering_id} — garden_storage/snapshots.rs:281 — wrapped"
+  - "GET /api/v1/garden/storage/{name}/snapshots/{offering_id}/manifest — garden_storage/snapshots.rs:391 — wrapped"
+  - "GET /api/v1/garden/storage/{name}/snapshots/{offering_id}/{harvest_id} — garden_storage/snapshots.rs:510 — download"
+  # WebDAV
+  - "ANY /dav/{name}/{*path} — webdav.rs:53 — raw dav-server / proxied — advertised: no"
+  - "ANY /dav/{name} — webdav.rs:53 — raw (PROPFIND root) — advertised: no"
+  # Banks (ARCH-0026)
+  - "GET /api/v1/garden/banks — banks.rs:213 — wrapped — L — advertised: no"
+  - "GET /api/v1/garden/banks/{moniker} — banks.rs:266 — wrapped — L — advertised: no"
+  - "GET /api/v1/garden/banks/{moniker}/volumes — banks.rs:350 — wrapped — L — advertised: no"
+  - "GET /api/v1/stone/banks — banks.rs:92 — wrapped — L — advertised: no"
+  - "GET /api/v1/stone/banks/{moniker} — banks.rs:102 — wrapped — L — advertised: no"
+  - "GET /api/v1/stone/banks/{moniker}/seeds — bank_snapshots.rs:58 — wrapped — L — advertised: no"
+  - "POST /api/v1/stone/banks/{moniker}/pin — banks.rs:126 — wrapped"
+  - "POST /api/v1/stone/banks/{moniker}/unpin — banks.rs:171 — wrapped"
+  # Logical sets (ARCH-0038)
+  - "GET /api/v1/sets — sets/mod.rs:58 — wrapped — L — advertised: no"
+  - "GET /api/v1/sets/offerings — sets/offerings.rs:86 — wrapped — L — advertised: no"
+  - "GET /api/v1/sets/offerings/{fqn} — sets/offerings.rs:111 — wrapped — L — advertised: no"
+  - "GET /api/v1/sets/banks — sets/banks.rs:88 — wrapped — L — advertised: no"
+  - "GET /api/v1/sets/banks/{moniker} — sets/banks.rs:113 — wrapped — L — advertised: no"
+  # Stone storage (seed banks)
+  - "GET /api/v1/stone/storage — storage.rs:184 — wrapped — L — advertised: no"
+  - "GET /api/v1/stone/storage/s3/ports — storage.rs:1984 — BARE {ports:{...}} (drift)"
+  - "GET /api/v1/stone/storage/health — storage.rs:272 — wrapped — L — advertised: yes"
+  - "GET /api/v1/stone/storage/candidates — storage.rs:592 — wrapped"
+  - "POST /api/v1/stone/storage/add — storage.rs:829 — wrapped (unified add/prepare)"
+  - "POST /api/v1/stone/storage/release-all — storage.rs:1638 — wrapped"
+  - "GET /api/v1/stone/storage/banks — storage.rs:289 — wrapped"
+  - "GET /api/v1/stone/storage/banks/{name} — storage.rs:307 — wrapped (409 non-canonical)"
+  - "DELETE /api/v1/stone/storage/banks/{name} — storage.rs:337 — bare StatusCode"
+  - "PATCH /api/v1/stone/storage/banks/{name}/visibility — storage.rs:1432 — wrapped"
+  - "PATCH /api/v1/stone/storage/banks/{name}/rename — storage.rs:462 — wrapped"
+  - "POST /api/v1/stone/storage/banks/{name}/release — storage.rs:405 — wrapped"
+  - "POST /api/v1/stone/storage/banks/{name}/pin — router.rs:1235 — 301 redirect → /stone/banks/{name}/pin"
+  - "POST /api/v1/stone/storage/banks/{name}/unpin — router.rs:1242 — 301 redirect"
+  - "PATCH /api/v1/stone/storage/banks/{name}/roles — storage.rs:1571 — wrapped"
+  - "GET /api/v1/stone/storage/banks/{name}/changes — storage.rs:1842 — wrapped (replication changelog)"
+  - "GET /api/v1/stone/storage/stream — storage.rs:1912 — SSE storage.tick doorbell"
+  # Presence / pulse
+  - "GET /api/v1/stone/presence/stream — presence.rs:50 — SSE (snapshot first, ?categories filter) — L — advertised: yes (twice)"
+  - "GET /api/v1/stone/presence — presence.rs:140 — bare PresenceSnapshot — L — advertised: no"
+  - "POST /api/v1/stone/presence/notify — presence.rs:295 — bare 202 (only 'tended' accepted)"
+  - "GET /api/v1/stone/pulse/stream — pulse.rs:45 — SSE firehose (pulse.snapshot then domain.* + transport.*) — L — advertised: no"
+  # Updates (nourishment)
+  - "GET /api/v1/stone/updates — updates.rs:42 — wrapped — L — advertised: no"
+  - "POST /api/v1/stone/updates/execute — updates.rs:391 — wrapped (async job)"
+  - "GET /api/v1/stone/updates/stream/{job_id} — updates.rs:873 — SSE"
+  - "GET /api/v1/garden/updates — updates.rs:107 — wrapped (parallel fan-out) — L — advertised: yes"
+  - "POST /api/v1/garden/updates/execute — updates.rs:177 — wrapped (signed dispatch) — advertised: yes"
+  # Logs / maintenance / nurturing snapshots
+  - "GET /api/v1/stone/logs — logs.rs:30 — wrapped (file-backed, ?lines&level)"
+  - "GET /api/v1/stone/logs/stream — logs.rs:87 — SSE"
+  - "GET /api/v1/stone/maintenance/history — maintenance.rs:15 — wrapped"
+  - "POST /api/v1/stone/maintenance/sweep — maintenance.rs:30 — wrapped"
+  - "GET /api/v1/stone/snapshots — snapshots.rs:62 — wrapped (nurturing A/B index)"
+  - "GET /api/v1/stone/snapshots/{offering} — snapshots.rs:84 — wrapped"
+  - "POST /api/v1/stone/snapshots/{offering} — snapshots.rs:135 — wrapped"
+  - "DELETE /api/v1/stone/snapshots/{offering} — snapshots.rs:282 — wrapped"
+  - "POST /api/v1/stone/snapshots/{offering}/restore — snapshots.rs:199 — wrapped"
+  - "POST /api/v1/snapshots/{offering}/trigger — snapshots.rs:563 — wrapped (timer hook)"
+  - "POST /api/v1/snapshots/trigger-all — snapshots.rs:591 — wrapped"
+  - "POST /api/v1/stone/snapshots/{offering}/replicate — snapshots.rs:347 — wrapped"
+  - "POST /api/v1/stone/snapshots/{offering}/restore-remote — snapshots.rs:459 — wrapped"
+  - "GET /api/v1/stone/snapshots/remote/{seed_bank} — snapshots.rs:424 — wrapped"
+  # Garden
+  - "GET /api/v1/garden — garden.rs:15 — wrapped — L — advertised: no"
+  - "GET /api/v1/garden/topology — garden.rs:184 — wrapped — L — advertised: yes"
+  - "GET /api/v1/garden/capabilities — garden.rs:350 — wrapped — L — advertised: no"
+  - "GET /api/v1/garden/inspect — garden.rs:230 — wrapped (fan-out, unreachable list) — L — advertised: no"
+  - "GET /api/v1/garden/stones/{stone_name} — garden.rs:99 — wrapped (LOCAL ONLY: 404 for peers) — L — advertised: no"
+  - "POST /api/v1/garden/recommend — garden.rs:133 — wrapped (placement scoring)"
+  - "GET /api/v1/garden/services — services.rs:132 — wrapped (registry search w/ prefix queries) — L — advertised: no"
+  - "PUT /api/v1/garden/gateway/{offering} — gateway.rs:54 — BARE {lease_id,ttl_seconds} (drift) — L — advertised: no"
+  - "DELETE /api/v1/garden/gateway/{offering} — gateway.rs:189 — bare 200 — L — advertised: no"
+  - "GET /api/v1/garden/tools — tools.rs:76 — wrapped (cursor + delta replay)"
+  - "GET /api/v1/garden/tools/stream — tools.rs:97 — SSE (snapshot/replay/live/heartbeat, Last-Event-ID resume)"
+  - "GET /api/v1/stone/tools/{fqid} — tools.rs:55 — BARE GardenTool (drift)"
+  - "GET /api/v1/garden/updates — see above (dup listing)"
+  # S3 gateway (STORAGE-0009/0016)
+  - "POST /api/v1/storage/s3/presign — s3_presign.rs:56 — bare {url,expires_at} (HMAC, pond/stone two-tier secret)"
+  - "GET /api/v1/storage/s3 — s3_gateway.rs:930 — XML ListAllMyBuckets"
+  - "GET /api/v1/storage/s3/{bucket} — s3_gateway.rs:1023 — XML ListObjects (V1/V2)"
+  - "PUT /api/v1/storage/s3/{bucket} — s3_gateway.rs:1177 — XML (create bucket)"
+  - "PUT /api/v1/storage/s3/{bucket}/{*key} — s3_gateway.rs:383 — raw bytes (sniffs uploadPart/copyObject)"
+  - "POST /api/v1/storage/s3/{bucket}/{*key} — s3_gateway.rs:1427 — multipart initiate/complete (dispatches internally)"
+  - "GET /api/v1/storage/s3/{bucket}/{*key} — s3_gateway.rs:496 — raw bytes (Range, conditional reqs)"
+  - "HEAD /api/v1/storage/s3/{bucket}/{*key} — s3_gateway.rs:703 — headers"
+  - "DELETE /api/v1/storage/s3/{bucket}/{*key} — s3_gateway.rs:841 — XML (sniffs multipart abort)"
+  # Jobs / manifest
+  - "GET /api/v1/jobs — jobs.rs:111 — wrapped (in-memory, lost on restart)"
+  - "GET /api/v1/jobs/{job_id} — jobs.rs:54 — wrapped (404 returns synthetic FAILED Job, not error envelope)"
+  - "GET /api/v1/jobs/{job_id}/stream — jobs.rs:158 — SSE (job.snapshot first, auto-close on terminal)"
+  - "GET /api/v1/manifest — manifest.rs:11 — BARE ApiManifest (stale, see gaps) — L — advertised: (it IS the ad)"
+  # Pond (security)
+  - "POST /api/v1/pond/init — pond.rs:317 — wrapped (creates CA, TOTP URI) — L"
+  - "POST /api/v1/pond/ceremony — pond.rs:1164 — wrapped (step-wise ceremony protocol) — L"
+  - "DELETE /api/v1/pond — pond.rs:997 — wrapped (tear down pond) — L"
+  - "POST /api/v1/pond/join — pond.rs:629 — wrapped (TOTP + CSR enrollment) — L"
+  - "POST /api/v1/pond/renew — pond.rs:513 — wrapped — L"
+  - "POST /api/v1/pond/invite — pond.rs:887 — wrapped (enrollment window) — L"
+  - "POST /api/v1/pond/unlock — pond.rs:936 — wrapped (passphrase/TOTP) — L"
+  - "PUT /api/v1/pond/name — pond.rs:1024 — wrapped — L"
+  - "POST /api/v1/pond/promote — pond.rs:1081 — wrapped (X25519 key exchange) — L"
+  - "DELETE /api/v1/pond/stones/{stone_name} — pond.rs:1062 — wrapped (untrust/revoke) — L"
+  - "GET /api/v1/pond/status — pond.rs:370 — wrapped (stones + own identity health) — L"
+  - "GET /api/v1/pond/ca.pem — pond.rs:1118 — bare application/x-pem-file — L"
+  # Console / admin
+  - "GET /api/v1/console/mode — console.rs:118 — bare {mode} — L — advertised: no"
+  - "POST /api/v1/console/mode — console.rs:30 — bare (persist + timeout revert)"
+  - "POST /api/v1/admin/moss/shutdown — admin.rs:40 — bare {success,message} — L — advertised: yes"
+  - "POST /api/v1/admin/moss/take-root — admin.rs:72 — bare (Windows service install via sc.exe)"
+  - "POST /api/v1/admin/stone/shutdown — admin.rs:272 — bare (systemctl poweroff)"
+  - "POST /api/v1/admin/stone/reboot — admin.rs:337 — bare — L — advertised: yes"
+  - "POST /api/v1/admin/stone/{name}/wake — admin.rs:397 — bare (Wake-on-LAN from cached MAC)"
+
+# Hidden 22nd surface: POST /api/v1/pond/sign — pond.rs:471 — served ONLY on a
+# loopback listener (bootstrap/sign_listener.rs, 127.0.0.1:MOSS_SIGN_LOOPBACK),
+# deliberately absent from both routers. Clear-signing oracle for rake; the doc
+# comment calls it an "impersonation oracle — loopback only".
+
+# ===========================================================================
+# CAPABILITY ENTRIES
+# ===========================================================================
+
+- id: health-self-description
+  name: Health & self-description (/, /health, /api/v1/manifest)
+  kind: route-cluster
+  what: >
+    Industry-standard liveness plus a handwritten API manifest. /health runs
+    docker/disk/memory checks plus an initialization component (hardware
+    detection + catalog readiness), aggregates to healthy/degraded/unhealthy,
+    and maps unhealthy to HTTP 503. /api/v1/manifest returns a static
+    ApiManifest (version, base_url, categories, endpoint specs with curl
+    examples) built in code.
+  how: >
+    get_health collects resources ONCE and derives disk+memory checks and
+    components from that snapshot (health.rs:20-44). The manifest is a
+    hand-maintained list of EndpointSpec pushes in build_manifest() — not
+    generated from the router, so it rots silently (v1's Face enum exists
+    precisely to kill this pattern).
+  evidence:
+    - "src/poc/moss/src/api/v1/health.rs:15-126 — 503-on-unhealthy, components+legacy checks"
+    - "src/poc/moss/src/api/v1/manifest.rs:25-429 — handwritten endpoint list"
+    - "src/v1/crates/moss/src/http.rs:45-110 — v1 Face::ALL declared-once manifest, router built FROM it"
+  gaps:
+    - "Manifest advertises 27 unique paths; 7 are pre-/stone-nesting ghosts that 404 (/capabilities, /resources, /api/v1/offerings, /api/v1/offerings/search, /api/v1/offerings/:name, /api/v1/services, /api/v1/services/:service/logs) — manifest.rs:41,52,124,136,163,176,189"
+    - "~195 of ~215 routed method-pairs are unadvertised; presence/stream is advertised twice (manifest.rs:240 and :301)"
+    - "Manifest itself is served BARE (Json<ApiManifest>) while most v1-era responses are wrapped"
+  maturity: live-proven
+  v1: yes
+  v1_note: >
+    v1's /api/v1 front door is the fix: routes exist only as Face::ALL rows and
+    the router is built from them, with tests (front_door_lists_every_face_exactly_once)
+    making drift structurally impossible.
+
+- id: portrait-page
+  name: Portrait page (/ + /api/v1/stone/portrait*)
+  kind: page
+  what: >
+    The operator's dashboard SPA. /api/v1/stone/portrait aggregates identity
+    (name, derived color, role hard-coded "STONE"), foundation resources,
+    offerings, storage, topology — explicitly cache-only, target <10ms, no I/O
+    in the handler. /portrait/guidance returns combined offering guidance as
+    markdown with an ETag (204 when nothing has guidance).
+  how: >
+    portrait.html (Alpine.js) polls /api/v1/stone/portrait, subscribes
+    /api/v1/stone/presence/stream for live updates, fetches
+    /api/v1/stone/storage/health, and buttons fire POSTs to
+    /stone/services/{name}/(wake|rest|restart), /stone/storage/add,
+    /stone/storage/{name}/release, /stone/companions/{id}/(up|down).
+  evidence:
+    - "src/poc/moss/src/api/v1/portrait.rs:362-376 — cache-only contract comment"
+    - "src/poc/moss/src/api/v1/portrait.rs:699-756 — guidance markdown + ETag"
+    - "src/poc/moss/assets/portrait.html:660,1115-1222,1322-1371 — endpoints consumed"
+  gaps:
+    - "role is hard-coded to STONE (portrait.rs:377-379) — Lantern/cornerstone roles TODO"
+    - "io_percent: 0.0 placeholder 'until I/O collection is implemented' (presence.rs:248)"
+  maturity: live-proven
+  v1: MISSING
+  v1_note: >
+    v1 has no UI page and no portrait aggregate; the nearest v1 thing is
+    /api/v1/stone (SelfView). A v1 dashboard would compose SelfView + posture.
+
+- id: pulse-presence-events
+  name: Pulse firehose + presence stream + events/SSE
+  kind: route-cluster
+  what: >
+    One unified broadcast channel (state.pulse) fed by two producers
+    (PulseDomainBridge for domain events, TransportTap for raw UDP). Three SSE
+    consumers: /pulse/stream (everything: pulse.snapshot then domain.* +
+    transport.* events), /presence/stream (domain-only, translated to
+    companion vocabulary, ?categories filter), /metrics/stream (transitions
+    only). Plus /presence snapshot GET and /presence/notify POST (only
+    event_type "tended" accepted).
+  how: >
+    Every stream takes a shutdown child token (MOSS-0004) so graceful drain
+    doesn't hang; lagged receivers are dropped with a warn. Presence snapshot
+    assembles offering states, resource percents, GPU/net rates, seed-bank
+    summary and local hour — the Firefly LED data contract (FIREFLY-0003).
+  evidence:
+    - "src/poc/moss/src/infra/listeners/pulse.rs:1-100 — PulseEvent::Domain|Transport union"
+    - "src/poc/moss/src/api/v1/pulse.rs:45-111 — firehose + server.shutdown sentinel event"
+    - "src/poc/moss/src/api/v1/presence.rs:50-129,140-144,295-329 — filtered stream, snapshot, notify"
+  gaps:
+    - "/presence/notify rejects everything but 'tended' with a BARE text error (presence.rs:306-310)"
+    - "Snapshot generate_snapshot() does fresh Date/time math per call; no ETag"
+    - "events.rs in api/v1/ registers NO routes — it is job-event emit helpers (naming trap)"
+  maturity: live-proven
+  v1: MISSING
+  v1_note: >
+    v1 has no SSE/event surface at all. First migration target: the unified
+    pulse channel + presence vocabulary (companions depend on it).
+
+- id: observability-metrics-tasks-logs
+  name: Observability (metrics aggregate, task supervisor, daemon logs, maintenance)
+  kind: route-cluster
+  what: >
+    ARCH-0018 software observability: per-domain event counters and mutation
+    latency, per-task timing/lag, global counters, and an SSE of interesting
+    transitions only (counter increments must be polled). Separate lifecycle
+    view at /stone/tasks[/{name}] from the SupervisorHandle (the two are
+    explicitly complementary and joined by name). Daemon logs: file-backed
+    recent-lines (?lines≤5000&level substring) + live SSE tail. Maintenance:
+    sweep history + on-demand sweep.
+  how: >
+    All metrics handlers are thin dispatchers over Arc<Metrics> via FromRef
+    extraction. 404s (unknown domain/task) use a raw {error,message} shape
+    distinct from ApiErrorResponse. /stone/logs reads
+    {logs_dir}/garden-moss.log.{today} picking the most recently modified.
+  evidence:
+    - "src/poc/moss/src/api/v1/metrics.rs:1-164 — full snapshot + SSE"
+    - "src/poc/moss/src/bootstrap/router.rs:1181-1230 — task lifecycle handlers inline in router.rs"
+    - "src/poc/moss/src/api/v1/logs.rs:30-81 — file read with level substring filter"
+    - "src/poc/moss/src/api/v1/maintenance.rs:15-39 — sweep history/trigger"
+  gaps:
+    - "logs level filter is substring contains() not severity-aware (logs.rs:63-72)"
+    - "log read loads the whole file into a String before tailing (logs.rs:53)"
+    - "404 error shape drift: {error,message} (metrics.rs:73-80) vs ApiErrorResponse elsewhere"
+  maturity: live-proven
+  v1: MISSING
+  v1_note: >
+    v1's posture face has a handful of live counters but nothing like the
+    Metrics aggregate, task registry, or log access.
+
+- id: garden-ops
+  name: Garden ops (overview, topology, inspect, recommend, placement)
+  kind: route-cluster
+  what: >
+    Garden-wide reads composed locally: /garden (self + cached peers with live
+    resources only for self), /garden/topology (raw TopologyEntry list, self
+    first), /garden/capabilities (Tier1 from cache, peers' Tier2 = None),
+    /garden/inspect (parallel fan-out to each peer's /stone/capabilities with
+    per-stone unreachable reasons), /garden/recommend (placement scoring),
+    /garden/stones/{name}.
+  how: >
+    No fan-out for topology/overview — everything comes from the local
+    topology cache fed by chirps; /inspect is the only active-probe surface.
+    Peers with empty stone_name in caps get identity overlaid from the
+    topology entry (garden.rs:379-396).
+  evidence:
+    - "src/poc/moss/src/api/v1/garden.rs:230-341 — inspect fan-out with timeout + unreachable list"
+    - "src/poc/moss/src/api/v1/garden.rs:99-118 — stones/{name} answers LOCAL name only, else STONE_NOT_FOUND"
+  gaps:
+    - "/garden/stones/{name} is local-only: asking for a peer 404s instead of v1's knows_at redirect — v1's stone_ref 'garden's only true redirect' is the fix"
+    - "peers always report cpu/memory 0.0 (no per-peer resource fetch)"
+    - "pond_status field hard-wired None 'Phase 3' (garden.rs:68)"
+  maturity: live-proven
+  v1: partial
+  v1_note: >
+    v1 /api/v1/garden/stones projects the same self-spliced room from the
+    chirp cache (yes), but has no inspect fan-out, no placement recommend, no
+    per-stone capabilities aggregation.
+
+- id: offering-lifecycle
+  name: Offering lifecycle (plant/take-away/heal/search/inspect/test/export + services layer)
+  kind: route-cluster
+  what: >
+    Two-layer model: human layer /stone/offerings (list/search/get/plant/
+    delete; plant+delete are thin delegates into services create/delete with
+    .data unwrapping) and technical layer /stone/services (create, list,
+    get, delete keeping volumes, destroy, rest/wake/restart/nourish/upgrade,
+    cordon, reassign rename, logs SSE, env get/patch with manifest allowlist,
+    owned config patches with volume-path validation and least-destructive
+    container cycling). Plus image-direct inspect, taxonomy search, manifest
+    test-deploy, and export (curated manifest or synthesized from running
+    container).
+  how: >
+    create_service returns ServiceActionResponse with job_id for async
+    installs; suggestions are generated contextually (suggestions.rs) and
+    suppressed via X-Quiet header. Service search sanitizes input against
+    suspicious patterns and supports c:/cat:/t: prefixes.
+  evidence:
+    - "src/poc/moss/src/api/v1/offerings.rs:262-311 — plant/take-away delegation + .data unwrap"
+    - "src/poc/moss/src/api/v1/services.rs:239-307 — install outcomes incl. image-direct + adopted"
+    - "src/poc/moss/src/api/v1/config.rs:143-190 — OFFER-0008 volume host-path validation"
+    - "src/poc/moss/src/api/suggestions.rs:39-111 — X-Quiet-gated CLI suggestions"
+  gaps:
+    - "Envelope drift inside one cluster: services rest/wake/delete wrapped, restart/reconcile/refresh/reassign bare; env uses a third quasi-envelope {data,manageable}"
+    - "get_manifest/{name}/manifest return raw YAML strings with ApiErrorResponse errors (mixed media types)"
+    - "plant_offering forwards an EMPTY HeaderMap to create_service — X-Quiet and envelope-signing headers are dropped (offerings.rs:280-285)"
+    - "deploy_stone_v1 runs tar via blocking std::process::Command inside the async handler (stone.rs:386)"
+  maturity: live-proven
+  v1: partial
+  v1_note: >
+    v1 covers plant/show/uproot/rest/wake at /api/v1/offerings/{fqn}. Missing:
+    search, inspect image-direct, heal/reconcile, env management, config
+    patches, cordon, reassign, per-service logs, nourish (upgrade).
+
+- id: adoption-borrowing
+  name: Adoption & borrowing
+  kind: route-cluster
+  what: >
+    Adopt = detect an already-running container and register it under an
+    adopted FQN with a control level (full/monitor/announce), connectivity
+    enforcement, and generated guidance. Borrow = register an external
+    network service (URL), optionally storing credentials in the Koi vault.
+    Lists for adoptable (live container detection per catalog manifest),
+    adopted, borrowed; unadopt/unborrow remove registration only.
+  how: >
+    adopt runs detection → connectivity enforcement (degrade on failure) →
+    Offering with OfferingModeData::Adopted; borrow parses the URL into a
+    location and stores credentials under borrowed:{name}:credentials in the
+    vault (best-effort with warn on failure).
+  evidence:
+    - "src/poc/moss/src/api/v1/adoption.rs:83-252 — adopt flow"
+    - "src/poc/moss/src/api/v1/adoption.rs:382-476 — borrow + vault storage"
+  gaps:
+    - "detection_method always 'auto' (adoption.rs:64 comment: could track actual method)"
+    - "list_adoptable runs a detection pass per request — potentially slow (no cache flag)"
+  maturity: live-proven
+  v1: MISSING
+  v1_note: >
+    No adoption/borrowing in v1. Nearest v1 concept is planting from catalog.
+
+- id: offering-capabilities
+  name: Offering capability discovery & mirror
+  kind: route-cluster
+  what: >
+    Manifest-driven discovery of sub-capabilities (models, extensions) by
+    executing commands declared in a capability manifest against the offering.
+    Add/remove items as background jobs (idempotent tagged responses:
+    exists/dry_run/in_progress/started), bulk refresh with job progress, and
+    cross-stone mirror: fetch source+target capability lists from two peer
+    stones and push missing items, signing each push for pond enforcement.
+  how: >
+    Resolves managed OR adopted offerings; discovered capabilities are
+    persisted back onto the offering's sub_capabilities (detail-only, no
+    chirp sync). Mirror orchestrates via cross_stone::resolve_stone_endpoint
+    and dedups by (cap_type, name).
+  evidence:
+    - "src/poc/moss/src/api/v1/offering_capabilities.rs:74-122 — list + persist"
+    - "src/poc/moss/src/api/v1/offering_capabilities.rs:794-935 — mirror with signing"
+  gaps:
+    - "Capabilities 404 with NO_CAPABILITY_MANIFEST for any offering without a capability manifest — no way to list which offerings have one"
+  maturity: live-proven
+  v1: MISSING
+
+- id: offering-volumes
+  name: Offering volume file I/O
+  kind: route-cluster
+  what: >
+    Raw read/write/list of files inside an offering's bind-mount volumes
+    (ORCH-0019): PUT streams body to temp file + atomic rename (never buffers),
+    GET streams from disk with MIME inference, HEAD is existence+length, and a
+    recursive listing endpoint returns {path,size} for capacity-gated skill
+    publication by the AI orchestrator (ComfyUI checkpoints).
+  how: >
+    Path resolution {volumes_dir}/{encoded_fqn}/{volume}/{path} with '..' and
+    NUL rejection. Errors use a JSON shape {error:{code,message}} — a third
+    error envelope in the same codebase.
+  evidence:
+    - "src/poc/moss/src/api/v1/offering_volumes.rs:35-111 — streaming PUT"
+    - "src/poc/moss/src/api/v1/offering_volumes.rs:286-342 — Box::pin recursive walker"
+  gaps:
+    - "MIME table is tiny (model weights, json, yaml, images); everything else is octet-stream"
+    - "Listing ignores symlinks entirely (silently)"
+  maturity: live-proven
+  v1: MISSING
+
+- id: offering-snapshots-seeds
+  name: Offering snapshots (capture/plant/fetch artifacts)
+  kind: route-cluster
+  what: >
+    ORCH-0039 seed-as-noun: POST capture submits an async job (commit image →
+    save tar → archive volumes + external mounts → manifest) targeting local
+    disk or bank:<name>; GET lists/reads manifests (KB-sized preview before
+    GB-sized plant/download); artifact streaming by kind (image|volume|
+    external_mount) with traversal-safe name sanitization; DELETE idempotent;
+    POST plant restores locally or fetches from a peer stone first
+    (from_stone/from_fqn/as_fqn for fork semantics).
+  how: >
+    Both capture and plant validate synchronously (bad bank, bad target) then
+    submit a Job and spawn a worker; the final result lands on the Job's
+    result field, delivered via /jobs/{id}/stream terminal frame.
+  evidence:
+    - "src/poc/moss/src/api/v1/offering_snapshots.rs:145-285 — async capture + SnapshotTarget::parse"
+    - "src/poc/moss/src/api/v1/offering_snapshots.rs:503-560 — plant with cross-stone fetch"
+  gaps:
+    - "Retention is documented as 'land separately in commit S6' — no sweeper exists yet (offering_snapshots.rs:436-437)"
+  maturity: live-proven
+  v1: partial
+  v1_note: >
+    v1's capture face (POST /offerings/{fqn}/capture + GET last run +
+    replant) is the same idea with a will/checkpoint policy model. PoC adds
+    bank targets, artifact streaming, and cross-stone fetch — all missing in v1.
+
+- id: nurturing-backups
+  name: Nurturing (A/B backup slots + seed-bank replication + timers)
+  kind: route-cluster
+  what: >
+    Local A/B slot backups per offering (create with commit_image, restore by
+    slot, delete), replication of snapshots to a named seed bank, remote
+    listing and restore-from-seed-bank, and unauthenticated-timer trigger
+    endpoints (/api/v1/snapshots/{offering}/trigger, /trigger-all) designed
+    for systemd/Task Scheduler to call.
+  how: >
+    Offerings looked up by FQN or offering_id; seed bank found among mounted
+    volumes; replication stores a hydration manifest (HarvestManifest) next
+    to the data.
+  evidence:
+    - "src/poc/moss/src/api/v1/snapshots.rs:1-25 — module doc"
+    - "src/poc/moss/src/api/v1/snapshots.rs:347-418 — replicate with hydration manifest"
+  gaps:
+    - "Module doc describes /api/v1/stone/nurturing paths; actual routes are /stone/snapshots — stale doc"
+    - "Trigger endpoints have no auth/token — anything that can reach :7185 can start backups"
+  maturity: live-proven
+  v1: MISSING
+
+- id: storage-banks
+  name: Storage & banks (stone storage, banks, sets, replication changelog/stream)
+  kind: route-cluster
+  what: >
+    Seed-bank estate: overview (local counts + garden banks from registry),
+    health assessment (mount readiness, canonical layout), add (unified
+    add/prepare with a preparing-devices guard), per-bank get/delete/release/
+    rename/visibility/roles/pin/unpin (legacy paths 301-redirect to /stone/
+    banks), replication changelog pull (?since=cursor) + SSE doorbell
+    (storage.tick ~100-byte events), S3 port catalog, and ARCH-0038 logical
+    sets (offering sets + bank sets projected from the registry hotcache).
+  how: >
+    Volumes domain is the single source of truth, populated at boot and kept
+    live by a volume watcher; pin is last-pin-wins by GUIDv7 comparison
+    propagated via beacons; bank aggregate commands emit StorageChanged
+    events and nudge the coordination tick.
+  evidence:
+    - "src/poc/moss/src/api/v1/storage.rs:1-30 — route doc"
+    - "src/poc/moss/src/api/v1/storage.rs:1912-1972 — storage.tick SSE"
+    - "src/poc/moss/src/api/v1/sets/mod.rs:1-64 — kinds index (static)"
+    - "src/poc/moss/src/api/v1/banks.rs:213-259 — garden banks merge local+remote"
+  gaps:
+    - "storage.rs pin_bank_v1/unpin_bank_v1 (lines 1748, 1795) are DEAD CODE — router redirects those paths instead; same logic lives in banks.rs"
+    - "PREPARING_DEVICES guard doc references prepare_seed_bank_v1 which no longer exists (storage.rs:61) — removed endpoint left its mutex behind"
+    - "s3_port_catalog returns bare {ports:{...}}} with no ApiResponse (storage.rs:1984)"
+  maturity: live-proven
+  v1: partial
+  v1_note: >
+    v1 has storage list/adopt/roles/eject + /garden/storage projection. No
+    pin/unpin, visibility, rename, release, changelog/stream replication
+    protocol, health assessment, candidates, or sets.
+
+- id: garden-storage-dataplane
+  name: Garden storage data plane (/fs, /objects, /snapshots namespaces)
+  kind: route-cluster
+  what: >
+    Name-based user-content access on any garden storage (STORAGE-0009):
+    exact /fs listing with ?path=&depth= (S3/GCS model), wildcard /fs/{*path}
+    full CRUD+HEAD, /objects/{*path} S3-object namespace under
+    .zen-garden/storage/, and /snapshots/ harvest-artifact browsing with
+    manifest + download. All routing through StorageResolver: local when
+    Primary (or read from local replica), else proxied to the hosting stone
+    with an X-Zen-Proxied loop guard that 503s when a proxied write reaches a
+    non-primary. Access audit lines appended to an audit JSONL (audit.rs).
+  how: >
+    Path validation rejects traversal and blocked paths (.zen-garden/,
+    $RECYCLE.BIN, ...); directory listings filter blocked names; proxying
+    preserves Content-Type/Length/ETag/Last-Modified.
+  evidence:
+    - "src/poc/moss/src/api/v1/garden_storage/mod.rs:474-535 — display-name grouping (unnamed replica sets collapse to 'storage')"
+    - "src/poc/moss/src/api/v1/garden_storage/files.rs:227-236,98-127 — listing + wrapped ApiResponse"
+    - "src/poc/moss/src/api/v1/garden_storage/audit.rs:32-65 — best-effort JSONL audit"
+  gaps:
+    - "Two parallel file APIs for the same mounts (garden_storage /fs vs /dav WebDAV) with slightly different blocked-path enforcement"
+    - "Changelog entry sizes are stubbed to 0 for WebDAV mutations (webdav.rs:296-298) — replication re-fetches blindly"
+  maturity: live-proven
+  v1: MISSING
+  v1_note: >
+    v1 /api/v1/garden/storage lists banks but has NO data plane — no file or
+    object I/O, no snapshots browsing. This is the biggest capability gap.
+
+- id: s3-gateway
+  name: S3-compatible gateway + presign
+  kind: route-cluster
+  what: >
+    An S3 subset spoken over /api/v1/storage/s3: ListBuckets/ListObjects
+    (V1+V2 XML), Put/Get/Head/Delete object with Range reads and conditional
+    requests, CreateBucket, and full multipart (initiate via POST ?uploads,
+    UploadPart sniffed from PUT ?partNumber&uploadId, complete via POST
+    ?uploadId, abort sniffed from DELETE ?uploadId, CopyObject via
+    x-amyc-copy-source header). STORAGE-0016 presign: HMAC-SHA256 tokens with
+    a two-tier secret (pond CA fingerprint = garden-portable; stone_id
+    fallback), minted at POST /storage/s3/presign.
+  how: >
+    Bucket/key selection by X-Seed-Bank header or ?seed-bank= param, default
+    to DEFAULT_REPLICA_SET_DISPLAY ('storage'). Errors are S3 XML
+    (InvalidBucket/InvalidKey/NoSeedBank...). copy/abort/upload_part are
+    reachable only via dispatch inside put/delete/complete handlers.
+  evidence:
+    - "src/poc/moss/src/api/v1/s3_gateway.rs:383-436,841-862 — query/header sniffing dispatch"
+    - "src/poc/moss/src/api/v1/s3_presign.rs:1-116 — two-tier secret + {stone}.local URL minting"
+  gaps:
+    - "Presigned URL host is '{stone_name}.local' — depends on mDNS resolution; port picked as 'first catalog entry' (s3_presign.rs:76)"
+    - "Presign token validation lives in the s3_listener (separate port), not on the /api/v1 gateway — verify parity if merging"
+    - "Manifest does not advertise ANY s3/webdav route"
+  maturity: live-proven
+  v1: MISSING
+
+- id: webdav
+  name: WebDAV share (/dav/{name})
+  kind: route-cluster
+  what: >
+    RFC 4918 access to managed storages via the dav-server crate (LocalFs,
+    fake locksystem, dotfiles hidden). Any method accepted; remote storages
+    are proxied to the Primary's stone with a loop guard; mutations record
+    changelog entries so replication converges. Blocked paths (managed
+    metadata, OS internals) 403.
+  how: >
+    Thin handler: extract name → resolve via StorageResolver (read vs write
+    resolution) → serve local via DavHandler or proxy with INSECURE_PROXY
+    client (streaming responses). is_write_method covers PUT/DELETE/POST/
+    PATCH/MKCOL/MOVE/COPY/LOCK/UNLOCK — note PROPFIND is treated as a read.
+  evidence:
+    - "src/poc/moss/src/api/v1/webdav.rs:53-141 — handler + loop guards"
+    - "src/poc/moss/src/api/v1/webdav.rs:280-311 — changelog recording"
+  gaps:
+    - "Proxied body buffered up to 200MB in memory before forwarding (webdav.rs:221)"
+    - "Error bodies are plain text, no envelope"
+  maturity: live-proven
+  v1: MISSING
+
+- id: companions
+  name: Companions (Cricket/Firefly/OLED) + command passthrough
+  kind: route-cluster
+  what: >
+    Registry of hardware companions with manifest-driven command sets:
+    list (running/pid), per-companion manifest detail, command proxy (forwards
+    to the companion's localhost HTTP port /command with 5s timeout,
+    auto-starting it first), up/down lifecycle (up also enables boot
+    auto-start; down persists disable), and refresh re-scan. First arg "all"
+    broadcasts to all online stones in parallel, each request clear-signed
+    for pond enforcement, best-effort.
+  how: >
+    Companion processes are spawned children of Moss on the same host — moss
+    endpoint is hard-wired to 127.0.0.1 to dodge DHCP races. domain/companion/
+    mod.rs is a 13-line holder for the registry; the real machinery is
+    infra/companions.rs (45KB).
+  evidence:
+    - "src/poc/moss/src/api/v1/companions.rs:95-126 — command + 'all' broadcast"
+    - "src/poc/moss/src/api/v1/companions.rs:258-364 — signed parallel fan-out"
+    - "src/poc/moss/src/domain/companion/mod.rs:1-13 — thin domain holder"
+  gaps:
+    - "send_companion_command returns BARE CommandResponse (companions.rs:99) — envelope drift; errors also carry CommandResponse bodies"
+    - "Auto-start-on-command means a GET-like POST mutates process state silently"
+  maturity: live-proven
+  v1: MISSING
+
+- id: jobs
+  name: Jobs tracking + per-job SSE
+  kind: route-cluster
+  what: >
+    In-memory job registry for long-running ops (install, capture_snapshot,
+    plant_snapshot, refresh-capabilities, nourish): list, get, and a per-job
+    SSE stream whose FIRST frame is job.snapshot (closing the subscribe race),
+    filters the unified pulse channel by job_id, and auto-closes on terminal
+    event. Terminal jobs are retained 24h for reconnect.
+  how: >
+    Unknown job_id is deliberately permissive: both GET and the stream return
+    a synthetic status=Failed job rather than an error envelope, so SSE
+    clients have one code path.
+  evidence:
+    - "src/poc/moss/src/api/v1/jobs.rs:54-85 — 404-with-stub quirk"
+    - "src/poc/moss/src/api/v1/jobs.rs:158-261 — snapshot-first SSE with auto-close"
+  gaps:
+    - "Jobs are memory-only — 'lost on daemon restart' (jobs.rs:90); the 24h TTL claim only holds while the process lives"
+    - "terminal_seen tracking in the stream closure uses a captured mut var with a vestigial already_terminal (jobs.rs:203,217) — read-and-ignore leftover"
+  maturity: live-proven
+  v1: MISSING
+  v1_note: >
+    v1 has no async-job concept; long ops are background runs surfaced via
+    capture last-run GET only.
+
+- id: greenhouse-authoring
+  name: Greenhouse (catalog + manifest authoring + file CRUD)
+  kind: route-cluster
+  what: >
+    The offering-upkeep module: unified omni-catalog (embedded curated +
+    runtime custom overlays + installed state + compatibility + file
+    inventory), file read (runtime overlay first, embedded fallback) /
+    write (creates overlay for built-ins) / delete (reset-to-builtin) per
+    typed file (snippet/frontmatter/compatibility/guidance/research/adopted/
+    capabilities), real-time validate, generate-from-inspection, whole-
+    offering export bundle, and a running-container picker.
+  how: >
+    Files live under {runtime_manifests_dir}/sw/{category}/{name}{suffix};
+    embedded equivalents come from EmbeddedManifests. GET file returns
+    text/plain; PUT takes a raw String body. The greenhouse SPA at /greenhouse
+    calls ~12 api/v1 endpoints.
+  evidence:
+    - "src/poc/moss/src/api/v1/greenhouse.rs:200-476 — catalog merge logic"
+    - "src/poc/moss/src/api/v1/greenhouse.rs:560-694 — file CRUD + reset semantics"
+  gaps:
+    - "Entire cluster is BARE (no ApiResponse) — including list endpoints whose siblings elsewhere are wrapped"
+    - "put_file takes raw text with no size limit beyond the global 200MB body cap"
+    - "running detection in catalog compares o.status.to_string() == 'running' (greenhouse.rs:301) — case-sensitive string compare against a Debug-ish format"
+  maturity: live-proven
+  v1: MISSING
+
+- id: gateway-registration
+  name: Gateway registration (orchestrators)
+  kind: route-cluster
+  what: >
+    PUT /garden/gateway/{offering} lets orchestrators (mongo, etc.) register
+    as gateways for offerings they front: an idempotent upsert into the tool
+    registry with a 60s TTL (heartbeat every 30s), resolving connection URIs
+    from a template + hostname/ip/port; DELETE deregisters and broadcasts
+    removal. lease_id is deterministic ('gw-{offering}').
+  how: >
+    Validated that handler_for contains the path offering; builds a
+    GardenTool with category defaulting to 'orchestrator'; registers with
+    EntryOrigin::Gateway; registry reaper expires stale entries.
+  evidence:
+    - "src/poc/moss/src/api/v1/gateway.rs:22-24 — TTL constant"
+    - "src/poc/moss/src/api/v1/gateway.rs:54-184 — upsert + projection publish"
+  gaps:
+    - "Bare response {lease_id,ttl_seconds}; DELETE returns a bare 200 even when nothing was registered (gateway.rs:206-209)"
+    - "400 with EMPTY body on handler_for mismatch (returns Err(StatusCode) — no JSON at all)"
+  maturity: live-proven
+  v1: MISSING
+
+- id: admin-console
+  name: Admin & console (power, self-update, console mode)
+  kind: route-cluster
+  what: >
+    Privileged ops, all unauthenticated: moss shutdown (cancellation token),
+    take-root (Windows service install via sc.exe, with removable-media
+    relocation to C:\ProgramData\ZenGarden), stone shutdown/reboot (delayed
+    systemctl/shutdown spawn), Wake-on-LAN from cached topology MAC, and
+    console verbosity mode (get/set with optional persist to moss-config.toml
+    and a timeout auto-revert task).
+  how: >
+    Admin bodies are ad-hoc {success,message} / {success:false,error} JSON.
+    Shutdown/reboot sleep 500ms then spawn OS commands so the response lands
+    first. The self-update path: POST /stone/upgrade stages base64 binaries
+    (arch-validated) and cancels the shutdown token so systemd restarts into
+    the staged binary; POST /stone/deploy accepts a tar.gz package with
+    X-Package-SHA256 verification, validates package.json/platform, stages
+    bin/ + scripts/ + dependencies.json, stops companions on Windows and
+    spawns the updater.
+  evidence:
+    - "src/poc/moss/src/api/v1/admin.rs:40-53,272-379 — shutdown/reboot/WoL"
+    - "src/poc/moss/src/api/v1/stone.rs:90-271 — upgrade staging + self-restart"
+    - "src/poc/moss/src/api/v1/stone.rs:283-767 — deploy package pipeline"
+    - "src/poc/moss/src/api/v1/console.rs:58-79 — timeout revert spawn"
+  gaps:
+    - "No auth on any admin route (admin.rs:14 admits 'should be protected in production')"
+    - "deploy uses blocking std::fs + tar in async context (stone.rs:386)"
+    - "console persist writes ./moss-config.toml relative to CWD on Windows (console.rs:135-137)"
+    - "stone_wake 500s map to a bare {success:false,error} shape unlike ApiErrorResponse"
+  maturity: live-proven
+  v1: MISSING
+
+- id: pond-security
+  name: Pond security & trust
+  kind: route-cluster
+  what: >
+    The whole trust lifecycle, kept deliberately reachable over plain HTTP
+    (bootstrap path): init (create CA + TOTP URI, optional generated
+    XKCD passphrase), ceremony (step-wise koi ceremony protocol), join
+    (TOTP + CSR-only enrollment — CA never sees the private key), invite
+    (enrollment window), unlock (passphrase/TOTP; MyOrganization stays
+    locked), renew, rename, promote (X25519 key exchange), untrust (revoke),
+    remove, status (stones + own identity health incl. leaf expiry days),
+    ca.pem download for manual trust install. Split listener model: HTTP
+    :7185 lobby stays open for bootstrap/recovery; full API moves to HTTPS
+    :7183; mutating stone/garden routes verify clear-signed envelopes
+    (enforce_envelope middleware, gated by ZG_POND_ENFORCE).
+  how: >
+    All handlers delegate to koi-certmesh; CertmeshError maps to precise HTTP
+    statuses (LOCKED, 429 with retry-after seconds, enrollment closed...).
+    pond/sign exists as a loopback-only signing oracle on its own listener.
+  evidence:
+    - "src/poc/moss/src/bootstrap/router.rs:13-17,318-345 — lobby rationale comment"
+    - "src/poc/moss/src/api/v1/pond.rs:200-254 — certmesh error mapping"
+    - "src/poc/moss/src/api/v1/pond.rs:459-474 — loopback-only sign oracle doc"
+    - "src/poc/moss/src/bootstrap/router.rs:376-379 — envelope enforcement middleware"
+  gaps:
+    - "Pond page + all pond routes unadvertised in the manifest"
+    - "status identity health only; no garden-wide trust posture view"
+  maturity: live-proven
+  v1: MISSING
+
+- id: logical-sets
+  name: Logical sets (elected offering groups + bank sets)
+  kind: route-cluster
+  what: >
+    ARCH-0038 first-class replication groups: /sets index (static kinds list),
+    offering sets (same-FQN instances across stones where coordination=Elected
+    and at least one running; role per member; orchestrator-registered
+    uri_template preferred for connection strings), bank sets (same
+    replica_set_name). Pure projections from the registry hotcache — no
+    fan-out.
+  how: >
+    Membership walk deliberately avoids category pre-filtering (registry
+    carries manifest categories, not the literal 'offering') — coordination
+    lookup via catalog is the real gate (sets/offerings.rs:186-193).
+  evidence:
+    - "src/poc/moss/src/api/v1/sets/offerings.rs:86-162 — list + detail with uri_template preference"
+    - "src/poc/moss/src/api/v1/sets/offerings.rs:347-398 — wire-shape pinning tests"
+  gaps:
+    - "No pagination; full registry walk per request (fine at garden scale)"
+  maturity: live-proven
+  v1: MISSING
+
+- id: tools-registry-surface
+  name: Garden tools registry & stream
+  kind: route-cluster
+  what: >
+    The unified garden inventory: GET /garden/tools returns a cursor + tools
+    (filter by fqid/category/status/capability selectors 'type:item') with
+    optional delta replay since a cursor; /garden/tools/stream is SSE with
+    snapshot + replay + live deltas + 15s heartbeats and Last-Event-ID (or
+    ?since) resume mapping event ids back to cursors; /stone/tools/{fqid} is
+    the singular lookup across Local/Gateway/Announced origins.
+  how: >
+    Deltas flow from the Tool aggregate's broadcast; SSE events carry
+    event ids; capability filter syntax 'model:llama3,nomic-embed' parsed with
+    400 INVALID_CAPABILITY_FILTER on malformed selectors.
+  evidence:
+    - "src/poc/moss/src/api/v1/tools.rs:97-204 — SSE composition (snapshot/replay/live/heartbeat)"
+    - "src/poc/moss/src/api/v1/tools.rs:236-270 — capability selector parsing"
+  gaps:
+    - "/stone/tools/{fqid} returns BARE GardenTool while /garden/tools is wrapped — drift within one module"
+    - "get_tool_v1 takes tools.pop() — last match wins, arbitrary if multiple stones hold the fqid"
+  maturity: live-proven
+  v1: MISSING
+
+- id: updates-nourishment
+  name: Nourishment (updates check/execute, stone + garden)
+  kind: route-cluster
+  what: >
+    Check for offering (Docker registry) + firmware (fwupd/LVFS) updates with
+    hardware-constraint blocking; execute by scope (all/offerings/firmware;
+    moss self-update handled separately via stone/deploy); garden variants
+    fan out to all stones in parallel (query each /stone/updates, dispatch
+    signed execute to affected ones) and report per-stone job ids. SSE
+    /stone/updates/stream/{job_id} for progress.
+  how: >
+    Garden execute first polls every stone's check endpoint, filters to
+    stones with scope-matching updates, then signs and POSTs execute to each;
+    per-stone result carries state Running/Failed/Unreachable.
+  evidence:
+    - "src/poc/moss/src/api/v1/updates.rs:107-138 — parallel check fan-out"
+    - "src/poc/moss/src/api/v1/updates.rs:281-378 — signed dispatch, serialize-once sign-same-bytes"
+  gaps:
+    - "UpdateScope::Moss maps to (false,false) — silently no-ops in execute_stone (updates.rs:435)"
+    - "garden/updates silently drops unreachable stones from the response (no per-stone status)"
+  maturity: live-proven
+  v1: MISSING
+
+# ===========================================================================
+# ADVERTISED vs ROUTED (the L7 drift table, computed above)
+# ===========================================================================
+advertised_vs_routed:
+  advertised_unique_paths: 27
+  advertised_stale_paths:
+    - "/capabilities (manifest.rs:41 → real /api/v1/stone/capabilities)"
+    - "/resources (manifest.rs:52 → real /api/v1/stone/resources)"
+    - "/api/v1/offerings (manifest.rs:124 → real /api/v1/stone/offerings)"
+    - "/api/v1/offerings/search (manifest.rs:136)"
+    - "/api/v1/offerings/:name DELETE (manifest.rs:163)"
+    - "/api/v1/services (manifest.rs:176 → real /api/v1/stone/services)"
+    - "/api/v1/services/:service/logs (manifest.rs:189)"
+  duplicated_advertisements:
+    - "/api/v1/stone/presence/stream appears in both 'stone' and 'events' categories (manifest.rs:240,301)"
+  unadvertised_but_routed_count: "~195 of ~215 method-pairs (all of: pages, greenhouse, offering volumes/capabilities/snapshots, adoption, volumes-I/O, garden_storage data plane, webdav, s3 gateway, sets, tools, jobs list/stream, logs, maintenance, nurturing snapshots, presence snapshot/notify, pulse stream, storage estate, console POST, most admin, most pond, companions up/down/refresh, config PATCH/DELETE, services mutations, gateway, resources, updates stone-local)"
+
+# ===========================================================================
+# V1 COVERAGE SUMMARY (v1 Face = 21 rows; user's listed set + captureLast + replant)
+# ===========================================================================
+v1_coverage:
+  yes:
+    - "/health ↔ /health"
+    - "/api/v1 front door ↔ /api/v1/manifest (v1's is generated-truth, PoC's rots)"
+    - "/api/v1/garden/storage ↔ /api/v1/garden/storage (list; PoC adds full data plane)"
+    - "/api/v1/offerings/{fqn} plant/show/uproot ↔ /stone/offerings POST/GET/DELETE + /stone/services rest/wake"
+  partial:
+    - "/api/v1/stone (SelfView) ↔ PoC /api/v1/stone returns HardwareCapabilities only"
+    - "/api/v1/garden/stones ↔ PoC /garden + /garden/topology (different shapes, no canonical frame)"
+    - "/api/v1/catalog ↔ PoC /stone/offerings + greenhouse catalog"
+    - "/api/v1/storage (list+adoptable) ↔ PoC /stone/storage + /stone/storage/candidates"
+    - "/api/v1/storage/adopt ↔ PoC /stone/storage/add (richer: format flags, prepare guard)"
+    - "/api/v1/storage/{fqn}/roles ↔ PoC /stone/storage/banks/{name}/roles"
+    - "/offerings/{fqn}/capture(+last) ↔ PoC /stone/offerings/{name}/snapshots (bank targets, artifacts, cross-stone)"
+    - "/offerings/{fqn}/replant ↔ PoC /stone/offerings/{name}/plant (cross-stone, fork via as_fqn)"
+  missing_in_v1:
+    - "/stone/{ref} knows_at redirect (PoC /garden/stones/{name} just 404s peers)"
+    - "/stone/posture aggregate"
+    - "pulse/presence/metrics/logs/tools/storage SSE event streams"
+    - "metrics/tasks observability aggregate"
+    - "garden storage data plane (/fs, /objects, /snapshots, /dav, S3 gateway, presign)"
+    - "jobs registry + per-job SSE"
+    - "companions + command passthrough"
+    - "pond security suite + loopback sign oracle + envelope enforcement"
+    - "offering capabilities discovery/mirror + volumes file I/O"
+    - "admin power/self-update + greenhouse authoring + logical sets + adoption/borrowing"

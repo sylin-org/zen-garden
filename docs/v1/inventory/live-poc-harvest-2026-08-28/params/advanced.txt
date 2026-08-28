@@ -1,0 +1,20 @@
+=== nourish (read-only check via --updates-only) ===
+✓ Command manifest validated: 36 commands registered
+
+╭─ Stone: stone-obsidian-summit ─╮
+
+📦 Garden-wide Update Status
+
+Summary: 6 available, 2 blocked
+
+───────────────────────────────────────────────
+
+=== watch offering mongodb ===
+✓ Command manifest validated: 36 commands registered
+Error: Usage: garden-rake watch offering <name> logs
+=== watch stone logs ===
+✓ Command manifest validated: 36 commands registered
+error: the following required arguments were not provided:
+  <name>
+
+Usage: garden-rake watch stone <name>

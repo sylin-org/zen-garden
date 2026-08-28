@@ -217,9 +217,24 @@ impl Topology {
                 fresh.meta = frame.meta.clone();
                 fresh.inventory.merge_frame(&frame.inventory);
                 fresh.received.last_seen = msg.received_at;
-                // The stone spoke for itself: any rumor about it is
-                // redundant (ADR-0004 §3 — promotion by first live frame).
-                self.candidates.lock().remove(&frame.stone.id);
+                // The stone spoke for itself: the rumor retires (ADR-0004
+                // §3 — promotion by first live frame) — but the rumor's
+                // rich answer may be all anyone knows about this stone's
+                // inventory: a lean first frame carries revs without
+                // items, and dropping the answer would seat a bankless
+                // stone until its inventory next changes (which, on a
+                // quiet stone, is never). Fill from the rumor where the
+                // frame speaks the same generation thin, then forget it.
+                let rumor = self.candidates.lock().remove(&frame.stone.id);
+                if let Some(rumor) = rumor {
+                    tracing::debug!(
+                        stone = %frame.stone.name,
+                        rumor_banks = rumor.response.inventory.banks.as_ref().map(|b| b.items.len()).unwrap_or(0),
+                        frame_banks_rev = ?frame.inventory.banks.as_ref().and_then(|b| b.rev),
+                        "promoting a rumor beside its stone's first frame"
+                    );
+                    fresh.inventory.fill_rumor(&rumor.response.inventory);
+                }
                 TopologyEvent::Seen(Box::new(StoneView {
                     body: frame,
                     last_seen: entry.last_seen,
@@ -584,6 +599,62 @@ mod tests {
         // membership) — settle by time.
         tokio::time::sleep(Duration::from_millis(100)).await;
         let _ = topology; // symmetry with speak()
+    }
+
+    /// A rich answer that carries the stone's banks (the boot ask's
+    /// whole point: a newcomer learns the room's storage in one round).
+    fn banked_answer(id: &str) -> DiscoveryResponse {
+        let mut a = answer(id, "stone-rumor");
+        a.inventory.banks = Some(Inventory {
+            rev: Some(1),
+            total: None,
+            items: vec![garden_contract::chirp::BankEntry {
+                fqn: "seed-vault::default".into(),
+                device_id: "dev-1".into(),
+                state: "mounted".into(),
+                roles: vec![],
+                capacity_bytes: Some(1000),
+                used_bytes: Some(10),
+            }],
+        });
+        a
+    }
+
+    /// The late-joiner's convergence (witnessed live in the room): the
+    /// boot ask's rich answer lands as a rumor, then the stone's first
+    /// LEAN frame — revs without items — seats the peer. The rumor's
+    /// inventory must survive promotion, or the room seats a bankless
+    /// stone until its inventory next changes (which, on a quiet stone,
+    /// is never).
+    #[tokio::test]
+    async fn the_boot_answers_banks_survive_a_thin_first_frame() {
+        let (dispatcher, handle) = Dispatcher::new(16);
+        let topology = Arc::new(Topology::new());
+        let token = CancellationToken::new();
+        topology.claim(&dispatcher, token.clone());
+        tokio::spawn(handle.run(token.clone()));
+
+        overhear(&topology, &dispatcher, &banked_answer("r1")).await;
+        let mut lean = frame("r1", None);
+        lean.inventory.banks =
+            Some(Inventory { rev: Some(1), total: None, items: Vec::new() });
+        speak(&topology, &dispatcher, announcement::STONE_CHIRP, lean).await;
+
+        let stored = topology
+            .snapshot()
+            .into_iter()
+            .find(|v| v.body.stone.id == "r1")
+            .expect("peer seated by its first frame");
+        let banks = stored.body.inventory.banks.expect("banks block present");
+        assert_eq!(
+            banks.items.len(),
+            1,
+            "the rumor's banks survive the thin first frame"
+        );
+        assert_eq!(banks.items[0].fqn, "seed-vault::default");
+        assert_eq!(banks.rev, Some(1), "the equal-rev fill kept the rumor's rev");
+        assert!(topology.candidates().is_empty(), "the rumor retires");
+        token.cancel();
     }
 
     #[tokio::test]

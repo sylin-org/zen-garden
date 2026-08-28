@@ -558,6 +558,74 @@ impl Cli {
         .await
         .map(|(cand, (status, bytes))| (cand, status, bytes))
     }
+
+    /// The file verbs' front door. A bank grows on ONE stone: when the
+    /// attached moss answers not-here (the garden's only true redirect),
+    /// this follows the `knows_at` way ONCE and re-binds there — reads
+    /// delegate, writes bind at their authority. The home stone's answer
+    /// is final: it owns the bank, so its refusals are the bank's truth,
+    /// and a redirect loop is refused, never chased.
+    async fn bank_bytes(
+        &self,
+        method: &'static str,
+        path: String,
+        body: Option<Vec<u8>>,
+    ) -> Result<(Candidate, u16, Vec<u8>), String> {
+        let (cand, status, bytes) =
+            self.stone_bytes(method, path.clone(), body.clone()).await?;
+        let Some(home) = not_here_home(status, &bytes) else {
+            return Ok((cand, status, bytes));
+        };
+        eprintln!("rake: the bank grows elsewhere - asking {home}");
+        let (status, bytes) = reissue_at_home(method, &home, &path, body.as_deref()).await?;
+        Ok((cand, status, bytes))
+    }
+}
+
+/// The garden's only true redirect, recognized: a 404 whose body says
+/// `not_here` and names the holder's `knows_at`. Any other answer is the
+/// answer.
+fn not_here_home(status: u16, body: &[u8]) -> Option<String> {
+    if status != 404 {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    if v["error"]["not_here"] != true {
+        return None;
+    }
+    v["error"]["knows_at"].as_str().map(str::to_string)
+}
+
+/// The holder's way (`http://ip:port/api/v1/stone`) as an endpoint.
+fn parse_http_home(home: &str) -> Result<(IpAddr, u16), String> {
+    let rest = home
+        .strip_prefix("http://")
+        .ok_or_else(|| format!("knows_at '{home}' is not a plain-http way"))?;
+    let authority = rest.split('/').next().unwrap_or(rest);
+    parse_ip_port(authority)
+        .ok_or_else(|| format!("knows_at '{home}' carries an unreadable address"))
+}
+
+/// One raw re-request against the named home stone. An unreachable home
+/// aborts loudly — the room named the holder, there is no softer target.
+async fn reissue_at_home(
+    method: &str,
+    home: &str,
+    path: &str,
+    body: Option<&[u8]>,
+) -> Result<(u16, Vec<u8>), String> {
+    let (ip, port) = parse_http_home(home)?;
+    moss_http::request_bytes(
+        method,
+        ip,
+        port,
+        path,
+        Some("application/octet-stream"),
+        body,
+        MUTATION_HTTP_TIMEOUT,
+    )
+    .await
+    .map_err(|e| format!("the bank's home stone at {home} did not answer: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -748,7 +816,12 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
             if let Some(dir) = path {
                 target = format!("{}?path={}", target, paths::encode_segment(dir));
             }
-            let (_, v) = cli.stone_op("GET", target, None).await?;
+            let (_, status, body) = cli.bank_bytes("GET", target, None).await?;
+            if status != 200 {
+                return Err(raw_refusal(status, &body));
+            }
+            let v: serde_json::Value = serde_json::from_slice(&body)
+                .map_err(|e| format!("moss answered unparsable: {e}"))?;
             if cli.json {
                 return emit_output(&v, cli);
             }
@@ -758,7 +831,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
             // The file IS the output — --json has nothing to re-render,
             // so the raw bytes ride to --out or stdout untouched.
             let (_, status, bytes) =
-                cli.stone_bytes("GET", paths::storage_file(bank, path), None).await?;
+                cli.bank_bytes("GET", paths::storage_file(bank, path), None).await?;
             if status != 200 {
                 return Err(raw_refusal(status, &bytes));
             }
@@ -779,7 +852,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
         Some(StorageCmd::Put { bank, path, file }) => {
             let bytes = read_local(file)?;
             let (_, status, body) = cli
-                .stone_bytes("PUT", paths::storage_file(bank, path), Some(bytes))
+                .bank_bytes("PUT", paths::storage_file(bank, path), Some(bytes))
                 .await?;
             if status != 200 {
                 return Err(raw_refusal(status, &body));
@@ -800,7 +873,7 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
         }
         Some(StorageCmd::Rm { bank, path }) => {
             let (_, status, body) =
-                cli.stone_bytes("DELETE", paths::storage_file(bank, path), None).await?;
+                cli.bank_bytes("DELETE", paths::storage_file(bank, path), None).await?;
             if status != 200 {
                 return Err(raw_refusal(status, &body));
             }
@@ -1620,6 +1693,65 @@ mod tests {
             "nothing answers at 'x' on this bank"
         );
         assert_eq!(raw_refusal(502, b"<html>gateway</html>"), "HTTP 502");
+    }
+
+    /// The garden's only true redirect, client-side: a 404 that says
+    /// `not_here` names the holder, anything else is the answer, and the
+    /// way parses into an endpoint.
+    #[test]
+    fn not_here_answers_are_recognized_and_the_way_parses() {
+        let body = br#"{"error":{"not_here":true,"bank":"seed-vault::default","knows_at":"http://192.168.1.50:7285/api/v1/stone","message":"That bank does not grow here."}}"#;
+        let home = not_here_home(404, body).unwrap();
+        assert_eq!(home, "http://192.168.1.50:7285/api/v1/stone");
+
+        assert_eq!(not_here_home(200, body), None, "only a 404 redirects");
+        assert_eq!(
+            not_here_home(404, br#"{"error":{"message":"a plain miss"}}"#),
+            None,
+            "a plain 404 is not a redirect"
+        );
+
+        let (ip, port) = parse_http_home(&home).unwrap();
+        assert_eq!(ip.to_string(), "192.168.1.50");
+        assert_eq!(port, 7285);
+        assert!(parse_http_home("ftp://192.168.1.50:7285/stone").is_err());
+        assert!(parse_http_home("http://unreadably-broken").is_err());
+    }
+
+    /// The follow itself over a real socket: the re-request speaks HTTP
+    /// to the holder and the bytes ride home.
+    #[tokio::test]
+    async fn reissue_speaks_to_the_home_stone() {
+        use std::net::Ipv4Addr;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let n = sock.read(&mut buf).await.unwrap();
+            let got = String::from_utf8_lossy(&buf[..n]).into_owned();
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello")
+                .await
+                .unwrap();
+            got
+        });
+        let home = format!("http://127.0.0.1:{port}/api/v1/stone");
+        let (status, bytes) = reissue_at_home(
+            "GET",
+            &home,
+            "/api/v1/storage/seed-vault%3A%3Adefault/files/x.txt",
+            None,
+        )
+        .await
+        .unwrap();
+        let seen = server.await.unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(bytes, b"hello");
+        assert!(
+            seen.starts_with("GET /api/v1/storage/seed-vault%3A%3Adefault/files/x.txt HTTP/1.1"),
+            "the wire path arrives as spelled: {seen}"
+        );
     }
 
     #[test]

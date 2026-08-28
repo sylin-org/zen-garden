@@ -183,8 +183,11 @@ impl Storage {
                 ));
             }
         }
+        let canonical = garden_glossary::fqn::canonicalize(fqn).map_err(|_| {
+            format!("'{fqn}' is not a bank name - banks speak the FQN grammar (stem::instance)")
+        })?;
         let mut banks = self.banks.lock();
-        let Some(bank) = banks.get_mut(fqn) else {
+        let Some(bank) = banks.get_mut(&canonical) else {
             return Ok(None);
         };
         bank.roles = roles;

@@ -239,19 +239,22 @@ impl Face {
             }
             Face::StorageFileList => {
                 "List a bank directory (optional ?path= subdirectory): the files riding \
-                 the volume, minus the adoption record."
+                 the volume, minus the adoption record. A bank held by a peer answers \
+                 the garden's redirect (knows_at)."
             }
             Face::StorageFileGet => {
                 "Read one file from a bank: the raw bytes, content-type guessed from the \
-                 extension. The path is relative to the bank's root."
+                 extension; the path is relative to the bank's root. A peer's bank \
+                 answers the garden's redirect (knows_at)."
             }
             Face::StorageFilePut => {
-                "Write one file onto a bank: the raw body, parent directories created. \
-                 Makes a sink a real storage destination."
+                "Write one file onto a bank: the raw body, parent directories created - \
+                 makes a sink a real storage destination. A peer's bank answers the \
+                 garden's redirect (knows_at); writes bind at their authority."
             }
             Face::StorageFileDelete => {
                 "Delete one file from a bank. Directories refuse - wholesale removal is \
-                 the operator's hand."
+                 the operator's hand. A peer's bank answers the garden's redirect."
             }
             Face::GardenStorage => {
                 "Garden data (L22): every bank in the room, self included, from the one cache."
@@ -712,6 +715,9 @@ async fn storage_roles(
 // The gate is one: `Storage::bank_root` resolves the FQN to a mounted
 // volume; `safe_join` keeps every path under it. The adoption record
 // (`.zen-garden`) is ceremony-owned and never crosses this surface.
+// And a bank grows on ONE stone: a file request landing where the volume
+// is not is answered with the garden's only true redirect (ADR-0004 §4
+// — reads delegate and writes bind at their authority).
 
 /// The one mapping from the storage domain's file refusals onto the
 /// command taxonomy (each refuses as it truly is — R3.3).
@@ -731,16 +737,93 @@ fn files_err(e: crate::offerings::storage::FilesError) -> CommandError {
     }
 }
 
+/// The files faces' shared gate: resolve a bank FQN to its volume root
+/// HERE, or hand back the answer the request deserves instead. Local
+/// presence wins — the authority is the volume in the slot, and an
+/// ejected bank is refused HERE even if the cache remembers it elsewhere
+/// (the adoption record is local truth). Only a bank this stone never
+/// adopted consults the room.
+fn gate_bank(
+    state: &AppState,
+    fqn: &str,
+) -> Result<(crate::offerings::storage::Bank, std::path::PathBuf), Box<axum::response::Response>>
+{
+    use crate::offerings::storage::FilesError;
+    match state.storage.bank_root(fqn) {
+        Ok(pair) => Ok(pair),
+        Err(FilesError::UnknownBank(_)) => Err(Box::new(bank_not_here(state, fqn))),
+        Err(e) => Err(Box::new(ApiError::from(files_err(e)).into_response())),
+    }
+}
+
+/// Who holds this bank, as the room's cache hears it — the addressee of
+/// a not-here answer. Self never appears: the caller asked the local
+/// vault first.
+fn bank_holder(state: &AppState, fqn: &str) -> Option<String> {
+    for peer in state.topology.snapshot() {
+        let Some(banks) = &peer.body.inventory.banks else {
+            continue; // the stone says nothing about banks
+        };
+        if banks.items.iter().any(|b| b.fqn == fqn) {
+            let address = &peer.body.stone.network.address;
+            return Some(format!(
+                "http://{}:{}/api/v1/stone",
+                address.ip, address.port
+            ));
+        }
+    }
+    None
+}
+
+/// The not-here answer for a bank that grows elsewhere (1:1 with the
+/// stone face's): 404, a Location header, and `knows_at` naming the
+/// holder. A bank NOBODY holds is a plain 404 — the room was consulted
+/// and keeps its silence.
+fn bank_not_here(state: &AppState, fqn: &str) -> axum::response::Response {
+    let canonical = garden_glossary::fqn::canonicalize(fqn).unwrap_or_else(|_| fqn.to_string());
+    match bank_holder(state, &canonical) {
+        Some(knows_at) => (
+            axum::http::StatusCode::NOT_FOUND,
+            [(axum::http::header::LOCATION, knows_at.clone())],
+            Json(serde_json::json!({
+                "error": {
+                    "not_here": true,
+                    "bank": canonical,
+                    "knows_at": knows_at,
+                    "message": "That bank does not grow here. Its home stone answers at \
+                                `knows_at` - files bind at their authority."
+                }
+            })),
+        )
+            .into_response(),
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": {
+                    "message": format!(
+                        "no bank '{canonical}' is adopted here, and the room's cache knows no \
+                         holder - rake storage lists what this stone holds"
+                    )
+                }
+            })),
+        )
+            .into_response(),
+    }
+}
+
 /// List a bank directory (`?path=` names a subdirectory; absent = the
 /// bank's root).
 async fn storage_files_list(
     State(state): State<Arc<AppState>>,
     Path(fqn): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-) -> ApiResult {
+) -> Result<axum::response::Response, ApiError> {
     use crate::offerings::storage::{list_dir, safe_join};
     let rel = params.get("path").map(String::as_str).unwrap_or("");
-    let (bank, root) = state.storage.bank_root(&fqn).map_err(files_err)?;
+    let (bank, root) = match gate_bank(&state, &fqn) {
+        Ok(pair) => pair,
+        Err(answer) => return Ok(*answer),
+    };
     let dir = if rel.is_empty() {
         root.clone()
     } else {
@@ -749,7 +832,8 @@ async fn storage_files_list(
     let files = list_dir(&root, &dir).map_err(files_err)?;
     Ok(Json(
         serde_json::json!({ "data": { "bank": bank.fqn, "path": rel, "files": files } }),
-    ))
+    )
+        .into_response())
 }
 
 /// Read one file from a bank: the raw bytes ride alone, content-type
@@ -760,7 +844,10 @@ async fn storage_file_get(
     Path((fqn, rel)): Path<(String, String)>,
 ) -> Result<axum::response::Response, ApiError> {
     use crate::offerings::storage::{read_file, safe_join};
-    let (_, root) = state.storage.bank_root(&fqn).map_err(files_err)?;
+    let (_, root) = match gate_bank(&state, &fqn) {
+        Ok(pair) => pair,
+        Err(answer) => return Ok(*answer),
+    };
     let path = safe_join(&root, &rel).map_err(files_err)?;
     let bytes = read_file(&root, &path).map_err(files_err)?;
     Ok((
@@ -775,30 +862,38 @@ async fn storage_file_put(
     State(state): State<Arc<AppState>>,
     Path((fqn, rel)): Path<(String, String)>,
     body: axum::body::Bytes,
-) -> ApiResult {
+) -> Result<axum::response::Response, ApiError> {
     use crate::offerings::storage::{safe_join, write_file};
-    let (bank, root) = state.storage.bank_root(&fqn).map_err(files_err)?;
+    let (bank, root) = match gate_bank(&state, &fqn) {
+        Ok(pair) => pair,
+        Err(answer) => return Ok(*answer),
+    };
     let path = safe_join(&root, &rel).map_err(files_err)?;
     let n = write_file(&root, &path, &body).map_err(files_err)?;
     tracing::info!(bank = %bank.fqn, path = %rel, bytes = n, "file written onto a bank");
     Ok(Json(
         serde_json::json!({ "data": { "bank": bank.fqn, "path": rel, "size_bytes": n } }),
-    ))
+    )
+        .into_response())
 }
 
 /// Delete one file from a bank.
 async fn storage_file_delete(
     State(state): State<Arc<AppState>>,
     Path((fqn, rel)): Path<(String, String)>,
-) -> ApiResult {
+) -> Result<axum::response::Response, ApiError> {
     use crate::offerings::storage::{delete_file, safe_join};
-    let (bank, root) = state.storage.bank_root(&fqn).map_err(files_err)?;
+    let (bank, root) = match gate_bank(&state, &fqn) {
+        Ok(pair) => pair,
+        Err(answer) => return Ok(*answer),
+    };
     let path = safe_join(&root, &rel).map_err(files_err)?;
     delete_file(&root, &path).map_err(files_err)?;
     tracing::info!(bank = %bank.fqn, path = %rel, "file deleted from a bank");
     Ok(Json(
         serde_json::json!({ "data": { "bank": bank.fqn, "path": rel, "deleted": true } }),
-    ))
+    )
+        .into_response())
 }
 
 /// A small honest content-type table — extension guessed, everything else
@@ -1766,6 +1861,73 @@ mod tests {
         assert_eq!(res.status(), StatusCode::CONFLICT);
         let res = send(&app, "DELETE", &format!("{base}/dumps")).await;
         assert_eq!(res.status(), StatusCode::CONFLICT);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A bank grows on ONE stone: the files faces landing where the
+    /// volume is not answer the garden's only true redirect — 404, a
+    /// Location, and `knows_at` naming the holder (1:1 with the stone
+    /// face). Writes bind the same way; a bank nobody holds is a plain
+    /// 404; local presence beats the room's stale claim.
+    #[tokio::test]
+    async fn a_peers_bank_teaches_the_way() {
+        let state = test_state();
+        // The peer's song carries seed-vault::default at 192.168.1.50.
+        wire_peer(&state.topology, sample_peer()).await;
+        let app = router(state);
+        let base = "/api/v1/storage/seed-vault/files";
+
+        let res = send(&app, "GET", base).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        let location = res
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .expect("the way is named")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(location, "http://192.168.1.50:7285/api/v1/stone");
+
+        let mut res = send(&app, "GET", base).await;
+        let v = body_json(&mut res).await;
+        assert_eq!(v["error"]["not_here"], true);
+        assert_eq!(v["error"]["bank"], "seed-vault::default");
+        assert_eq!(v["error"]["knows_at"], location);
+
+        let res = send_bytes(&app, "PUT", &format!("{base}/notes.txt"), b"x").await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "writes redirect too");
+        assert_eq!(
+            res.headers().get(axum::http::header::LOCATION).unwrap(),
+            "http://192.168.1.50:7285/api/v1/stone"
+        );
+
+        let res = send(&app, "GET", "/api/v1/storage/ghost/files").await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "nobody holds it");
+        assert!(res.headers().get(axum::http::header::LOCATION).is_none());
+
+        // Local presence wins: the same FQN adopted HERE answers HERE,
+        // even though the peer's song claims the name too.
+        let state = test_state();
+        let tmp = std::env::temp_dir().join(format!("zg-local-wins-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        state
+            .storage
+            .adopt(
+                &crate::offerings::storage::VolumeFact {
+                    mount_point: tmp.clone(),
+                    device_id: None,
+                    fqn: None,
+                    capacity_bytes: 1,
+                    available_bytes: 1,
+                },
+                "seed-vault",
+                "0198e0c7-0000-7000-8000-000000000001",
+            )
+            .unwrap();
+        wire_peer(&state.topology, sample_peer()).await;
+        let app = router(state);
+        let res = send(&app, "GET", base).await;
+        assert_eq!(res.status(), StatusCode::OK, "the volume is in MY slot");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

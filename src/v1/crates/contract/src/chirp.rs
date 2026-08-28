@@ -207,23 +207,21 @@ impl InventoryMap {
     /// blocks merge by their embedded `rev` when comparable.
     pub fn merge_frame(&mut self, newer: &InventoryMap) {
         // Typed domains merge by per-block revision; absent key keeps what
-        // we have; a present block's rev speaks.
+        // we have; a present block's rev speaks. Within ONE rev the lean
+        // voice carries the rev without items and the full voice carries
+        // the set — so at equal revs the richer block fills the thinner:
+        // an equal rev is one generation of truth, and a generation's
+        // content only grows. (A lean heartbeat must never wipe what an
+        // answer or a song taught; an equal-rev answer must be able to
+        // teach a lean-seated stone.)
         if let Some(n) = &newer.services {
-            let stale = self
-                .services
-                .as_ref()
-                .and_then(|m| m.rev)
-                .is_some_and(|old| n.rev.is_some_and(|new| new <= old));
+            let stale = stale_replace(self.services.as_ref(), n);
             if !stale {
                 self.services = Some(n.clone());
             }
         }
         if let Some(n) = &newer.banks {
-            let stale = self
-                .banks
-                .as_ref()
-                .and_then(|m| m.rev)
-                .is_some_and(|old| n.rev.is_some_and(|new| new <= old));
+            let stale = stale_replace(self.banks.as_ref(), n);
             if !stale {
                 self.banks = Some(n.clone());
             }
@@ -234,6 +232,45 @@ impl InventoryMap {
         for (k, v) in &newer.extra {
             self.extra.insert(k.clone(), v.clone());
         }
+    }
+
+    /// The rumor's fill for a freshly-seated peer (the late-joiner's
+    /// convergence): the rich boot answer rides the candidate pool, and
+    /// the stone's first LEAN frame carries revs without items — so for
+    /// each typed domain, apply the rumor's block ONLY where the seated
+    /// frame speaks the same generation thin (equal rev, no items) or
+    /// stayed silent. A rumor from another generation (an older
+    /// incarnation relayed late) must not overwrite the stone's own
+    /// first-hand frame.
+    pub fn fill_rumor(&mut self, rumor: &InventoryMap) {
+        fill_domain(&mut self.services, &rumor.services);
+        fill_domain(&mut self.banks, &rumor.banks);
+    }
+}
+
+/// The per-domain staleness rule behind [`InventoryMap::merge_frame`]:
+/// a strictly older rev is stale; at an equal rev a block is stale
+/// unless it carries items the stored (thin) block lacks.
+fn stale_replace<T>(old: Option<&Inventory<T>>, new: &Inventory<T>) -> bool {
+    let Some(old) = old else { return false };
+    match (old.rev, new.rev) {
+        (Some(o), Some(n)) if n < o => true,
+        (Some(o), Some(n)) if n == o => !old.items.is_empty() || new.items.is_empty(),
+        _ => false,
+    }
+}
+
+/// One domain's [`InventoryMap::fill_rumor`] rule: silent keeps silence;
+/// same-generation-thin takes the rumor's set; anything else keeps the
+/// frame's own word.
+fn fill_domain<T: Clone>(dst: &mut Option<Inventory<T>>, rumor: &Option<Inventory<T>>) {
+    let Some(r) = rumor else { return };
+    let applies = match dst {
+        None => true,
+        Some(cur) => cur.rev == r.rev && cur.items.is_empty() && !r.items.is_empty(),
+    };
+    if applies {
+        *dst = Some(r.clone());
     }
 }
 

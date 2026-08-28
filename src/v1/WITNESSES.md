@@ -183,3 +183,65 @@ absent from this witness, joinable later by the same procedure).
   `seed-vault::default` is ejected in tranquil-pass's boot ledger (remount
   the drive's slot or reboot to re-mount); binaries + identities live at
   `~/zen-v1/` on both live stones; 192.168.1.82 awaits the same swap.
+
+---
+
+## W7 — the night the drive died, replayed honestly (2026-08-28)
+
+The living will, witnessed live on the fleet. The demo the charter calls
+the niche-defining moment: kill the stone, watch the garden regrow the
+service, connection string unchanged.
+
+- **The stage**: `witness-db::garden` (redis:7-alpine) planted on
+  stone-crystalline-dune (192.168.1.111) from a catalog manifest that
+  DECLARES a will: `lock-and-copy`, quiesce `redis-cli SAVE`, resume
+  `redis-cli PING`, `max_locked_s: 60`. Ledgered home **:7301** (address
+  drawn by the arbiter, ADR-0002). Data written into the volume:
+  `will.txt` and the redis key `will = "survives"`.
+- **The will is read and executed**: POST capture -> quiesce (SAVE) ->
+  imprint (raw copy of the volume) -> resume (finally-style) -> pack
+  (tar.zst + SHA-256 manifest) -> **ferried to the seed bank**
+  (`seed-gentle-valley::default` on the SanDisk, roles: sink) ->
+  committed atomically. `phase: done`.
+- **Findings during the run** (the fleet teaches):
+  - redis's SAVE recreates `dump.rdb` as the container-internal user,
+    mode 0600 - the imprint correctly REFUSED to copy what it cannot
+    read (torn copies are lies). The manifest's quiesce now opens the
+    files (`chmod -R a+rX /data` inside the lock). Correct behavior,
+    witnessed as designed. Debt recorded: imprint via `docker cp` for
+    internal-user-owned files (D16).
+  - bank roles live in memory per boot; roles re-declared after a moss
+    restart (roles persistence + declaration-on-adopt land later).
+  - emerald vale (192.168.1.82) had returned to the network carrying its
+    PoC-era name; the SanDisk moved onto it post-replant, and v1
+    RECOGNIZED the PoC-era manifest (version 4) across generations -
+    `seed-gentle-valley::default`, original GUIDv7 device id, mounted
+    (R0.5 + L5 in the field).
+- **THE MURDER**: stone-crystalline-dune powered off, no goodbye.
+  Verified: ping 100% loss, HTTP silent, soft presence holding (online
+  until the threshold - honest: the garden believes until silence proves
+  otherwise).
+- **THE REPLANT** on stone-tranquil-pass (192.168.1.195), one command:
+  select -> verify (archive + per-file SHA-256) -> restore the directory
+  -> place FROM THE STORED SPEC. The source checkpoint rode the
+  gposingway-seed bank on the survivor - the dead stone's own copy died
+  with it, which is exactly why sinks must be elsewhere.
+- **The proofs**:
+  - same FQN: `witness-db::garden` - status **running**;
+  - same ledgered home: port_map `{"client": 7301}` - the connection
+    string unchanged (allocations claimed ledger-first, ADR-0002);
+  - same identity: offering_id `01a045b7-0372-7522-a21d-cb5e85c940b2`
+    - the incarnation, not a copy;
+  - same data: redis answers `GET will` -> **"survives"**;
+  - the audit chain opens with `Replanted{predecessor_offering_id,
+    final_hash: 1fe9e406...}` - lineage in the tamper-evident ledger,
+    not tribal memory.
+- **Finding — rich replies carry services only**: emerald vale's newcomer
+  cache saw tranquil-pass's card but not its banks (the rich reply's
+  inventory block carries services; the inventory MAP belongs in the
+  reply per A2.1). Fix queued: reply carries the full InventoryMap;
+  on_response merges by rev into existing peers.
+- **State left behind**: witness-db::garden lives on stone-tranquil-pass;
+  crystalline-dune awaits its power button (rejoins as a peer); the
+  SanDisk rests on emerald vale with its PoC lineage intact; all three
+  live stones now run the living-will build.

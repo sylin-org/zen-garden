@@ -342,10 +342,39 @@ impl Storage {
 }
 
 /// Read the garden manifest off a volume, if one rides it.
+/// R0.5 (on-media is forever): a PoC-era manifest (version 4: {id, name,
+/// origin_stone, created_at, ...}) is RECOGNIZED, not ignored - the drive
+/// keeps its lineage and the garden regains its old banks.
 fn read_manifest(mount: &Path) -> Option<BankManifest> {
     let file = mount.join(MANIFEST_DIR).join(MANIFEST_FILE);
     let bytes = std::fs::read(file).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    if let Ok(m) = serde_json::from_slice::<BankManifest>(&bytes) {
+        return Some(m);
+    }
+    let poc: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let device_id = poc["id"].as_str()?.to_string();
+    let name = poc["name"].as_str()?;
+    // The PoC named banks poetically without instances; v1's grammar
+    // gives every name its communal ::default (ADR-0003).
+    let fqn = garden_glossary::fqn::canonicalize(name).ok()?;
+    let adopted_at = poc["created_at"]
+        .as_str()
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .map(|t| t.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now);
+    tracing::info!(
+        bank = %fqn,
+        device = %device_id,
+        origin = poc["origin_stone"].as_str().unwrap_or("?"),
+        "recognized a PoC-era bank manifest; its lineage rides along"
+    );
+    Some(BankManifest {
+        device_id,
+        fqn,
+        stone_id: poc["origin_stone"].as_str().unwrap_or("unknown").to_string(),
+        adopted_at,
+        proto: format!("poc/{}", poc["version"].as_u64().unwrap_or(4)),
+    })
 }
 
 /// Scan removable volumes (the edge: sysinfo refresh). Returns facts for
@@ -426,6 +455,44 @@ mod tests {
         assert_eq!(manifest.device_id, bank.device_id);
 
         assert_ne!(*signal.borrow(), before, "adoption must bump");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn poc_era_manifests_are_recognized_across_generations() {
+        // R0.5: a drive adopted by the POc carries {version, id, name,
+        // origin_stone, ...} - v1 reads what the PoC wrote, in the field.
+        let tmp = std::env::temp_dir().join(format!("zg-poc-man-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(tmp.join(".zen-garden")).unwrap();
+        std::fs::write(
+            tmp.join(".zen-garden").join("manifest.json"),
+            br#"{
+  "version": 4,
+  "id": "019cd3c0-fe39-7dd0-a8f8-3c805a0a23aa",
+  "name": "seed-gentle-valley",
+  "visibility": "open",
+  "origin_stone": "stone-azure-pool",
+  "filesystem": "unknown",
+  "created_at": "2026-03-09T17:59:26.521282400Z",
+  "encrypted": false,
+  "roles": []
+}"#,
+        )
+        .unwrap();
+
+        let vol = vol(tmp.to_str().unwrap(), false);
+        let vol = VolumeFact {
+            device_id: Some("019cd3c0-fe39-7dd0-a8f8-3c805a0a23aa".into()),
+            fqn: Some("seed-gentle-valley::default".into()),
+            ..vol
+        };
+        let storage = Storage::new();
+        storage.reconcile(&[vol]);
+
+        let banks = storage.banks();
+        assert_eq!(banks.len(), 1, "the old bank is recognized");
+        assert_eq!(banks[0].fqn, "seed-gentle-valley::default", "lineage restored");
+        assert_eq!(banks[0].state, garden_glossary::bank::MOUNTED);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

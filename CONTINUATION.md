@@ -43,6 +43,12 @@ One stone has 65-day uptime. Live-migration target confirmed.
 
 ## What to build next (priority order)
 
+**Standing rule — every slice below opens with THE SLICE MANDATE**
+(`docs/v1/CODE-RULES.md`, first section): prior art → the PoC's objective →
+the house's own history → design (DDD monolith, complexity at the seams) →
+verdicts on every PoC element. "Let's work on this" is a mandate to
+research first.
+
 ### 1 · Bank file operations
 CRUD on mounted bank filesystems. Makes a seed bank a real storage destination.
 - GET `/api/v1/storage/{fqn}/files` — list files on the bank
@@ -117,13 +123,14 @@ Live-migration target confirmed.
 
 1. `docs/v1/lessons.md` — L1–L26 normative
 2. `docs/v1/CHARTER.md` — accepted, amended; bets B1–B11
-3. `docs/v1/CODE-RULES.md` — P0–P5; R3.9 records-are-paths; R1.1 registers
+3. `docs/v1/CODE-RULES.md` — THE SLICE MANDATE (first section, governs how
+   every slice begins); then P0–P5; R3.9 records-are-paths; R1.1 registers
 4. `docs/v1/OFFERINGS.md` — offerings law (§5.1 layered catalogs, FQN namespace)
 5. `docs/v1/decisions/ADR-0001..0006` — directory, ports, FQN namespace,
    discovery envelope, living will, Suzu contract
 6. `src/v1/DEBT.md` (D1–D15; D14 closed), `src/v1/WITNESSES.md` (W1–W7)
 7. `docs/v1/inventory/poc-rake-surfaces.yaml` + `poc-moss-surfaces.yaml` —
-   deep PoC capability inventories
+   deep PoC capability inventories (gate 2 of the mandate)
 8. `docs/v1/design/poc-bring-assessment.md` — what to bring/reshape/cut
 9. `docs/v1/design/dx-delight-research.md` — vocabulary tiers, tutorial gap
 10. `docs/v1/design/suzu-bootstrap.md` — the companion ecosystem brief

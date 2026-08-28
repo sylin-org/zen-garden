@@ -20,7 +20,7 @@
 mod moss_http;
 mod tending;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use garden_contract::chirp::ChirpFrame;
 use garden_contract::consts;
 use garden_kernel::probe;
@@ -62,10 +62,20 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
-    /// Extract one value via dot notation (implies --json).
+    /// How answers are rendered (ADR-0007 encoding degree). Beats --json;
+    /// --field implies json.
+    #[arg(long, global = true, value_enum, env = "RAKE_OUTPUT")]
+    output: Option<Out>,
+
+    /// Extract one value via dot notation (implies json).
     /// Example: --field 'data.offering.identity.name'
     #[arg(long, global = true)]
     field: Option<String>,
+
+    /// Which view of the answer (ADR-0007 projection degree) — the views
+    /// a verb declares. Example: --format uri on observe/list/find.
+    #[arg(long, global = true)]
+    format: Option<String>,
 
     /// Discovery UDP port (default is the v1 room).
     #[arg(long, env = "RAKE_DISCOVERY_PORT")]
@@ -80,22 +90,22 @@ struct Cli {
     timeout_ms: u64,
 }
 
+/// The encoding degree (ADR-0007).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum Out {
+    /// Tables and prose for human eyes.
+    Human,
+    /// The envelope, as JSON — the machine degree.
+    Json,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// The garden as an attached moss sees it.
-    Observe {
-        /// Output format: human (default) or uri — one offering URI per
-        /// line, across every stone. The connection promise as output.
-        #[arg(long)]
-        format: Option<String>,
-    },
+    Observe,
     /// Stones whose name contains the pattern, as the attached moss sees them.
     Find {
         pattern: String,
-        /// Output format: human (default) or uri - one offering URI per
-        /// line, nothing else. The connection promise as output.
-        #[arg(long)]
-        format: Option<String>,
     },
     /// Plant an offering by catalog name (or --image for ad-hoc placement).
     Offer {
@@ -132,12 +142,7 @@ enum Command {
     },
     /// List what the attached stone hosts - with each offering's URI.
     /// The connection promise as output (J1).
-    List {
-        /// Output format: human (default) or uri — one offering URI per
-        /// line. The connection promise as output (J1).
-        #[arg(long)]
-        format: Option<String>,
-    },
+    List,
     /// Run an offering's declared will (ADR-0005): imprint, pack, ferry,
     /// commit. `--last` reports the previous run instead.
     Capture {
@@ -147,6 +152,9 @@ enum Command {
         #[arg(long)]
         last: bool,
     },
+    /// The machine-readable catalog of every verb, argument, and help
+    /// text — how agents discover rake (ADR-0007).
+    Manifest,
     /// Replant an offering from its checkpoint: verify, restore, place.
     /// Same FQN, same connection strings - the incarnation returns.
     Replant {
@@ -528,25 +536,6 @@ impl Cli {
         }
     }
 
-    /// Attach to the first moss that answers with a garden view (L21:
-    /// rake renders; moss computes).
-    async fn garden_view(&self) -> Result<Vec<GardenStone>, String> {
-        let (cand, stones) = self
-            .walk(
-                false,
-                "no moss found: nothing pinned, nothing tended, nobody answered",
-                |cand| async move {
-                    let v =
-                        moss_http::get_json(cand.ip, cand.http_port, "/api/v1/garden/stones", HTTP_TIMEOUT)
-                            .await?;
-                    parse_garden(&v).map_err(moss_http::AttachError::ProcessingError)
-                },
-            )
-            .await?;
-        remember_attachment(&cand, &stones);
-        Ok(stones)
-    }
-
     /// Run ONE request against the first moss that answers. The stone ops'
     /// shared front door: cascade, halt-on-refusal, tend-on-success all in
     /// one place; every verb command goes through this and nothing else.
@@ -578,6 +567,24 @@ impl Cli {
             .await?;
         remember_attachment(&cand, &[]);
         Ok((cand, value))
+    }
+
+    /// The room as the attached moss sees it — the RAW /garden/stones
+    /// envelope. One shape from wire to CLI (B1): parsing is a human-
+    /// table concern, projections walk the envelope.
+    async fn garden_envelope(&self) -> Result<serde_json::Value, String> {
+        let (cand, v) = self
+            .walk(
+                false,
+                "no moss found: nothing pinned, nothing tended, nobody answered",
+                |cand| async move {
+                    moss_http::get_json(cand.ip, cand.http_port, "/api/v1/garden/stones", HTTP_TIMEOUT)
+                        .await
+                },
+            )
+            .await?;
+        remember_attachment(&cand, &[]);
+        Ok(v)
     }
 
     /// Run ONE raw-bytes request against the first moss that answers —
@@ -723,6 +730,179 @@ mod exit {
 /// value is always the answer the command died on.
 static LAST_REFUSAL: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 
+// ---------------------------------------------------------------------------
+// THE SURFACE LAW (R4.8 / ADR-0007): answers, projections, one dispatcher
+// ---------------------------------------------------------------------------
+
+/// The encoding degree: how an answer is rendered. Resolved once per
+/// invocation — explicit `--output` beats `--json` beats `--field`'s
+/// implication beats the `RAKE_OUTPUT` environment beats human.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Encoding {
+    Human,
+    Json,
+}
+
+fn encoding_of(cli: &Cli) -> Encoding {
+    if let Some(out) = cli.output {
+        return match out {
+            Out::Json => Encoding::Json,
+            Out::Human => Encoding::Human,
+        };
+    }
+    if cli.json || cli.field.is_some() {
+        return Encoding::Json;
+    }
+    Encoding::Human
+}
+
+/// A named view of an answer (the projection degree): turns the envelope
+/// into the view's data, and knows how to render that data for humans.
+/// Projections compose with both encodings — `--format uri --output json`
+/// is a JSON array of URI strings.
+type ProjectFn = Box<dyn FnOnce(&serde_json::Value) -> Result<serde_json::Value, String>>;
+type HumanFn = Box<dyn FnOnce(&serde_json::Value) -> Result<(), String>>;
+
+struct Projection {
+    name: &'static str,
+    project: ProjectFn,
+    human: HumanFn,
+}
+
+/// A computed answer (R4.8): the envelope value, its human rendering,
+/// and the views it offers. Verbs build this and never ask how it will
+/// be rendered — the dispatcher decides.
+struct Answer {
+    value: serde_json::Value,
+    human: Option<HumanFn>,
+    projections: Vec<Projection>,
+}
+
+impl Answer {
+    /// An answer whose human rendering is the pretty envelope itself.
+    fn new(value: serde_json::Value) -> Self {
+        Self {
+            value,
+            human: None,
+            projections: Vec::new(),
+        }
+    }
+
+    /// Attach the human projection.
+    fn human(
+        mut self,
+        f: impl FnOnce(&serde_json::Value) -> Result<(), String> + 'static,
+    ) -> Self {
+        self.human = Some(Box::new(f));
+        self
+    }
+
+    /// Declare a named view.
+    fn view(
+        mut self,
+        name: &'static str,
+        project: impl FnOnce(&serde_json::Value) -> Result<serde_json::Value, String> + 'static,
+        human: impl FnOnce(&serde_json::Value) -> Result<(), String> + 'static,
+    ) -> Self {
+        self.projections.push(Projection {
+            name,
+            project: Box::new(project),
+            human: Box::new(human),
+        });
+        self
+    }
+
+    /// A streaming or payload face has already rendered itself; the
+    /// dispatcher prints nothing further.
+    fn empty() -> Self {
+        Self::new(serde_json::Value::Null).human(|_| Ok(()))
+    }
+}
+
+/// The ONE place an answer is rendered: projection first, then encoding,
+/// then extraction — each orthogonal, each composed (ADR-0007).
+fn emit(cli: &Cli, mut answer: Answer) -> Result<(), String> {
+    let mut human = answer.human.take();
+    if let Some(want) = cli.format.as_deref() {
+        let idx = answer
+            .projections
+            .iter()
+            .position(|p| p.name == want)
+            .ok_or_else(|| {
+                let available = answer
+                    .projections
+                    .iter()
+                    .map(|p| p.name)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("this command has no --format '{want}' view (available: {available})")
+            })?;
+        let p = answer.projections.swap_remove(idx);
+        answer.value = (p.project)(&answer.value)?;
+        human = Some(p.human);
+    }
+    match encoding_of(cli) {
+        Encoding::Json => {
+            let text = match &cli.field {
+                Some(path) => extract_json_field(&answer.value, path)
+                    .ok_or_else(|| format!("field '{path}' not found in output"))?,
+                None => serde_json::to_string_pretty(&answer.value)
+                    .map_err(|e| format!("could not render json: {e}"))?,
+            };
+            println!("{text}");
+        }
+        Encoding::Human => match human {
+            Some(h) => h(&answer.value)?,
+            None => println!(
+                "{}",
+                serde_json::to_string_pretty(&answer.value).map_err(|e| e.to_string())?
+            ),
+        },
+    }
+    Ok(())
+}
+
+/// The machine-readable command catalog (ADR-0007): every verb,
+/// argument, and help text, walked from the clap tree — generated, so
+/// it cannot disagree with the behavior (L7/L9 pointed at the CLI).
+fn command_catalog(cmd: &clap::Command) -> serde_json::Value {
+    fn arg_json(a: &clap::Arg) -> serde_json::Value {
+        let long = a.get_long();
+        serde_json::json!({
+            "name": a.get_id().as_str(),
+            "kind": if long.is_some() { "option" } else { "positional" },
+            "long": long,
+            "short": a.get_short().map(|c| c.to_string()),
+            "help": a.get_help().map(|h| h.to_string()),
+            "required": a.is_required_set(),
+            "repeatable": matches!(a.get_action(), clap::ArgAction::Append),
+            "takes_value": a.get_action().takes_values(),
+        })
+    }
+    fn verb_json(c: &clap::Command) -> serde_json::Value {
+        let mut v = serde_json::json!({
+            "name": c.get_name(),
+            "help": c.get_about().map(|a| a.to_string()),
+            "args": c
+                .get_arguments()
+                .filter(|a| a.get_id().as_str() != "help" && a.get_id().as_str() != "version")
+                .map(arg_json)
+                .collect::<Vec<_>>(),
+        });
+        let subs: Vec<serde_json::Value> = c.get_subcommands().map(verb_json).collect();
+        if !subs.is_empty() {
+            v["subcommands"] = serde_json::Value::Array(subs);
+        }
+        v
+    }
+    serde_json::json!({
+        "name": cmd.get_name(),
+        "version": cmd.get_version().unwrap_or(""),
+        "help": cmd.get_about().map(|a| a.to_string()),
+        "verbs": cmd.get_subcommands().map(verb_json).collect::<Vec<_>>(),
+    })
+}
+
 #[tokio::main]
 async fn main() {
     let mut cli = Cli::parse();
@@ -741,74 +921,126 @@ async fn main() {
 }
 
 async fn run(cli: &Cli) -> Result<(), String> {
-    match &cli.command {
-        Command::List { format } => {
+    // The two principled exceptions to one-dispatch-renders:
+    //   · `rake manifest` — the answer IS the catalog (JSON either way);
+    //   · `storage get` / `watch` — payload and stream faces, which
+    //     render themselves (the portrait/payload precedent) and come
+    //     back as [`Answer::empty`].
+    if let Command::Manifest = &cli.command {
+        return emit(cli, Answer::new(command_catalog(&Cli::command())));
+    }
+    let answer = match &cli.command {
+        Command::Manifest => unreachable!("handled above"),
+        Command::List => {
             let (cand, v) = cli
                 .stone_op("GET", paths::OFFERINGS.to_string(), None)
                 .await?;
-            if format.as_deref() == Some("uri") || format.as_deref() == Some("uri-ip") {
-                // The connection promise for THIS stone's offerings: the
-                // attached moss's own address names the home.
-                for o in envelope_plain(&v)?["offerings"].as_array().into_iter().flatten() {
-                    let stem = o["identity"]["stem"].as_str().unwrap_or("?");
-                    match o["mode"]["port_map"].as_object().and_then(|m| m.values().next()) {
-                        Some(p) => println!("{}://{}:{}", stem, cand.ip, p),
-                        None => println!("{}://{}", stem, cand.ip),
-                    }
-                }
-                return Ok(());
-            }
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            render_list(&envelope_plain(&v)?)
-        }
-        Command::Observe { format } => {
-            let stones = cli.garden_view().await?;
-            match format.as_deref() {
-                Some("uri") | Some("uri-ip") => {
-                    print_uris(&stones);
-                    Ok(())
-                }
-                _ => {
-                    if cli.json {
-                        let arr = serde_json::to_value(&stones)
-                            .map_err(|e| format!("could not render json: {e}"))?;
-                        emit_output(&arr, cli)
-                    } else {
-                        print_table(&stones);
+            let ip = cand.ip;
+            Answer::new(v)
+                .human(|v| render_list(&envelope_plain(v)?))
+                .view(
+                    "uri",
+                    move |v| {
+                        // The connection promise for THIS stone's
+                        // offerings: the attached moss's address is home.
+                        let mut uris = Vec::new();
+                        for o in envelope_plain(v)?["offerings"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                        {
+                            let stem = o["identity"]["stem"].as_str().unwrap_or("?");
+                            uris.push(
+                                match o["mode"]["port_map"]
+                                    .as_object()
+                                    .and_then(|m| m.values().next())
+                                {
+                                    Some(p) => format!("{stem}://{ip}:{p}"),
+                                    None => format!("{stem}://{ip}"),
+                                },
+                            );
+                        }
+                        Ok(serde_json::json!(uris))
+                    },
+                    |v| {
+                        for u in v.as_array().into_iter().flatten() {
+                            println!("{}", u.as_str().unwrap_or(""));
+                        }
                         Ok(())
-                    }
-                }
-            }
+                    },
+                )
         }
-        Command::Find { pattern, format } => {
+        Command::Observe => {
+            let v = cli.garden_envelope().await?;
+            Answer::new(v)
+                .human(|v| {
+                    let stones = parse_garden(v)?;
+                    print_table(&stones);
+                    Ok(())
+                })
+                .view(
+                    "uri",
+                    uris_from_garden,
+                    |v| {
+                        for u in v.as_array().into_iter().flatten() {
+                            println!("{}", u.as_str().unwrap_or(""));
+                        }
+                        Ok(())
+                    },
+                )
+        }
+        Command::Find { pattern } => {
             let needle = pattern.to_lowercase();
-            let mut stones = cli.garden_view().await?;
-            stones.retain(|s| s.body.stone.name.to_lowercase().contains(&needle));
-            match format.as_deref() {
-                Some("uri") | Some("uri-ip") => {
-                    print_uris(&stones);
-                    Ok(())
-                }
-                _ => {
-                    if cli.json {
-                        let arr = serde_json::to_value(&stones)
-                            .map_err(|e| format!("could not render json: {e}"))?;
-                        emit_output(&arr, cli)
-                    } else {
-                        print_table(&stones);
-                        Ok(())
-                    }
-                }
+            let mut v = cli.garden_envelope().await?;
+            if let Some(stones) = v["data"]["stones"].as_array_mut() {
+                stones.retain(|s| {
+                    s["stone"]["name"]
+                        .as_str()
+                        .map(|n| n.to_lowercase().contains(&needle))
+                        .unwrap_or(false)
+                });
             }
+            Answer::new(v)
+                .human(|v| {
+                    let stones = parse_garden(v)?;
+                    print_table(&stones);
+                    Ok(())
+                })
+                .view(
+                    "uri",
+                    uris_from_garden,
+                    |v| {
+                        for u in v.as_array().into_iter().flatten() {
+                            println!("{}", u.as_str().unwrap_or(""));
+                        }
+                        Ok(())
+                    },
+                )
         }
         Command::Offer { .. } | Command::Explain { .. } | Command::Rest { .. }
         | Command::Wake { .. } | Command::Uproot { .. } | Command::Capture { .. }
-        | Command::Replant { .. } => cmd_stone_op(cli).await,
-        Command::Storage { cmd } => cmd_storage(cli, cmd.as_ref()).await,
-        Command::Watch { name, cmd } => cmd_watch(cli, name, cmd.as_ref()).await,
+        | Command::Replant { .. } => cmd_stone_op(cli).await?,
+        Command::Storage { cmd } => cmd_storage(cli, cmd.as_ref()).await?,
+        Command::Watch { name, cmd } => cmd_watch(cli, name, cmd.as_ref()).await?,
+    };
+    emit(cli, answer)
+}
+
+/// The `uri` projection over the garden envelope: one URI per service
+/// across every stone still in the view.
+fn uris_from_garden(v: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut uris = Vec::new();
+    for s in envelope_plain(v)?["stones"].as_array().into_iter().flatten() {
+        let ip = s["stone"]["network"]["address"]["ip"].as_str().unwrap_or("?");
+        for svc in s["inventory"]["services"]["items"].as_array().into_iter().flatten() {
+            let stem = svc["stem"].as_str().unwrap_or("?");
+            uris.push(match svc["ports"].as_object().and_then(|m| m.values().next()) {
+                Some(p) => format!("{stem}://{ip}:{p}"),
+                None => format!("{stem}://{ip}"),
+            });
+        }
     }
+    Ok(serde_json::json!(uris))
 }
 
 /// The storage faces. Every verb here is the 1:1 client of one API face:
@@ -816,7 +1048,7 @@ async fn run(cli: &Cli) -> Result<(), String> {
 /// `rake watch <offering> logs`: cascade to the first moss that will
 /// speak, follow the garden's redirect if the offering grows elsewhere,
 /// print lines until the stream ends or `--until` matches (exit 0).
-async fn cmd_watch(cli: &Cli, name: &str, cmd: Option<&WatchCmd>) -> Result<(), String> {
+async fn cmd_watch(cli: &Cli, name: &str, cmd: Option<&WatchCmd>) -> Result<Answer, String> {
     let Some(WatchCmd::Logs { timestamps, tail, until }) = cmd else {
         return Err("watch what? try: rake watch <offering> logs".into());
     };
@@ -825,7 +1057,7 @@ async fn cmd_watch(cli: &Cli, name: &str, cmd: Option<&WatchCmd>) -> Result<(), 
     for cand in early.into_iter().chain(late) {
         match moss_http::open_stream(cand.ip, cand.http_port, &path, HTTP_TIMEOUT).await {
             Ok(mut reader) => {
-                return stream_logs(&mut reader, *timestamps, until.as_deref()).await;
+                return stream_logs(&mut reader, encoding_of(cli), *timestamps, until.as_deref()).await;
             }
             Err(StreamError::Refused { status, body }) => {
                 LAST_REFUSAL.store(status, std::sync::atomic::Ordering::Relaxed);
@@ -841,7 +1073,7 @@ async fn cmd_watch(cli: &Cli, name: &str, cmd: Option<&WatchCmd>) -> Result<(), 
                         .map_err(|e| {
                             format!("the offering's home stone at {home} did not answer: {e}")
                         })?;
-                    return stream_logs(&mut reader, *timestamps, until.as_deref()).await;
+                    return stream_logs(&mut reader, encoding_of(cli), *timestamps, until.as_deref()).await;
                 }
                 return Err(raw_refusal(status, &body));
             }
@@ -854,127 +1086,140 @@ async fn cmd_watch(cli: &Cli, name: &str, cmd: Option<&WatchCmd>) -> Result<(), 
     Err("no moss answered; the offering's logs are out of reach".into())
 }
 
-/// Print one SSE payload (a JSON LogLine) per line, honoring --until.
+/// Print one SSE payload (a JSON LogLine) per line, honoring --until
+/// and the encoding degree: a stream is a sequence of answers, so the
+/// policy renders each line as it arrives (json prints the line's own
+/// JSON, whole).
 async fn stream_logs(
     reader: &mut moss_http::SseStream,
+    encoding: Encoding,
     timestamps: bool,
     until: Option<&str>,
-) -> Result<(), String> {
+) -> Result<Answer, String> {
     while let Some(data) = reader.next_data().await {
         let Ok(line) = serde_json::from_slice::<serde_json::Value>(&data) else {
             continue; // keep-alives and strangers ride by
         };
-        let message = line["message"].as_str().unwrap_or("");
-        let channel = line["stream"].as_str().unwrap_or("console");
-        match (timestamps, line["timestamp"].as_str()) {
-            (true, Some(ts)) => println!("[{ts}] {channel}: {message}"),
-            _ => println!("{channel}: {message}"),
+        match encoding {
+            Encoding::Json => println!("{line}"),
+            Encoding::Human => {
+                let message = line["message"].as_str().unwrap_or("");
+                let channel = line["stream"].as_str().unwrap_or("console");
+                match (timestamps, line["timestamp"].as_str()) {
+                    (true, Some(ts)) => println!("[{ts}] {channel}: {message}"),
+                    _ => println!("{channel}: {message}"),
+                }
+            }
         }
-        if let Some(pattern) = until
-            && message.contains(pattern)
-        {
-            return Ok(()); // readiness reached: exit 0
+        if let Some(pattern) = until {
+            let needle = if encoding == Encoding::Json {
+                serde_json::to_string(&line).unwrap_or_default().contains(pattern)
+                    || line["message"].as_str().map(|m| m.contains(pattern)).unwrap_or(false)
+            } else {
+                line["message"].as_str().map(|m| m.contains(pattern)).unwrap_or(false)
+            };
+            if needle {
+                return Ok(Answer::empty()); // readiness reached: exit 0
+            }
         }
     }
-    Ok(())
+    Ok(Answer::empty())
 }
 
-async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> {
+async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<Answer, String> {
     match cmd {
         None => {
             let (_, v) = cli.stone_op("GET", paths::STORAGE.to_string(), None).await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            render_storage(&envelope_plain(&v)?)
+            Ok(Answer::new(v).human(|v| render_storage(&envelope_plain(v)?)))
         }
         Some(StorageCmd::Roles { bank, roles }) => {
+            let bank = bank.clone();
             let body = serde_json::json!({ "roles": roles });
             let (_, v) = cli
-                .stone_op("POST", paths::storage_roles(bank), Some(&body))
+                .stone_op("POST", paths::storage_roles(&bank), Some(&body))
                 .await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            let b = envelope(&v, "bank")?;
-            println!(
-                "{} now holds: {}",
-                display_name(b["fqn"].as_str().unwrap_or("(unnamed)")),
-                b["roles"]
-                    .as_array()
-                    .map(|r| r
-                        .iter()
-                        .filter_map(|x| x.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "))
-                    .unwrap_or_else(|| "(none)".into()),
-            );
-            Ok(())
+            Ok(Answer::new(v).human(|v| {
+                let b = envelope(v, "bank")?;
+                println!(
+                    "{} now holds: {}",
+                    display_name(b["fqn"].as_str().unwrap_or("(unnamed)")),
+                    b["roles"]
+                        .as_array()
+                        .map(|r| r
+                            .iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "))
+                        .unwrap_or_else(|| "(none)".into()),
+                );
+                Ok(())
+            }))
         }
         Some(StorageCmd::Garden) => {
             let (_, v) = cli
                 .stone_op("GET", paths::STORAGE_GARDEN.to_string(), None)
                 .await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            render_garden_storage(&envelope_plain(&v)?)
+            Ok(Answer::new(v).human(|v| {
+                render_garden_storage(&envelope_plain(v)?)
+            }))
         }
         Some(StorageCmd::Eject { bank }) => {
+            let bank = bank.clone();
             let (_, v) = cli
-                .stone_op("POST", paths::storage_eject(bank), None)
+                .stone_op("POST", paths::storage_eject(&bank), None)
                 .await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            let b = envelope(&v, "bank")?;
-            println!(
-                "{} ejected — the garden hears the absence within one song",
-                display_name(b["fqn"].as_str().unwrap_or("(unnamed)"))
-            );
-            Ok(())
+            Ok(Answer::new(v).human(|v| {
+                let b = envelope(v, "bank")?;
+                println!(
+                    "{} ejected — the garden hears the absence within one song",
+                    display_name(b["fqn"].as_str().unwrap_or("(unnamed)"))
+                );
+                Ok(())
+            }))
         }
         Some(StorageCmd::Adopt { device, name }) => {
             let body = serde_json::json!({ "device": device, "name": name });
             let (_, v) = cli
                 .stone_op("POST", paths::STORAGE_ADOPT.to_string(), Some(&body))
                 .await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            let bank = envelope(&v, "bank")?;
-            println!(
-                "{} adopted on {} — {}",
-                display_name(bank["fqn"].as_str().unwrap_or("(unnamed)")),
-                bank["mount_point"].as_str().unwrap_or("?"),
-                bank["state"].as_str().unwrap_or("?"),
-            );
-            if let (Some(cap), Some(used)) = (bank["capacity_bytes"].as_u64(), bank["used_bytes"].as_u64())
-            {
-                println!("  capacity  {} ({} used)", human_bytes(cap), human_bytes(used));
-            }
-            println!("  the garden hears the news within one song");
-            Ok(())
+            Ok(Answer::new(v).human(|v| {
+                let bank = envelope(v, "bank")?;
+                println!(
+                    "{} adopted on {} — {}",
+                    display_name(bank["fqn"].as_str().unwrap_or("(unnamed)")),
+                    bank["mount_point"].as_str().unwrap_or("?"),
+                    bank["state"].as_str().unwrap_or("?"),
+                );
+                if let (Some(cap), Some(used)) =
+                    (bank["capacity_bytes"].as_u64(), bank["used_bytes"].as_u64())
+                {
+                    println!("  capacity  {} ({} used)", human_bytes(cap), human_bytes(used));
+                }
+                println!("  the garden hears the news within one song");
+                Ok(())
+            }))
         }
         Some(StorageCmd::Files { bank, path, depth }) => {
             let target = paths::storage_files(bank, path.as_deref(), depth.as_deref());
-            let (_, status, body) = cli.bank_bytes("GET", target, "application/octet-stream", None).await?;
+            let (_, status, body) = cli
+                .bank_bytes("GET", target, "application/octet-stream", None)
+                .await?;
             if status != 200 {
                 return Err(raw_refusal(status, &body));
             }
             let v: serde_json::Value = serde_json::from_slice(&body)
                 .map_err(|e| format!("moss answered unparsable: {e}"))?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            render_bank_files(&envelope_plain(&v)?)
+            Ok(Answer::new(v).human(|v| {
+                render_bank_files(&envelope_plain(v)?)
+            }))
         }
         Some(StorageCmd::Mv { bank, from, to }) => {
+            let (bank, from, to) = (bank.clone(), from.clone(), to.clone());
             let body = serde_json::json!({ "move_to": to });
             let (_, status, body) = cli
                 .bank_bytes(
                     "PATCH",
-                    paths::storage_file(bank, from),
+                    paths::storage_file(&bank, &from),
                     "application/json",
                     Some(serde_json::to_vec(&body).map_err(|e| e.to_string())?),
                 )
@@ -982,19 +1227,25 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
             if status != 200 {
                 return Err(raw_refusal(status, &body));
             }
-            if cli.json {
-                let v: serde_json::Value = serde_json::from_slice(&body)
-                    .map_err(|e| format!("moss answered unparsable: {e}"))?;
-                return emit_output(&v, cli);
-            }
-            println!("{} → {} on {}", from, to, display_name(bank));
-            Ok(())
+            let v: serde_json::Value = serde_json::from_slice(&body)
+                .map_err(|e| format!("moss answered unparsable: {e}"))?;
+            Ok(Answer::new(v).human(move |_| {
+                println!("{} → {} on {}", from, to, display_name(&bank));
+                Ok(())
+            }))
         }
         Some(StorageCmd::Get { bank, path, out }) => {
-            // The file IS the output — --json has nothing to re-render,
-            // so the raw bytes ride to --out or stdout untouched.
-            let (_, status, bytes) =
-                cli.bank_bytes("GET", paths::storage_file(bank, path), "application/octet-stream", None).await?;
+            // The payload-face exception (ADR-0007): the file IS the
+            // answer — raw bytes to --out or stdout, no envelope, no
+            // rendering degree applies.
+            let (_, status, bytes) = cli
+                .bank_bytes(
+                    "GET",
+                    paths::storage_file(bank, path),
+                    "application/octet-stream",
+                    None,
+                )
+                .await?;
             if status != 200 {
                 return Err(raw_refusal(status, &bytes));
             }
@@ -1010,48 +1261,60 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
                         .map_err(|e| format!("could not write stdout: {e}"))?;
                 }
             }
-            Ok(())
+            Ok(Answer::empty())
         }
         Some(StorageCmd::Put { bank, path, file }) => {
+            let (bank, path) = (bank.clone(), path.clone());
             let bytes = read_local(file)?;
             let (_, status, body) = cli
-                .bank_bytes("PUT", paths::storage_file(bank, path), "application/octet-stream", Some(bytes))
+                .bank_bytes(
+                    "PUT",
+                    paths::storage_file(&bank, &path),
+                    "application/octet-stream",
+                    Some(bytes),
+                )
                 .await?;
             if status != 200 {
                 return Err(raw_refusal(status, &body));
             }
             let v: serde_json::Value = serde_json::from_slice(&body)
                 .map_err(|e| format!("moss answered unparsable: {e}"))?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            let written = v["data"]["size_bytes"].as_u64().unwrap_or(0);
-            println!(
-                "{} written onto {} ({} bytes)",
-                path,
-                display_name(bank),
-                written
-            );
-            Ok(())
+            Ok(Answer::new(v).human(move |v| {
+                let written = v["data"]["size_bytes"].as_u64().unwrap_or(0);
+                println!(
+                    "{} written onto {} ({} bytes)",
+                    path,
+                    display_name(&bank),
+                    written
+                );
+                Ok(())
+            }))
         }
         Some(StorageCmd::Rm { bank, path }) => {
-            let (_, status, body) =
-                cli.bank_bytes("DELETE", paths::storage_file(bank, path), "application/octet-stream", None).await?;
+            let (bank, path) = (bank.clone(), path.clone());
+            let (_, status, body) = cli
+                .bank_bytes(
+                    "DELETE",
+                    paths::storage_file(&bank, &path),
+                    "application/octet-stream",
+                    None,
+                )
+                .await?;
             if status != 200 {
                 return Err(raw_refusal(status, &body));
             }
-            if cli.json {
-                let v: serde_json::Value = serde_json::from_slice(&body)
-                    .map_err(|e| format!("moss answered unparsable: {e}"))?;
-                return emit_output(&v, cli);
-            }
-            println!("{} removed from {}", path, display_name(bank));
-            Ok(())
+            let v: serde_json::Value = serde_json::from_slice(&body)
+                .map_err(|e| format!("moss answered unparsable: {e}"))?;
+            Ok(Answer::new(v).human(move |v| {
+                if v["data"]["deleted"] == serde_json::json!(true) {
+                    println!("{} removed from {}", path, display_name(&bank));
+                }
+                Ok(())
+            }))
         }
     }
 }
 
-/// A bank's directory listing: one row per entry, directories marked.
 fn render_bank_files(v: &serde_json::Value) -> Result<(), String> {
     let rows = v["files"].as_array();
     match rows {
@@ -1168,28 +1431,6 @@ fn render_list(v: &serde_json::Value) -> Result<(), String> {
     Ok(())
 }
 
-/// The connection promise as output (J1): one offering URI per line,
-/// `stem://ip:port`, across the given stones. The `--format uri` face
-/// of observe and find.
-fn print_uris(stones: &[GardenStone]) {
-    for s in stones {
-        let ip = s.body.stone.network.address.ip;
-        for svc in s
-            .body
-            .inventory
-            .services
-            .as_ref()
-            .map(|b| b.items.as_slice())
-            .unwrap_or_default()
-        {
-            match svc.ports.values().next() {
-                Some(p) => println!("{}://{}:{}", svc.stem, ip, p),
-                None => println!("{}://{}", svc.stem, ip),
-            }
-        }
-    }
-}
-
 /// The banks table: what this stone holds, and what it could adopt.
 fn render_storage(v: &serde_json::Value) -> Result<(), String> {
     let banks = v["banks"].as_array();
@@ -1227,7 +1468,7 @@ fn render_storage(v: &serde_json::Value) -> Result<(), String> {
     Ok(())
 }
 
-async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
+async fn cmd_stone_op(cli: &Cli) -> Result<Answer, String> {
     match &cli.command {
         Command::Offer { name, image, ports, inputs, runtime, category } => {
             let ports = parse_u16_pairs(ports)?;
@@ -1245,70 +1486,60 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
             if let Some(v) = category { body.insert("category".into(), serde_json::json!(v)); }
 
             let (target, v) = cli.stone_op("POST", paths::record(name), Some(&body.into())).await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            render_offered(&target, envelope(&v, "offering")?)
+            Ok(Answer::new(v).human(move |v| {
+                render_offered(&target, envelope(v, "offering")?)
+            }))
         }
         Command::Explain { name } => {
             let (target, v) = cli.stone_op("GET", paths::record(name), None).await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            let data = envelope_plain(&v)?;
-            render_explain(&target, data["offering"].clone(), &data)
+            Ok(Answer::new(v).human(move |v| {
+                let data = envelope_plain(v)?;
+                render_explain(&target, data["offering"].clone(), &data)
+            }))
         }
         Command::Rest { name } => {
             let (_, v) = cli.stone_op("POST", paths::rest(name), None).await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            render_status("rested", &envelope_plain(&v)?)
+            Ok(Answer::new(v).human(|v| render_status("rested", &envelope_plain(v)?)))
         }
         Command::Capture { name, last } => {
+            let name = name.clone();
             if *last {
-                let (_, v) = cli
-                    .stone_op("GET", paths::capture_last(name), None)
-                    .await?;
-                if cli.json {
-                    return emit_output(&v, cli);
-                }
-                let run = envelope_plain(&v)?;
+                let (_, v) = cli.stone_op("GET", paths::capture_last(&name), None).await?;
+                return Ok(Answer::new(v).human(move |v| {
+                    let run = envelope_plain(v)?;
+                    println!(
+                        "{} — last capture: {} ({}){}",
+                        display_name(&name),
+                        run["phase"].as_str().unwrap_or("?"),
+                        run["started_at"].as_str().unwrap_or("?"),
+                        run["error"]
+                            .as_str()
+                            .map(|e| format!(" — {e}"))
+                            .unwrap_or_default(),
+                    );
+                    if let Some(cp) = run["checkpoint"].as_str() {
+                        println!("  checkpoint  {cp}");
+                    }
+                    if let Some(sinks) = run["ferried_to"].as_array()
+                        && !sinks.is_empty()
+                    {
+                        let names: Vec<&str> = sinks.iter().filter_map(|s| s.as_str()).collect();
+                        println!("  ferried to  {}", names.join(", "));
+                    }
+                    Ok(())
+                }))
+            }
+            let (_, v) = cli.stone_op("POST", paths::capture(&name), None).await?;
+            Ok(Answer::new(v).human(move |v| {
+                let run = envelope(v, "run")?;
                 println!(
-                    "{} — last capture: {} ({}){}",
-                    display_name(name),
-                    run["phase"].as_str().unwrap_or("?"),
-                    run["started_at"].as_str().unwrap_or("?"),
-                    run["error"]
-                        .as_str()
-                        .map(|e| format!(" — {e}"))
-                        .unwrap_or_default(),
+                    "{} — capture accepted, run {}",
+                    display_name(&name),
+                    run["run_id"].as_str().unwrap_or("?"),
                 );
-                if let Some(cp) = run["checkpoint"].as_str() {
-                    println!("  checkpoint  {cp}");
-                }
-                if let Some(sinks) = run["ferried_to"].as_array()
-                    && !sinks.is_empty()
-                {
-                    let names: Vec<&str> = sinks.iter().filter_map(|s| s.as_str()).collect();
-                    println!("  ferried to  {}", names.join(", "));
-                }
-                return Ok(());
-            }
-            let (_, v) = cli
-                .stone_op("POST", paths::capture(name), None)
-                .await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            let run = envelope(&v, "run")?;
-            println!(
-                "{} — capture accepted, run {}",
-                display_name(name),
-                run["run_id"].as_str().unwrap_or("?"),
-            );
-            println!("  the will executes in the background; `rake capture {name} --last` reports progress");
-            Ok(())
+                println!("  the will executes in the background; `rake capture {name} --last` reports progress");
+                Ok(())
+            }))
         }
         Command::Replant { name, run } => {
             let mut body = serde_json::Map::new();
@@ -1322,47 +1553,44 @@ async fn cmd_stone_op(cli: &Cli) -> Result<(), String> {
                     Some(&serde_json::Value::Object(body)),
                 )
                 .await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            let o = envelope_plain(&v)?;
-            println!(
-                "{} replanted — {}",
-                display_name(name),
-                o["offering"]["status"].as_str().unwrap_or("?"),
-            );
-            if let Some(from) = o["offering"]["replanted_from"].as_str() {
-                println!("  from      {from}");
-            }
-            if let Some(h) = o["offering"]["final_hash"].as_str() {
-                println!("  hash      {h}");
-            }
-            Ok(())
+            let name = name.clone();
+            Ok(Answer::new(v).human(move |v| {
+                let o = envelope_plain(v)?;
+                println!(
+                    "{} replanted — {}",
+                    display_name(&name),
+                    o["offering"]["status"].as_str().unwrap_or("?"),
+                );
+                if let Some(from) = o["offering"]["replanted_from"].as_str() {
+                    println!("  from      {from}");
+                }
+                if let Some(h) = o["offering"]["final_hash"].as_str() {
+                    println!("  hash      {h}");
+                }
+                Ok(())
+            }))
         }
         Command::Wake { name } => {
             let (_, v) = cli.stone_op("POST", paths::wake(name), None).await?;
-            if cli.json {
-                return emit_output(&v, cli);
-            }
-            let data = envelope_plain(&v)?;
-            render_status("awake", &data)?;
-            if let Some(port_map) = data.get("port_map")
-                && port_map.as_object().is_some_and(|m| !m.is_empty())
-            {
-                println!("  ports {}", named_pairs(port_map, ", "));
-            }
-            Ok(())
+            Ok(Answer::new(v).human(|v| {
+                render_status("awake", &envelope_plain(v)?)?;
+                if let Some(port_map) = v["data"].get("port_map")
+                    && port_map.as_object().is_some_and(|m| !m.is_empty())
+                {
+                    println!("  ports {}", named_pairs(port_map, ", "));
+                }
+                Ok(())
+            }))
         }
         Command::Uproot { name } => {
-            let (_, v) = cli.stone_op("DELETE", paths::record(name), None).await?;
-            if cli.json {
-                emit_output(&v, cli)
-            } else {
-                // Echo what was ACTUALLY uprooted, moniker-displayed.
-                let canonical = v["data"]["name"].as_str().unwrap_or(name);
+            let name = name.clone();
+            let (_, v) = cli.stone_op("DELETE", paths::record(&name), None).await?;
+            // Echo what was ACTUALLY uprooted, moniker-displayed.
+            Ok(Answer::new(v).human(move |v| {
+                let canonical = v["data"]["name"].as_str().unwrap_or(&name);
                 println!("{} uprooted", display_name(canonical));
                 Ok(())
-            }
+            }))
         }
         _ => unreachable!("dispatch routes only stone ops here"),
     }
@@ -1535,24 +1763,6 @@ fn extract_json_field(value: &serde_json::Value, path: &str) -> Option<String> {
         serde_json::Value::Bool(b) => Some(b.to_string()),
         other => Some(other.to_string()),
     }
-}
-
-/// Emit the JSON output, or extract one field if --field is set.
-fn emit_output(v: &serde_json::Value, cli: &Cli) -> Result<(), String> {
-    if let Some(path) = &cli.field {
-        let extracted = extract_json_field(v, path).ok_or_else(|| {
-            format!("field '{path}' not found in output")
-        })?;
-        println!("{extracted}");
-        return Ok(());
-    }
-    emit_pretty(v)
-}
-
-fn emit_pretty(v: &serde_json::Value) -> Result<(), String> {
-    serde_json::to_string_pretty(v)
-        .map(|s| println!("{s}"))
-        .map_err(|e| format!("could not render json: {e}"))
 }
 
 /// Parse repeated NAME=NUMBER flags into an ordered map.

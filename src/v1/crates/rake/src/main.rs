@@ -175,13 +175,27 @@ enum StorageCmd {
         #[arg(long = "role")]
         roles: Vec<String>,
     },
-    /// List a bank's files (optional --path for a subdirectory).
+    /// List a bank's files (optional --path for a subdirectory, --depth
+    /// for a tree walk: 2, 3, ... or `all`).
     Files {
         /// The bank's name (FQN or bare stem).
         bank: String,
         /// A subdirectory of the bank to list.
         #[arg(long)]
         path: Option<String>,
+        /// Listing depth: 2, 3, ... or `all` for the whole tree.
+        #[arg(long)]
+        depth: Option<String>,
+    },
+    /// Move (rename) one file within a bank — no re-upload. Never
+    /// overwrites.
+    Mv {
+        /// The bank's name (FQN or bare stem).
+        bank: String,
+        /// The file's current path, relative to the bank's root.
+        from: String,
+        /// The file's new path, relative to the bank's root.
+        to: String,
     },
     /// Read one file from a bank: raw bytes to --out, or stdout.
     Get {
@@ -811,11 +825,8 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
             println!("  the garden hears the news within one song");
             Ok(())
         }
-        Some(StorageCmd::Files { bank, path }) => {
-            let mut target = paths::storage_files(bank);
-            if let Some(dir) = path {
-                target = format!("{}?path={}", target, paths::encode_segment(dir));
-            }
+        Some(StorageCmd::Files { bank, path, depth }) => {
+            let target = paths::storage_files(bank, path.as_deref(), depth.as_deref());
             let (_, status, body) = cli.bank_bytes("GET", target, None).await?;
             if status != 200 {
                 return Err(raw_refusal(status, &body));
@@ -826,6 +837,26 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<(), String> 
                 return emit_output(&v, cli);
             }
             render_bank_files(&envelope_plain(&v)?)
+        }
+        Some(StorageCmd::Mv { bank, from, to }) => {
+            let body = serde_json::json!({ "move_to": to });
+            let (_, status, body) = cli
+                .bank_bytes(
+                    "PATCH",
+                    paths::storage_file(bank, from),
+                    Some(serde_json::to_vec(&body).map_err(|e| e.to_string())?),
+                )
+                .await?;
+            if status != 200 {
+                return Err(raw_refusal(status, &body));
+            }
+            if cli.json {
+                let v: serde_json::Value = serde_json::from_slice(&body)
+                    .map_err(|e| format!("moss answered unparsable: {e}"))?;
+                return emit_output(&v, cli);
+            }
+            println!("{} → {} on {}", from, to, display_name(bank));
+            Ok(())
         }
         Some(StorageCmd::Get { bank, path, out }) => {
             // The file IS the output — --json has nothing to re-render,
@@ -1203,9 +1234,21 @@ mod paths {
         format!("{STORAGE}/{}/roles", encode_segment(bank))
     }
 
-    /// The bank-files list face.
-    pub fn storage_files(bank: &str) -> String {
-        format!("{STORAGE}/{}/files", encode_segment(bank))
+    /// The bank-files list face. `path` and `depth` ride as query pairs.
+    pub fn storage_files(bank: &str, path: Option<&str>, depth: Option<&str>) -> String {
+        let mut target = format!("{STORAGE}/{}/files", encode_segment(bank));
+        let mut params = Vec::new();
+        if let Some(dir) = path {
+            params.push(format!("path={}", encode_segment(dir)));
+        }
+        if let Some(d) = depth {
+            params.push(format!("depth={}", encode_segment(d)));
+        }
+        if !params.is_empty() {
+            target.push('?');
+            target.push_str(&params.join("&"));
+        }
+        target
     }
 
     /// One file's face on a bank. The path is wire-encoded whole — `/`
@@ -1660,9 +1703,13 @@ mod tests {
         let face = paths::storage_file("seed-vault::default", "dumps/notes.txt");
         assert_eq!(face, "/api/v1/storage/seed-vault%3A%3Adefault/files/dumps%2Fnotes.txt");
         assert_eq!(
-            paths::storage_files("seed-vault"),
+            paths::storage_files("seed-vault", None, None),
             "/api/v1/storage/seed-vault/files",
             "a bare stem has nothing to escape"
+        );
+        assert_eq!(
+            paths::storage_files("seed-vault", Some("dumps"), Some("all")),
+            "/api/v1/storage/seed-vault/files?path=dumps&depth=all"
         );
     }
 

@@ -79,6 +79,8 @@ enum Face {
     StorageFilePut,
     /// Delete one file from a bank.
     StorageFileDelete,
+    /// Move (rename) one file within a bank.
+    StorageFileMove,
     /// Run a will: the capture pipeline (ADR-0005 §2).
     OfferingCapture,
     /// The last capture run of an offering.
@@ -108,7 +110,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 32] = [
+    const ALL: [Face; 33] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -125,6 +127,7 @@ impl Face {
         Face::StorageFileGet,
         Face::StorageFilePut,
         Face::StorageFileDelete,
+        Face::StorageFileMove,
         Face::GardenStorage,
         Face::OfferingCapture,
         Face::OfferingCaptureLast,
@@ -164,6 +167,7 @@ impl Face {
             | Face::OfferingCapture | Face::OfferingReplant => "POST",
             Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
             Face::StorageFilePut => "PUT",
+            Face::StorageFileMove => "PATCH",
             Face::StorageFileDelete | Face::OfferingUproot => "DELETE",
         }
     }
@@ -183,9 +187,10 @@ impl Face {
             Face::StorageRoles => "/api/v1/storage/{fqn}/roles",
             Face::StorageEject => "/api/v1/storage/{fqn}/eject",
             Face::StorageFileList => "/api/v1/storage/{fqn}/files",
-            Face::StorageFileGet | Face::StorageFilePut | Face::StorageFileDelete => {
-                "/api/v1/storage/{fqn}/files/{*path}"
-            }
+            Face::StorageFileGet
+            | Face::StorageFilePut
+            | Face::StorageFileMove
+            | Face::StorageFileDelete => "/api/v1/storage/{fqn}/files/{*path}",
             Face::GardenStorage => "/api/v1/garden/storage",
             Face::OfferingList => "/api/v1/offerings",
             Face::OfferingPlant | Face::OfferingShow | Face::OfferingUproot => {
@@ -256,6 +261,10 @@ impl Face {
                 "Delete one file from a bank. Directories refuse - wholesale removal is \
                  the operator's hand. A peer's bank answers the garden's redirect."
             }
+            Face::StorageFileMove => {
+                "Move (rename) one file within a bank: {move_to: path} - no re-upload. \
+                 Never overwrites. A peer's bank answers the garden's redirect."
+            }
             Face::GardenStorage => {
                 "Garden data (L22): every bank in the room, self included, from the one cache."
             }
@@ -310,6 +319,7 @@ impl Face {
             Face::StorageFileList => get(storage_files_list),
             Face::StorageFileGet => get(storage_file_get),
             Face::StorageFilePut => axum::routing::put(storage_file_put),
+            Face::StorageFileMove => axum::routing::patch(storage_file_move),
             Face::StorageFileDelete => axum::routing::delete(storage_file_delete),
             Face::GardenStorage => get(garden_storage),
             Face::OfferingList => get(offerings_list),
@@ -727,7 +737,7 @@ fn files_err(e: crate::offerings::storage::FilesError) -> CommandError {
         FilesError::UnknownBank(_) | FilesError::Missing(_) => {
             CommandError::NotFound(e.to_string())
         }
-        FilesError::NotMounted(_) | FilesError::NotThatKind(_) => {
+        FilesError::NotMounted(_) | FilesError::NotThatKind(_) | FilesError::Exists(_) => {
             CommandError::Conflict(e.to_string())
         }
         FilesError::BadPath(_) => CommandError::BadRequest(e.to_string()),
@@ -811,15 +821,24 @@ fn bank_not_here(state: &AppState, fqn: &str) -> axum::response::Response {
     }
 }
 
-/// List a bank directory (`?path=` names a subdirectory; absent = the
-/// bank's root).
+/// List a bank directory tree (`?path=` names a subdirectory; absent =
+/// the bank's root; `?depth=` bounds the walk — 1 default, N levels,
+/// `all` for the whole tree. Below level one, entry names are paths
+/// relative to the listed root).
 async fn storage_files_list(
     State(state): State<Arc<AppState>>,
     Path(fqn): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<axum::response::Response, ApiError> {
-    use crate::offerings::storage::{list_dir, safe_join};
+    use crate::offerings::storage::{list_tree, safe_join};
     let rel = params.get("path").map(String::as_str).unwrap_or("");
+    let depth = params
+        .get("depth")
+        .map(|d| match d.trim() {
+            "all" | "max" => usize::MAX,
+            n => n.parse().unwrap_or(1),
+        })
+        .unwrap_or(1);
     let (bank, root) = match gate_bank(&state, &fqn) {
         Ok(pair) => pair,
         Err(answer) => return Ok(*answer),
@@ -829,32 +848,124 @@ async fn storage_files_list(
     } else {
         safe_join(&root, rel).map_err(files_err)?
     };
-    let files = list_dir(&root, &dir).map_err(files_err)?;
+    let files = list_tree(&root, &dir, depth).map_err(files_err)?;
     Ok(Json(
         serde_json::json!({ "data": { "bank": bank.fqn, "path": rel, "files": files } }),
     )
         .into_response())
 }
 
+/// The outcome of one RFC 7233 Range header against a file of `size`.
+/// Malformed specs are IGNORED (serve full — the RFC's MUST); the PoC
+/// served 416 for `end < start`, but the RFC calls that an invalid spec,
+/// and the objective is standard clients.
+enum RangeOutcome {
+    Full,
+    Partial { start: u64, length: u64 },
+    Unsatisfiable,
+}
+
+fn parse_range(header: Option<&str>, size: u64) -> RangeOutcome {
+    let Some(raw) = header else {
+        return RangeOutcome::Full;
+    };
+    let Some(spec) = raw.strip_prefix("bytes=") else {
+        return RangeOutcome::Full;
+    };
+    if spec.contains(',') {
+        return RangeOutcome::Full; // multi-range: unsupported, serve full
+    }
+    let Some((start_s, end_s)) = spec.split_once('-') else {
+        return RangeOutcome::Full;
+    };
+    let (start_s, end_s) = (start_s.trim(), end_s.trim());
+    if start_s.is_empty() {
+        // Suffix form `bytes=-N`: the last N bytes.
+        let Ok(n) = end_s.parse::<u64>() else {
+            return RangeOutcome::Full;
+        };
+        if n == 0 || size == 0 {
+            return RangeOutcome::Unsatisfiable;
+        }
+        let start = size.saturating_sub(n);
+        return RangeOutcome::Partial {
+            start,
+            length: size - start,
+        };
+    }
+    let Ok(start) = start_s.parse::<u64>() else {
+        return RangeOutcome::Full;
+    };
+    if start >= size {
+        return RangeOutcome::Unsatisfiable;
+    }
+    match end_s.parse::<u64>() {
+        Ok(end) if end < start => RangeOutcome::Full, // invalid spec: ignore
+        Ok(end) => RangeOutcome::Partial {
+            start,
+            length: end.min(size - 1) - start + 1,
+        },
+        Err(_) => RangeOutcome::Partial {
+            start,
+            length: size - start, // `bytes=N-` runs to EOF
+        },
+    }
+}
+
 /// Read one file from a bank: the raw bytes ride alone, content-type
-/// guessed from the extension (payload faces are not envelope faces —
-/// the portrait and the pulse set the precedent).
+/// guessed from the extension. `Range` is honored (RFC 7233 single
+/// range) — a standard media client can stream straight off a bank.
 async fn storage_file_get(
     State(state): State<Arc<AppState>>,
     Path((fqn, rel)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
 ) -> Result<axum::response::Response, ApiError> {
-    use crate::offerings::storage::{read_file, safe_join};
+    use crate::offerings::storage::{file_size, read_file, read_file_range, safe_join};
     let (_, root) = match gate_bank(&state, &fqn) {
         Ok(pair) => pair,
         Err(answer) => return Ok(*answer),
     };
     let path = safe_join(&root, &rel).map_err(files_err)?;
-    let bytes = read_file(&root, &path).map_err(files_err)?;
-    Ok((
-        [(axum::http::header::CONTENT_TYPE, content_type_for(&rel))],
-        bytes,
-    )
-        .into_response())
+    let size = file_size(&root, &path).map_err(files_err)?;
+    let content_type = content_type_for(&rel);
+    match parse_range(headers.get(axum::http::header::RANGE).and_then(|v| v.to_str().ok()), size)
+    {
+        RangeOutcome::Unsatisfiable => Ok((
+            axum::http::StatusCode::RANGE_NOT_SATISFIABLE,
+            [(
+                axum::http::header::CONTENT_RANGE,
+                format!("bytes */{size}"),
+            )],
+        )
+            .into_response()),
+        RangeOutcome::Partial { start, length } => {
+            let bytes = read_file_range(&root, &path, start, length).map_err(files_err)?;
+            Ok((
+                axum::http::StatusCode::PARTIAL_CONTENT,
+                [
+                    (axum::http::header::CONTENT_TYPE, content_type.to_string()),
+                    (axum::http::header::ACCEPT_RANGES, "bytes".to_string()),
+                    (
+                        axum::http::header::CONTENT_RANGE,
+                        format!("bytes {}-{}/{}", start, start + length - 1, size),
+                    ),
+                ],
+                bytes,
+            )
+                .into_response())
+        }
+        RangeOutcome::Full => {
+            let bytes = read_file(&root, &path).map_err(files_err)?;
+            Ok((
+                [
+                    (axum::http::header::CONTENT_TYPE, content_type.to_string()),
+                    (axum::http::header::ACCEPT_RANGES, "bytes".to_string()),
+                ],
+                bytes,
+            )
+                .into_response())
+        }
+    }
 }
 
 /// Write one file onto a bank: the raw body, parents created.
@@ -892,6 +1003,35 @@ async fn storage_file_delete(
     tracing::info!(bank = %bank.fqn, path = %rel, "file deleted from a bank");
     Ok(Json(
         serde_json::json!({ "data": { "bank": bank.fqn, "path": rel, "deleted": true } }),
+    )
+        .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct MoveRequest {
+    /// The file's new path, relative to the bank's root.
+    move_to: String,
+}
+
+/// Move (rename) one file within a bank — no re-upload over slow media.
+/// Both endpoints pass the escape gate; the move never leaves the bank
+/// and never overwrites.
+async fn storage_file_move(
+    State(state): State<Arc<AppState>>,
+    Path((fqn, rel)): Path<(String, String)>,
+    Json(req): Json<MoveRequest>,
+) -> Result<axum::response::Response, ApiError> {
+    use crate::offerings::storage::{move_file, safe_join};
+    let (bank, root) = match gate_bank(&state, &fqn) {
+        Ok(pair) => pair,
+        Err(answer) => return Ok(*answer),
+    };
+    let from = safe_join(&root, &rel).map_err(files_err)?;
+    let to = safe_join(&root, &req.move_to).map_err(files_err)?;
+    move_file(&root, &from, &to).map_err(files_err)?;
+    tracing::info!(bank = %bank.fqn, from = %rel, to = %req.move_to, "file moved on a bank");
+    Ok(Json(
+        serde_json::json!({ "data": { "bank": bank.fqn, "from": rel, "to": req.move_to, "moved": true } }),
     )
         .into_response())
 }
@@ -1732,6 +1872,39 @@ mod tests {
         app.clone().oneshot(req).await.unwrap()
     }
 
+    /// Like `send`, but carrying a JSON body and saying so.
+    async fn send_json(
+        app: &Router,
+        method: &str,
+        path: &str,
+        body: serde_json::Value,
+    ) -> axum::http::Response<axum::body::Body> {
+        let req = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap()
+    }
+
+    /// `send` plus one extra header (Range tests ride this).
+    async fn send_with(
+        app: &Router,
+        method: &str,
+        path: &str,
+        name: &str,
+        value: &str,
+    ) -> axum::http::Response<axum::body::Body> {
+        let req = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header(name, value)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap()
+    }
+
     async fn body_json(res: &mut axum::http::Response<axum::body::Body>) -> serde_json::Value {
         let bytes = axum::body::to_bytes(std::mem::take(res).into_body(), 1_000_000)
             .await
@@ -1932,6 +2105,168 @@ mod tests {
         let app = router(state);
         let res = send(&app, "GET", base).await;
         assert_eq!(res.status(), StatusCode::OK, "the volume is in MY slot");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// One call trees the bank: depth bounds the walk, names below level
+    /// one are full relative paths, and the record stays invisible
+    /// (objective: an agent trees a bank in one call).
+    #[tokio::test]
+    async fn depth_lists_the_whole_tree_in_one_call() {
+        let (state, tmp) = state_with_bank().await;
+        let app = router(state);
+        let base = "/api/v1/storage/seed-vault/files";
+        send_bytes(&app, "PUT", &format!("{base}/a/b/c.txt"), b"deep").await;
+        send_bytes(&app, "PUT", &format!("{base}/x.txt"), b"top").await;
+
+        let names_at = |v: serde_json::Value| -> Vec<String> {
+            v["data"]["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        let mut res = send(&app, "GET", &format!("{base}?depth=2")).await;
+        let v = body_json(&mut res).await;
+        assert_eq!(names_at(v), vec!["a", "a/b", "x.txt"], "c.txt is beyond depth 2");
+
+        let mut res = send(&app, "GET", &format!("{base}?depth=all")).await;
+        let v = body_json(&mut res).await;
+        assert_eq!(
+            names_at(v),
+            vec!["a", "a/b", "a/b/c.txt", "x.txt"],
+            "the whole tree, flat, `/`-joined"
+        );
+
+        let mut res = send(&app, "GET", base).await;
+        let v = body_json(&mut res).await;
+        assert_eq!(names_at(v), vec!["a", "x.txt"], "default depth is 1");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A standard client can stream: single-range 206 with Content-Range,
+    /// suffix and open-ended ranges, 416 past EOF, and malformed specs
+    /// degrade to the full 200 (RFC 7233).
+    #[tokio::test]
+    async fn range_requests_serve_partial_content() {
+        let (state, tmp) = state_with_bank().await;
+        let app = router(state);
+        let url = "/api/v1/storage/seed-vault/files/notes.txt";
+        send_bytes(&app, "PUT", url, b"hello bank").await; // 10 bytes
+
+        let res = send_with(&app, "GET", url, "range", "bytes=0-4").await;
+        assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(res.headers()[axum::http::header::CONTENT_RANGE], "bytes 0-4/10");
+        let bytes = axum::body::to_bytes(res.into_body(), 1000).await.unwrap();
+        assert_eq!(&bytes[..], b"hello");
+
+        let res = send_with(&app, "GET", url, "range", "bytes=-4").await;
+        assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(res.headers()[axum::http::header::CONTENT_RANGE], "bytes 6-9/10");
+        let bytes = axum::body::to_bytes(res.into_body(), 1000).await.unwrap();
+        assert_eq!(&bytes[..], b"bank");
+
+        let res = send_with(&app, "GET", url, "range", "bytes=5-").await;
+        assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+        let bytes = axum::body::to_bytes(res.into_body(), 1000).await.unwrap();
+        assert_eq!(&bytes[..], b" bank");
+
+        let res = send_with(&app, "GET", url, "range", "bytes=100-200").await;
+        assert_eq!(res.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(res.headers()[axum::http::header::CONTENT_RANGE], "bytes */10");
+
+        let res = send_with(&app, "GET", url, "range", "bytes=nonsense").await;
+        assert_eq!(res.status(), StatusCode::OK, "malformed spec is ignored");
+        let bytes = axum::body::to_bytes(res.into_body(), 1000).await.unwrap();
+        assert_eq!(&bytes[..], b"hello bank");
+
+        let res = send(&app, "GET", url).await;
+        assert_eq!(
+            res.headers()[axum::http::header::ACCEPT_RANGES],
+            "bytes",
+            "full answers advertise resumability"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Rename without re-upload: content rides, the old path vanishes,
+    /// overwrites refuse (a move never clobbers), and the escape gate
+    /// guards both endpoints.
+    #[tokio::test]
+    async fn move_renames_within_the_bank() {
+        let (state, tmp) = state_with_bank().await;
+        let app = router(state);
+        let base = "/api/v1/storage/seed-vault/files";
+        send_bytes(&app, "PUT", &format!("{base}/dumps/a.txt"), b"payload").await;
+
+        let mut res = send_json(
+            &app,
+            "PATCH",
+            &format!("{base}/dumps/a.txt"),
+            serde_json::json!({ "move_to": "dumps/b.txt" }),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let v = body_json(&mut res).await;
+        assert_eq!(v["data"]["moved"], true);
+
+        let res = send(&app, "GET", &format!("{base}/dumps/b.txt")).await;
+        assert_eq!(res.status(), StatusCode::OK, "the content rides");
+        let res = send(&app, "GET", &format!("{base}/dumps/a.txt")).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "the old path is gone");
+
+        // A real collision: keep.txt exists, so b.txt may not take its name.
+        send_bytes(&app, "PUT", &format!("{base}/dumps/keep.txt"), b"keep").await;
+        let res = send_json(
+            &app,
+            "PATCH",
+            &format!("{base}/dumps/b.txt"),
+            serde_json::json!({ "move_to": "dumps/keep.txt" }),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::CONFLICT, "never overwrites");
+        let res = send(&app, "GET", &format!("{base}/dumps/keep.txt")).await;
+        let bytes = axum::body::to_bytes(res.into_body(), 100).await.unwrap();
+        assert_eq!(&bytes[..], b"keep", "the clobbered file is untouched");
+
+        let res = send_json(
+            &app,
+            "PATCH",
+            &format!("{base}/dumps/b.txt"),
+            serde_json::json!({ "move_to": "../out.txt" }),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "escape still refuses");
+
+        let res = send_json(
+            &app,
+            "PATCH",
+            &format!("{base}/dumps/none.txt"),
+            serde_json::json!({ "move_to": "elsewhere.txt" }),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "nothing to move");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// HEAD rides the GET face: 200, no body — existence checks cost
+    /// nothing (the transport strips it; the test pins the promise).
+    #[tokio::test]
+    async fn head_exists_answers_without_a_body() {
+        let (state, tmp) = state_with_bank().await;
+        let app = router(state);
+        let base = "/api/v1/storage/seed-vault/files";
+        send_bytes(&app, "PUT", &format!("{base}/a.txt"), b"xyz").await;
+
+        let res = send(&app, "HEAD", &format!("{base}/a.txt")).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(res.into_body(), 100).await.unwrap();
+        assert!(bytes.is_empty(), "HEAD carries no body");
+        let res = send(&app, "HEAD", &format!("{base}/none.txt")).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

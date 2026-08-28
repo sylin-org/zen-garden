@@ -412,6 +412,8 @@ pub enum FilesError {
     NotThatKind(String),
     /// The path names nothing on the volume.
     Missing(String),
+    /// The destination already exists — a move never overwrites.
+    Exists(String),
     /// The filesystem refused.
     Io(String),
 }
@@ -430,6 +432,10 @@ impl std::fmt::Display for FilesError {
             Self::BadPath(p) => write!(f, "{p}"),
             Self::NotThatKind(p) => write!(f, "{p}"),
             Self::Missing(p) => write!(f, "nothing answers at '{p}' on this bank"),
+            Self::Exists(p) => write!(
+                f,
+                "'{p}' already exists — a move never overwrites; delete first"
+            ),
             Self::Io(e) => write!(f, "the bank's filesystem refused: {e}"),
         }
     }
@@ -525,23 +531,37 @@ fn rel_of(mount: &Path, target: &Path) -> String {
         .unwrap_or_else(|_| target.display().to_string())
 }
 
-/// List a directory on a bank, sorted by name. The adoption record's
-/// dotfolder is invisible — the ceremony's business stays off the wire.
-pub fn list_dir(mount: &Path, dir: &Path) -> Result<Vec<FileEntry>, FilesError> {
-    verify_under_mount(mount, dir)?;
+/// List a directory TREE up to `depth` levels (1 = the directory itself,
+/// its subdirectories listed but not entered; `usize::MAX` = whole tree).
+/// Flat: below level one each entry's `name` is its path relative to the
+/// listed root, `/`-separated, so one call hands an agent the whole bank.
+/// The adoption record stays invisible at every level.
+pub fn list_tree(mount: &Path, root: &Path, depth: usize) -> Result<Vec<FileEntry>, FilesError> {
+    verify_under_mount(mount, root)?;
     let mut out = Vec::new();
-    let io_err = |e: std::io::Error| match e.kind() {
-        std::io::ErrorKind::NotFound => FilesError::Missing(rel_of(mount, dir)),
-        _ => FilesError::Io(format!("{}: {e}", dir.display())),
-    };
+    walk_tree(root, root, depth, &mut out)?;
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+fn walk_tree(root: &Path, dir: &Path, depth: usize, out: &mut Vec<FileEntry>) -> Result<(), FilesError> {
+    let io_err = |e: std::io::Error| FilesError::Io(format!("{}: {e}", dir.display()));
     for entry in std::fs::read_dir(dir).map_err(io_err)? {
         let entry = entry.map_err(io_err)?;
         if entry.file_name() == MANIFEST_DIR {
             continue;
         }
+        let path = entry.path();
         let meta = entry.metadata().map_err(io_err)?;
+        let rel: String = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("/");
         out.push(FileEntry {
-            name: entry.file_name().display().to_string(),
+            name: rel,
             kind: if meta.is_dir() { "dir" } else { "file" }.into(),
             size_bytes: meta.is_file().then_some(meta.len()),
             modified_at: meta
@@ -549,9 +569,72 @@ pub fn list_dir(mount: &Path, dir: &Path) -> Result<Vec<FileEntry>, FilesError> 
                 .ok()
                 .map(chrono::DateTime::<chrono::Utc>::from),
         });
+        if meta.is_dir() && depth > 1 {
+            walk_tree(root, &path, depth - 1, out)?;
+        }
     }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(out)
+    Ok(())
+}
+
+/// Size of one file on a bank — the Range arithmetic's denominator.
+pub fn file_size(mount: &Path, path: &Path) -> Result<u64, FilesError> {
+    verify_under_mount(mount, path)?;
+    let meta = std::fs::metadata(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => FilesError::Missing(rel_of(mount, path)),
+        _ => FilesError::Io(format!("{}: {e}", path.display())),
+    })?;
+    if meta.is_dir() {
+        return Err(FilesError::NotThatKind(format!(
+            "'{}' is a directory — the files face lists directories, it does not read them",
+            rel_of(mount, path)
+        )));
+    }
+    Ok(meta.len())
+}
+
+/// Read `length` bytes of a file starting at `start` — a Range request's
+/// payload. The handler owns the 206/416 arithmetic; this is the seek
+/// and take.
+pub fn read_file_range(
+    mount: &Path,
+    path: &Path,
+    start: u64,
+    length: u64,
+) -> Result<Vec<u8>, FilesError> {
+    verify_under_mount(mount, path)?;
+    let mut file = std::fs::File::open(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => FilesError::Missing(rel_of(mount, path)),
+        _ => FilesError::Io(format!("{}: {e}", path.display())),
+    })?;
+    use std::io::{Read, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| FilesError::Io(format!("{}: {e}", path.display())))?;
+    let mut buf = Vec::with_capacity(length.min(1 << 20) as usize);
+    file.take(length)
+        .read_to_end(&mut buf)
+        .map_err(|e| FilesError::Io(format!("{}: {e}", path.display())))?;
+    Ok(buf)
+}
+
+/// Move (rename) within one bank — the point of banks is slow media, and
+/// slow media should not be re-uploaded to rename. The destination may
+/// not exist: rename-without-overwrite is the least surprising contract,
+/// and both endpoints are safe_join'd by the caller.
+pub fn move_file(mount: &Path, from: &Path, to: &Path) -> Result<(), FilesError> {
+    verify_under_mount(mount, from)?;
+    std::fs::metadata(from).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => FilesError::Missing(rel_of(mount, from)),
+        _ => FilesError::Io(format!("{}: {e}", from.display())),
+    })?;
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| FilesError::Io(format!("{}: {e}", parent.display())))?;
+    }
+    if std::fs::symlink_metadata(to).is_ok() {
+        return Err(FilesError::Exists(rel_of(mount, to)));
+    }
+    verify_under_mount(mount, to)?;
+    std::fs::rename(from, to).map_err(|e| FilesError::Io(format!("{}: {e}", to.display())))
 }
 
 /// Read one file from a bank.
@@ -1065,13 +1148,13 @@ mod tests {
         let n = write_file(&root, &safe_join(&root, "dumps/redis.rdb").unwrap(), b"RDBDATA2").unwrap();
         assert_eq!(n, 8);
 
-        let entries = list_dir(&root, &root).unwrap();
+        let entries = list_tree(&root, &root, 1).unwrap();
         assert_eq!(entries.len(), 1, "the adoption record is invisible");
         assert_eq!(entries[0].name, "dumps");
         assert_eq!(entries[0].kind, "dir");
 
         let dumps = safe_join(&root, "dumps").unwrap();
-        let entries = list_dir(&root, &dumps).unwrap();
+        let entries = list_tree(&root, &dumps, 1).unwrap();
         assert_eq!(entries[0].name, "redis.rdb");
         assert_eq!(entries[0].kind, "file");
         assert_eq!(entries[0].size_bytes, Some(8));

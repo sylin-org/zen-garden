@@ -295,6 +295,14 @@ W7), Lantern, O3 adoption.
    composes it from song_blocks, on_response merges heard answers into
    existing peers by rev, fixtures pin the shape - a newcomer learns the
    whole room in one exchange.
-3. Next arc: M1 release pipeline (main branch + tag->build->sign->
-   publish, gate: a stranger installs from a public artifact). One slice =
-   one commit, gates green at every commit.
+3. The VISIBILITY slice LANDED (eab16e44..c900eabc): `rake list` verb
+   (collection face GET /api/v1/offerings + URIs, stem://host:home),
+   `rake find --format uri`, the portrait (GET / + /portrait, embedded
+   page from SelfView), pulse (GET /pulse page + /pulse/stream SSE
+   firehose over topology + offering events, L18-at-the-edge). The
+   garden is VISIBLE.
+4. Next arcs per the bring assessment
+   (docs/v1/design/poc-bring-assessment.md): agentic baseline
+   (errors-as-JSON + exit codes + --field), companions epic (five
+   rulings pending), data plane (jobs first), orchestrators/O3. One
+   slice = one commit, gates green at every commit.

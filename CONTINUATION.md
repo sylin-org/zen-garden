@@ -61,10 +61,14 @@ container-internal files), roles persistence, rich-reply inventory map
 gap (queued as the next slice: DiscoveryResponse carries the full
 InventoryMap; on_response merges by rev).
 
-THE EPIC IS COMPLETE. Next arcs: M1 release pipeline (main + tag ->
-build -> sign -> publish), rich-reply inventory slice, fleet housekeeping
-(.82 done as part of W7; roles persistence). Self-contained for a clean
-context. Verify everything against the tree — trust files over this doc.
+THE EPIC IS COMPLETE. LANDED SINCE W7: rich-reply inventory (`5d5fdbc9`),
+visibility slice (list verb, find --format uri, portrait, pulse:
+`eab16e44..c900eabc`), agentic baseline (errors-as-JSON, exit codes,
+--field: `c56e8b99`), and the jobs registry (`bd907c94`). Suzu (the
+companion ecosystem) is spun out to `sylin-org/suzu` (ADR-0006).
+Next: data plane (bank fs CRUD, S3/WebDAV), then orchestrators/O3,
+then M1. Self-contained for a clean context. Verify everything against
+the tree — trust files over this doc.
 
 ## Project in one paragraph
 

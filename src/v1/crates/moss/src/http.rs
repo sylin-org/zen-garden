@@ -797,8 +797,8 @@ async fn pulse_page() -> axum::response::Html<&'static str> {
 async fn pulse_stream(
     State(state): State<Arc<AppState>>,
 ) -> axum::response::Response {
-    let mut topology = state.topology.events();
-    let mut offerings = state.garden.events();
+    let topology = state.topology.events();
+    let offerings = state.garden.events();
 
     let stream = futures::stream::unfold(
         (topology, offerings),

@@ -75,6 +75,10 @@ enum Face {
     OfferingCaptureLast,
     /// Replant: restore an incarnation from its checkpoint (ADR-0005 §6).
     OfferingReplant,
+    /// The stone's living landing page (PORTRAIT idea: identity + presence).
+    Portrait,
+    /// The root lands on the portrait.
+    Root,
     /// The room's banks, projected from the cache (ADR-0004 §4 grid).
     GardenStorage,
     OfferingList,
@@ -86,7 +90,7 @@ enum Face {
 }
 
 impl Face {
-    const ALL: [Face; 22] = [
+    const ALL: [Face; 24] = [
         Face::Health,
         Face::FrontDoor,
         Face::StoneSelf,
@@ -103,6 +107,8 @@ impl Face {
         Face::OfferingCapture,
         Face::OfferingCaptureLast,
         Face::OfferingReplant,
+        Face::Portrait,
+        Face::Root,
         Face::OfferingList,
         Face::OfferingPlant,
         Face::OfferingShow,
@@ -123,7 +129,8 @@ impl Face {
             | Face::Catalog
             | Face::StorageList
             | Face::GardenStorage
-            | Face::OfferingCaptureLast | Face::OfferingList | Face::OfferingShow => "GET",
+            | Face::OfferingCaptureLast | Face::OfferingList | Face::OfferingShow
+            | Face::Portrait | Face::Root => "GET",
             | Face::StorageAdopt | Face::StorageEject | Face::StorageRoles
             | Face::OfferingCapture | Face::OfferingReplant => "POST",
             Face::OfferingPlant | Face::OfferingRest | Face::OfferingWake => "POST",
@@ -154,6 +161,8 @@ impl Face {
                 "/api/v1/offerings/{fqn}/capture"
             }
             Face::OfferingReplant => "/api/v1/offerings/{fqn}/replant",
+            Face::Portrait => "/portrait",
+            Face::Root => "/",
             Face::OfferingRest => "/api/v1/offerings/{fqn}/rest",
             Face::OfferingWake => "/api/v1/offerings/{fqn}/wake",
         }
@@ -206,6 +215,10 @@ impl Face {
             Face::OfferingReplant => {
                 "Replant from a checkpoint {run?}: verify, restore the directory, place from the stored spec - same FQN, same connection strings (ADR-0005 §6)."
             }
+            Face::Portrait => {
+                "This stone's living landing page: identity, offerings, banks, the room."
+            }
+            Face::Root => "Lands on the portrait.",
             Face::OfferingRest => {
                 "Rest a managed offering - stopped, and reconcile will keep it so."
             }
@@ -235,6 +248,8 @@ impl Face {
             Face::OfferingCapture => post(capture_offer),
             Face::OfferingCaptureLast => get(capture_last),
             Face::OfferingReplant => post(replant_offer),
+            Face::Portrait => get(portrait),
+            Face::Root => get(root),
             Face::OfferingShow => get(show_offering),
             Face::OfferingRest => post(rest_offering),
             Face::OfferingWake => post(wake_offering),
@@ -667,6 +682,93 @@ async fn replant_offer(
     ))
 }
 
+/// The stone's portrait: the landing page, rendered from the SelfView and
+/// the room - one composer, one more mouth (B1; the PoC's PORTRAIT idea).
+async fn portrait(State(state): State<Arc<AppState>>) -> axum::response::Html<String> {
+    let frame = state.chirp_source.body();
+    let offerings = state.garden.snapshot();
+    let peers = state.topology.snapshot();
+    let uptime = chrono::Utc::now() - state.started_at;
+
+    let mut offering_rows = String::new();
+    if offerings.is_empty() {
+        offering_rows.push_str("<div><em>nothing planted yet</em></div>");
+    } else {
+        offering_rows.push_str("<table><tr><th>offering</th><th>status</th><th>home</th></tr>");
+        for o in &offerings {
+            let home = o
+                .managed()
+                .and_then(|m| m.port_map.values().next())
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "-".into());
+            offering_rows.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                html_escape(&o.name),
+                html_escape(o.status.as_str()),
+                html_escape(&home)
+            ));
+        }
+        offering_rows.push_str("</table>");
+    }
+
+    let banks = state.storage.banks();
+    let bank_rows = if banks.is_empty() {
+        "<div><em>no banks adopted</em></div>".to_string()
+    } else {
+        let mut s = String::from("<table><tr><th>bank</th><th>state</th></tr>");
+        for b in &banks {
+            s.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                html_escape(&b.fqn),
+                html_escape(&b.state)
+            ));
+        }
+        s.push_str("</table>");
+        s
+    };
+
+    let mut peer_rows = String::new();
+    for p in &peers {
+        peer_rows.push_str(&format!("<div>{}</div>", html_escape(&p.body.stone.name)));
+    }
+    if peer_rows.is_empty() {
+        peer_rows.push_str("<div><em>the room is quiet</em></div>");
+    }
+
+    let page = include_str!("../assets/portrait.html")
+        .replace("__STONE_NAME__", &html_escape(&state.stone_name))
+        .replace("__MOSS_VERSION__", &html_escape(&frame.stone.moss.version))
+        .replace("__HEALTH__", &html_escape(&frame.presence.health))
+        .replace("__STONE_ID__", &html_escape(&frame.stone.id))
+        .replace(
+            "__ADDRESS__",
+            &html_escape(&format!(
+                "{}:{}",
+                frame.stone.network.address.ip, frame.stone.network.address.port
+            )),
+        )
+        .replace("__BOOT_ID__", &html_escape(&state.boot_id.to_string()))
+        .replace("__UPTIME__", &format!("{}s", uptime.num_seconds()))
+        .replace("__OFFERING_COUNT__", &offerings.len().to_string())
+        .replace("__OFFERINGS__", &offering_rows)
+        .replace("__BANK_COUNT__", &banks.len().to_string())
+        .replace("__BANKS__", &bank_rows)
+        .replace("__PEER_COUNT__", &peers.len().to_string())
+        .replace("__PEERS__", &peer_rows);
+    axum::response::Html(page)
+}
+
+/// The root lands on the portrait (the stone's face is its front door).
+async fn root() -> axum::response::Redirect {
+    axum::response::Redirect::temporary("/portrait")
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 async fn front_door() -> Json<serde_json::Value> {
     let routes: Vec<serde_json::Value> = Face::ALL
         .iter()
@@ -923,9 +1025,15 @@ mod tests {
                     assert_eq!(res.status(), StatusCode::NOT_FOUND, "nobody by that ref here");
                 }
                 _ if face.method() == "GET" && !face.path().contains('{') => {
+                    // Root redirects to the portrait; every other static GET answers.
+                    let want = if face == Face::Root {
+                        StatusCode::TEMPORARY_REDIRECT
+                    } else {
+                        StatusCode::OK
+                    };
                     assert_eq!(
                         res.status(),
-                        StatusCode::OK,
+                        want,
                         "{} {} must answer",
                         face.method(),
                         face.path()

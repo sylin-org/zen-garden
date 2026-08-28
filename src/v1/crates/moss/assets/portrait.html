@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__STONE_NAME__ — a Zen Garden stone</title>
+<style>
+  :root { --bg:#101613; --card:#18211c; --ink:#dfe8e2; --dim:#8aa094; --ok:#7fc98f; --line:#243128; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--ink); font:16px/1.5 ui-sans-serif,system-ui,sans-serif; padding:2rem; max-width:60rem; margin-inline:auto; }
+  h1 { font-size:1.9rem; letter-spacing:.02em; }
+  h1 .dot { display:inline-block; width:.65em; height:.65em; border-radius:50%; background:var(--ok); margin-right:.35em; }
+  .sub { color:var(--dim); margin:.2rem 0 1.5rem; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:.6rem; padding:1rem 1.2rem; margin-bottom:1.1rem; }
+  h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:.14em; color:var(--dim); margin-bottom:.7rem; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { text-align:left; padding:.25rem .5rem .25rem 0; font-size:.95rem; }
+  th { color:var(--dim); font-weight:500; }
+  code { background:#0c110e; padding:.1rem .4rem; border-radius:.3rem; font-size:.9rem; }
+  .kv { display:grid; grid-template-columns:10rem 1fr; row-gap:.3rem; }
+  .kv div:nth-child(odd) { color:var(--dim); }
+  footer { color:var(--dim); font-size:.8rem; margin-top:1.5rem; }
+</style>
+</head>
+<body>
+  <h1><span class="dot"></span>__STONE_NAME__</h1>
+  <div class="sub">a stone in the zen garden · moss __MOSS_VERSION__ · __HEALTH__</div>
+
+  <section>
+    <h2>Identity</h2>
+    <div class="kv">
+      <div>stone id</div><div><code>__STONE_ID__</code></div>
+      <div>address</div><div><code>__ADDRESS__</code></div>
+      <div>boot</div><div><code>__BOOT_ID__</code></div>
+      <div>uptime</div><div>__UPTIME__</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Offerings (__OFFERING_COUNT__)</h2>
+    <div id="offerings">__OFFERINGS__</div>
+  </section>
+
+  <section>
+    <h2>Banks (__BANK_COUNT__)</h2>
+    <div id="banks">__BANKS__</div>
+  </section>
+
+  <section>
+    <h2>The room (__PEER_COUNT__ peers)</h2>
+    <div class="kv">__PEERS__</div>
+  </section>
+
+  <footer>grown by zen garden · the will survives the death of its stone</footer>
+</body>
+</html>

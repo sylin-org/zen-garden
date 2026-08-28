@@ -35,6 +35,10 @@ in the slice's design note, PR, or commit message):
    **brought reshaped**, **deferred**, or **left dead** — with a name on
    the decision. Silently absent is a defect, not a decision.
 
+The walk ends in a **proposal**: homework notes, the verdicts, and the
+recommended design — presented for a nod before implementation begins.
+Small fixes may walk the gates lightly, but the walk is never skipped.
+
 Then witness: the objective from gate 2 becomes an assertion, tested in
 deployment reality — including the mid-cycle joiner (a restart, a deploy, a
 newcomer stone), because that is how features actually arrive in the field.

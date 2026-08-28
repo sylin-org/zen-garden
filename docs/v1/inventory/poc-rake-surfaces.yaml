@@ -1,4 +1,14 @@
 # PoC rake surfaces — deep inventory (2026-08-28 read-everything pass)
+# LIVE CAPTURE 2026-08-28: the PoC garden is STILL ALIVE — 5 stones thriving
+# via stone-obsidian-summit's view (obsidian-summit .195, topaz-butte .111,
+# golden-summit .155, slate-grove .120, emerald-vale .82), mongodb x3 +
+# qdrant + searxng all healthy, one stone up 65 days. Every command below was
+# RUN, not just read: observe table, find --format uri (bare connection
+# strings), list (health table), config --field connection.uri (one line for
+# scripts), status ACCESS panel, pulse (live gauges + event ring), watch
+# (raw JSON events). `rake api` bug reproduced live (manifest parse fail).
+# The full PoC fleet is therefore a LIVE migration target for v1 — no
+# flag day required; the rooms coexist today.
 # Survey method: full read of src/poc/rake/src (~26.6k lines); manifest as checklist, implementations read per command.
 # All paths relative to src/poc/rake/src/ unless prefixed. Endpoints verified against
 # src/poc/common/src/client/stone_api.rs (StoneApi) plus raw ctx.client calls in each command.

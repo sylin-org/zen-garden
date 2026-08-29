@@ -199,7 +199,17 @@ mod tests {
     /// `skip_serializing_if` keeps the field absent).
     #[tokio::test]
     async fn rich_ask_declares_itself_on_the_wire() {
-        let capture = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        // Ephemeral ports collide under CI's full parallel load; the
+        // collision is environmental, so a bounded retry is honest here.
+        let capture = loop {
+            match UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await {
+                Ok(s) => break s,
+                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(e) => panic!("bind failed: {e}"),
+            }
+        };
         let port = capture.local_addr().unwrap().port();
 
         let listener = tokio::spawn(async move {

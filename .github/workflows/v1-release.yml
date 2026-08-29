@@ -44,7 +44,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           cd src/v1/target/release
-          tar czf "../../../${{ matrix.bundle }}" moss rake
+          tar czf "$GITHUB_WORKSPACE/${{ matrix.bundle }}" moss rake
 
       - name: Package (windows)
         if: matrix.os == 'windows-latest'

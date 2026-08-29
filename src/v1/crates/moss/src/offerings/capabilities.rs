@@ -161,9 +161,9 @@ async fn http_get_json(port: u16, path: &str) -> Result<serde_json::Value, Disco
         .uri(uri)
         .body(http_body_util::Empty::<bytes::Bytes>::new())
         .map_err(|e| DiscoverError::Channel(format!("build request: {e}")))?;
-    let response = client
-        .request(request)
+    let response = tokio::time::timeout(std::time::Duration::from_secs(LIST_TIMEOUT_SECS), client.request(request))
         .await
+        .map_err(|_| DiscoverError::Channel(format!("exceeded its {LIST_TIMEOUT_SECS}s budget")))?
         .map_err(|e| DiscoverError::Channel(format!("{e}")))?;
     if !response.status().is_success() {
         return Err(DiscoverError::Channel(format!(
@@ -526,7 +526,7 @@ success".into())
         // refresh then records an honest refresh_error, job still done.
         let job_id = grow(Arc::clone(&service), tracker.clone(), "ollama", "model", "llama3")
             .unwrap();
-        for _ in 0..100 {
+        for _ in 0..500 {
             if let crate::jobs::JobStatus::Done | crate::jobs::JobStatus::Failed =
                 job_status(&tracker, &job_id)
             {

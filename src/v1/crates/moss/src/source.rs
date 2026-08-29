@@ -446,7 +446,12 @@ mod tests {
             .adopt(
                 &crate::offerings::storage::VolumeFact {
                     roles: Vec::new(),
-                    mount_point: std::path::PathBuf::from("E:\\"),
+                    mount_point: {
+                        let d = std::env::temp_dir()
+                            .join(format!("zg-src-mnt-{}", std::process::id()));
+                        std::fs::create_dir_all(&d).unwrap();
+                        d
+                    },
                     device_id: None,
                     fqn: None,
                     capacity_bytes: 1000,

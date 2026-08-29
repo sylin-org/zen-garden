@@ -790,6 +790,16 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
+    /// A mount point that EXISTS on every platform (CI runners have no
+    /// E: drive - fixtures must touch only what they create).
+    fn temp_mount(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir()
+            .join(format!("zg-mnt-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
     fn vol(mount: &str, adopted: bool) -> VolumeFact {
         VolumeFact {
             mount_point: PathBuf::from(mount),
@@ -889,7 +899,12 @@ mod tests {
     #[test]
     fn role_declarations_refuse_the_unknown_and_sing_the_known() {
         let storage = Storage::new();
-        storage.reconcile(&[vol("E:\\", true)]);
+        // Adopt for real: the write-through law needs the adoption
+        // record ON the media, not merely a fact in memory.
+        let mount = temp_mount("roles");
+        storage
+            .adopt(&vol(mount.to_str().unwrap(), false), "seed-vault", "0198e0c7-0000-7000-8000-000000000001")
+            .unwrap();
 
         let signal = storage.subscribe();
         let before = *signal.borrow();
@@ -1018,7 +1033,8 @@ mod tests {
     #[test]
     fn eject_holds_until_a_true_replug() {
         let storage = Storage::new();
-        storage.reconcile(&[vol("E:\\", true)]);
+        let mount = temp_mount("replug");
+        storage.reconcile(&[vol(mount.to_str().unwrap(), true)]);
         assert_eq!(storage.banks()[0].state, vocab::MOUNTED);
 
         // The operator ejects: news.
@@ -1030,14 +1046,14 @@ mod tests {
 
         // Same slot still present: the ruling holds, no flip-flop.
         let before = *signal.borrow();
-        storage.reconcile(&[vol("E:\\", true)]);
+        storage.reconcile(&[vol(mount.to_str().unwrap(), true)]);
         assert_eq!(*signal.borrow(), before, "no fight with the operator");
         assert_eq!(storage.banks()[0].state, vocab::EJECTED);
 
         // A vanish does not hold: return (same slot) remounts. The
         // operator's hold was released by seeing the volume gone once.
         storage.reconcile(&[]);
-        storage.reconcile(&[vol("E:\\", true)]);
+        storage.reconcile(&[vol(mount.to_str().unwrap(), true)]);
         assert_eq!(storage.banks()[0].state, vocab::MOUNTED);
 
         // Refusals: ejecting a ghost or the already-at-rest.
@@ -1063,12 +1079,13 @@ mod tests {
 
         // Boot: an adopted volume registers (news).
         let before = *signal.borrow();
-        storage.reconcile(&[vol("E:\\", true)]);
+        let mount = temp_mount("bumps");
+        storage.reconcile(&[vol(mount.to_str().unwrap(), true)]);
         assert_ne!(*signal.borrow(), before);
         assert_eq!(storage.banks()[0].state, vocab::MOUNTED);
 
         // Capacity-only change: telemetry rides, no bump.
-        let mut fatter = vol("E:\\", true);
+        let mut fatter = vol(mount.to_str().unwrap(), true);
         fatter.available_bytes = 100;
         let before = *signal.borrow();
         storage.reconcile(&[fatter.clone()]);

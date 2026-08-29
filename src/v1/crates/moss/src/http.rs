@@ -1784,7 +1784,12 @@ mod tests {
             .adopt(
                 &crate::offerings::storage::VolumeFact {
                     roles: Vec::new(),
-                    mount_point: std::path::PathBuf::from("E:\\tmp-adopt"),
+                    mount_point: {
+                        let d = std::env::temp_dir()
+                            .join(format!("zg-tmp-adopt-{}", std::process::id()));
+                        std::fs::create_dir_all(&d).unwrap();
+                        d
+                    },
                     device_id: None,
                     fqn: None,
                     capacity_bytes: 4000,
@@ -1820,7 +1825,12 @@ mod tests {
             .adopt(
                 &crate::offerings::storage::VolumeFact {
                     roles: Vec::new(),
-                    mount_point: std::path::PathBuf::from("E:\\tmp-eject"),
+                    mount_point: {
+                        let d = std::env::temp_dir()
+                            .join(format!("zg-tmp-eject-{}", std::process::id()));
+                        std::fs::create_dir_all(&d).unwrap();
+                        d
+                    },
                     device_id: None,
                     fqn: None,
                     capacity_bytes: 1000,

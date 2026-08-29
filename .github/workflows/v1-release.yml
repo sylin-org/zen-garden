@@ -1,0 +1,87 @@
+# v1 release pipeline (M1): tag -> build matrix -> checksums -> GitHub release.
+# Gate (charter M1): a stranger installs from a public artifact. The
+# repo's public/private flip is the operator's call; the pipeline works
+# either way (private releases serve collaborators).
+name: v1-release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            bundle: zen-garden-linux-x86_64.tar.gz
+          - os: windows-latest
+            target: windows-x86_64
+            bundle: zen-garden-windows-x86_64.zip
+          - os: macos-latest
+            target: macos-aarch64
+            bundle: zen-garden-macos-aarch64.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/v1
+
+      - name: Build (release)
+        run: cargo build --release -p garden-moss -p garden-rake
+        working-directory: src/v1
+
+      - name: Package (unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd src/v1/target/release
+          tar czf "../../../${{ matrix.bundle }}" moss rake
+
+      - name: Package (windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path src/v1/target/release/moss.exe, src/v1/target/release/rake.exe `
+            -DestinationPath ${{ matrix.bundle }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ matrix.bundle }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/* \
+            installer/v1/install.sh installer/v1/install.ps1

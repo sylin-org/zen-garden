@@ -3,16 +3,21 @@ name: v1
 on:
   push:
     branches: [dev]
-    paths: ["src/v1/**", "installer/v1/**", ".github/workflows/v1.yml"]
+    paths: ["src/v1/**", "installer/v1/**", ".github/workflows/v1.yml", ".github/workflows/v1-release.yml"]
   pull_request:
     paths: ["src/v1/**", ".github/workflows/v1.yml"]
 
 # The v1 workspace is koi-free: no sibling checkout, no path deps.
 # Law of this workspace (CODE-RULES R4.1): clippy -D warnings from birth.
+# Law R4.4: tests run where CI runs — every platform in the matrix.
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: src/v1
@@ -32,6 +37,18 @@ jobs:
 
       - name: Clippy (deny warnings)
         run: cargo clippy --all-targets -- -D warnings
+        if: matrix.os == 'ubuntu-latest'
 
       - name: Test
         run: cargo test --workspace
+
+  resolver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Node resolver tests
+        run: npm test
+        working-directory: src/v1/resolvers/node

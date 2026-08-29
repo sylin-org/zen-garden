@@ -36,3 +36,9 @@ compatibility:
     decide: place
     because: SearXNG with many search engines benefits from 256MB+ RAM
     suggest: Consider increasing RAM for better performance with concurrent queries
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

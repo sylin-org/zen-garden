@@ -62,3 +62,9 @@ compatibility:
     decide: place
     because: "Milvus performs best with 16GB+ RAM for production workloads"
     suggest: "Consider increasing RAM for larger vector collections"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

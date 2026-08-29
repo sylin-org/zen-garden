@@ -39,3 +39,9 @@ compatibility:
     decide: place
     because: Argon2id password hashing may require additional memory
     suggest: Consider 128MB+ RAM if using file-based user provider with Argon2id
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

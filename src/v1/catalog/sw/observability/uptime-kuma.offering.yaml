@@ -25,3 +25,9 @@ compatibility:
     decide: place
     because: "The full image bundles Chromium for browser-based monitors; benefits from 512MB+"
     suggest: Plenty for HTTP/TCP/ping monitors on smaller stones; browser monitors want more
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

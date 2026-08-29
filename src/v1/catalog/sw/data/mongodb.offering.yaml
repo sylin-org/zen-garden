@@ -43,3 +43,11 @@ compatibility:
     decide: deny
     because: "MongoDB requires at least 512MB of RAM"
     suggest: redis
+
+# living will: the engine produces its own dump (stdout) - a raw
+# byte-copy of a live data dir would tear.
+capture:
+  mode: export
+  export:
+    exec: [mongodump, --archive]
+    timeout_s: 900

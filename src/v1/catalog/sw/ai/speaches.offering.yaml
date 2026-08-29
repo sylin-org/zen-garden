@@ -61,3 +61,8 @@ compatibility:
     decide: deny
     because: Speaches Docker images require amd64 or arm64
     suggest: Use amd64 or arm64 hardware
+
+# living will: model caches are re-fetchable - preserve the
+# signature and configs, not the weights.
+capture:
+  mode: stateless

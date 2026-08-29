@@ -54,3 +54,9 @@ compatibility:
     decide: place
     because: WireGuard with multiple peers benefits from 128MB+ RAM
     suggest: Consider increasing RAM for many concurrent connections
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

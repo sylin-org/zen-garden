@@ -68,3 +68,8 @@ compatibility:
     decide: deny
     because: OpenedAI Speech Docker images require amd64
     suggest: Use amd64 hardware
+
+# living will: model caches are re-fetchable - preserve the
+# signature and configs, not the weights.
+capture:
+  mode: stateless

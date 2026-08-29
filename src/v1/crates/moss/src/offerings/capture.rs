@@ -105,10 +105,13 @@ impl CapturePolicy {
                 }
             }
             CaptureMode::LockAndCopy => {
-                if self.quiesce.is_none() || self.resume.is_none() {
+                // Hooks are optional: flat-file services have no
+                // application lock to take (D15's corpus taught this) -
+                // copy-freely is an honest will. But a release without a
+                // lock is fiction, so resume demands quiesce.
+                if self.quiesce.is_none() && self.resume.is_some() {
                     return Err(fail(
-                        "lock-and-copy requires BOTH quiesce and resume — a lock that \
-                         cannot be released outranks every other disaster",
+                        "resume without quiesce releases a lock that was never taken",
                     ));
                 }
                 if self.export.is_some() {
@@ -241,12 +244,27 @@ managed:
 
     #[test]
     fn broken_wills_refuse_loudly() {
-        // lock-and-copy without release: a stranded lock outranks every disaster.
+        // resume without quiesce: releasing a lock that was never taken.
         let err = Catalog::parse("witnessdb", &format!(
-            "{BASE}\ncapture:\n  mode: lock-and-copy\n  quiesce: {{exec: [\"lock\"]}}\n"
+            "{BASE}
+capture:
+  mode: lock-and-copy
+  resume: {{exec: [\"unlock\"]}}
+"
         ))
         .unwrap_err();
-        assert!(err.contains("BOTH quiesce and resume"), "{err}");
+        assert!(err.contains("never taken"), "{err}");
+
+        // Copy-freely (no hooks) is an HONEST lock-and-copy will - the
+        // flat-file corpus taught this (D15).
+        let free = Catalog::parse("witnessdb", &format!(
+            "{BASE}
+capture:
+  mode: lock-and-copy
+"
+        ))
+        .unwrap();
+        assert!(free.capture.is_some());
 
         // export without a dump command.
         let err = Catalog::parse("witnessdb", &format!("{BASE}\ncapture:\n  mode: export\n")).unwrap_err();

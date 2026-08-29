@@ -35,3 +35,9 @@ compatibility:
     decide: place
     because: "Docker Registry benefits from 128MB+ RAM for concurrent pulls"
     suggest: Consider increasing RAM for multiple simultaneous image operations
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

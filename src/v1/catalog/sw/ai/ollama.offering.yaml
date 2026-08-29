@@ -40,3 +40,8 @@ capabilities:
     remove:
       exec: [ollama, rm, "{{item}}"]
       timeout_secs: 60
+
+# living will: model caches are re-fetchable - preserve the
+# signature and configs, not the weights.
+capture:
+  mode: stateless

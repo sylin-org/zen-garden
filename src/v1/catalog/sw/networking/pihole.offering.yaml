@@ -27,3 +27,9 @@ managed:
     gravity:
       schedule: "0 3 * * 0"
       command: [pihole, -g]
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

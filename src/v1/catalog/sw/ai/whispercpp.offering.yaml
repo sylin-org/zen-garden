@@ -49,3 +49,8 @@ compatibility:
     suggest: >-
       CPU inference is fast for most models. For large-v3 with real-time
       performance, build from source with GPU support.
+
+# living will: model caches are re-fetchable - preserve the
+# signature and configs, not the weights.
+capture:
+  mode: stateless

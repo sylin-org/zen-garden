@@ -43,3 +43,9 @@ compatibility:
     decide: place
     because: "MinIO performs better with 512MB+ RAM for concurrent operations"
     suggest: "Consider increasing RAM for better performance with multiple clients"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

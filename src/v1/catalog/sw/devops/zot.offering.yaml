@@ -52,3 +52,9 @@ compatibility:
     decide: place
     because: "Zot benefits from 128MB+ RAM for concurrent operations"
     suggest: Consider increasing RAM for production workloads
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

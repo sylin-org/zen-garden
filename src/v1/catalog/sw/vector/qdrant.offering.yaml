@@ -47,3 +47,9 @@ compatibility:
     decide: place
     because: "Qdrant runs with <2 GB RAM but vector workloads will rely heavily on swap"
     suggest: "Allocate 2 GB+ or enable on-disk segments per collection (on_disk: true)"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

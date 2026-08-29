@@ -44,3 +44,9 @@ compatibility:
     decide: place
     because: Traefik with many routes benefits from 128MB+ RAM
     suggest: Consider increasing RAM for complex routing configurations
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

@@ -53,3 +53,9 @@ compatibility:
     decide: place
     because: n8n performs best with 2GB+ RAM for complex workflows
     suggest: For production use with complex workflows, consider 2GB+ RAM
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

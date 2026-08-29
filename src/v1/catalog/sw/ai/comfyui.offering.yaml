@@ -89,3 +89,8 @@ compatibility:
     decide: deny
     because: ComfyUI Docker images require amd64
     suggest: Use amd64 hardware with NVIDIA or AMD GPU
+
+# living will: model caches are re-fetchable - preserve the
+# signature and configs, not the weights.
+capture:
+  mode: stateless

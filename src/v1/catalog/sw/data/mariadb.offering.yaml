@@ -36,3 +36,11 @@ compatibility:
     decide: place
     because: "MariaDB performs best with 1GB+ RAM for InnoDB buffer pool"
     suggest: "Consider increasing RAM for production workloads"
+
+# living will: the engine produces its own dump (stdout) - a raw
+# byte-copy of a live data dir would tear.
+capture:
+  mode: export
+  export:
+    exec: [mariadb-dump, --all-databases]
+    timeout_s: 900

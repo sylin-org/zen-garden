@@ -52,3 +52,9 @@ compatibility:
     decide: place
     because: "InfluxDB production deployments typically need 2GB+ RAM"
     suggest: "For high-cardinality workloads, consider 2GB+ RAM"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

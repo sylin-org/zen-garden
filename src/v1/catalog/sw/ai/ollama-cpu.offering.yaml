@@ -80,3 +80,8 @@ compatibility:
       Celeron J/N-series CPUs lack AVX; inference will be slower but functional
       for embedding
     suggest: Embedding models work fine without AVX. Avoid generation models on this hardware.
+
+# living will: model caches are re-fetchable - preserve the
+# signature and configs, not the weights.
+capture:
+  mode: stateless

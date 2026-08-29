@@ -418,6 +418,30 @@ managed:",
         assert_eq!(m.capabilities[0].add.as_ref().unwrap().timeout_secs, 60);
     }
 
+    /// D15's dead debt stays dead: a manifest with volumes MUST state
+    /// its living will. An undeclared capture on stateful work is
+    /// untrusted-consistency - never silently tarred, and never silent.
+    #[test]
+    fn every_stateful_manifest_declares_its_living_will() {
+        let catalog = Catalog::load_fully_layered(None, &[]);
+        let undeclared: Vec<String> = catalog
+            .names()
+            .into_iter()
+            .filter(|name| {
+                let m = catalog.get(name).expect("named entry exists");
+                m.managed
+                    .as_ref()
+                    .map(|mi| !mi.volumes.is_empty())
+                    .unwrap_or(false)
+                    && m.capture.is_none()
+            })
+            .collect();
+        assert!(
+            undeclared.is_empty(),
+            "stateful manifests without a living will: {undeclared:?}"
+        );
+    }
+
     /// The catalog derives from the directory: good manifests load, bad
     /// ones are skipped with warnings, siblings survive.
     #[test]

@@ -32,3 +32,9 @@ compatibility:
     decide: place
     because: "RabbitMQ performs best with 1GB+ RAM; memory watermark and GC overhead may cause issues"
     suggest: "Consider increasing RAM for production workloads"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

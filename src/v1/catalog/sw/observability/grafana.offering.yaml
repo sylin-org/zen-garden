@@ -40,3 +40,9 @@ compatibility:
     decide: place
     because: "Grafana with multiple dashboards benefits from 512MB+ RAM"
     suggest: Consider increasing RAM for heavy dashboard usage
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

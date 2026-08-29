@@ -25,3 +25,9 @@ compatibility:
     decide: place
     because: Radarr is light but benefits from 256MB+ free
     suggest: Fine on most stones; add RAM for large libraries
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

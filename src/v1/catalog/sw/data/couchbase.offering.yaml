@@ -31,3 +31,9 @@ compatibility:
     decide: deny
     because: "Couchbase Server requires substantial RAM; <2GB is typically unstable"
     suggest: "Increase stone memory or choose PostgreSQL/Redis instead"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

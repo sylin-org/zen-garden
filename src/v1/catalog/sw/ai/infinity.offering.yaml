@@ -55,3 +55,8 @@ compatibility:
       - { path: machine.architecture, op: in, value: [armv7l, armv6l] }
     decide: deny
     because: Infinity Docker images require amd64 or arm64
+
+# living will: model caches are re-fetchable - preserve the
+# signature and configs, not the weights.
+capture:
+  mode: stateless

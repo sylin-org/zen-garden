@@ -44,3 +44,9 @@ compatibility:
     decide: place
     because: "Weaviate requires at least SSE4.2 for basic operations"
     suggest: "Upgrade to a CPU with SSE4.2 support (Intel Nehalem+ or AMD Bulldozer+)"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

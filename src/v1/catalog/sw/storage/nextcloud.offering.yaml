@@ -50,3 +50,9 @@ compatibility:
     decide: place
     because: "Nextcloud with apps and preview generation benefits from 1GB+ RAM"
     suggest: "For production use with multiple users, consider 1GB+ RAM"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

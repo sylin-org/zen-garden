@@ -27,3 +27,11 @@ compatibility:
     decide: deny
     because: "PostgreSQL requires at least 512MB of RAM (practical minimum for stable operation)"
     suggest: "Increase stone memory or run fewer services"
+
+# living will: the engine produces its own dump (stdout) - a raw
+# byte-copy of a live data dir would tear.
+capture:
+  mode: export
+  export:
+    exec: [pg_dumpall]
+    timeout_s: 900

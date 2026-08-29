@@ -41,3 +41,9 @@ compatibility:
     decide: place
     because: "ntfy is tiny (~30MB) but needs a little headroom"
     suggest: "Runs comfortably on the smallest stones"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

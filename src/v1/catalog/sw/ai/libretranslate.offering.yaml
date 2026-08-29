@@ -49,3 +49,8 @@ compatibility:
     suggest: >-
       Initial startup may take 5-15 minutes depending on selected languages and
       network speed
+
+# living will: model caches are re-fetchable - preserve the
+# signature and configs, not the weights.
+capture:
+  mode: stateless

@@ -34,3 +34,9 @@ compatibility:
     decide: deny
     because: "SQL Server containers require at least ~2GB RAM"
     suggest: "Increase stone memory or choose PostgreSQL instead"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

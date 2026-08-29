@@ -30,3 +30,9 @@ compatibility:
     decide: place
     because: Homepage with many widgets benefits from 128MB+ RAM
     suggest: Consider increasing RAM for complex dashboards with many service integrations
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

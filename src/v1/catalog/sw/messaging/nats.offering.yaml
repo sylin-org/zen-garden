@@ -28,3 +28,9 @@ compatibility:
     decide: deny
     because: "NATS is lightweight but requires at least 64MB RAM"
     suggest: "Increase stone memory"
+
+# living will: flat-file state, no application lock - the imprint
+# copies freely within its window.
+capture:
+  mode: lock-and-copy
+  max_locked_s: 120

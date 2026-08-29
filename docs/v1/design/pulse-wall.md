@@ -150,6 +150,28 @@ From the r/homelab and r/selfhosted communities, 2025 sentiment:
    `expired` (silence past the threshold — the soft-honesty hold, row
    dims with "expired"). Two different trust stories; two treatments.
 
+## A register ruling for the wall (operator feedback, 2026-08-29)
+
+The delight lives in the VISUALS — states at a glance, motion, color,
+glyphs, the heartbeat. The WORDS stay plain garden English: states and
+facts, no weather metaphors, no almanac poetry. Operator surface =
+plain register (R3.1); poetry is the Household register's job, later,
+on the moss page.
+
+    BEFORE (over-poetic)                     AFTER (plain garden English)
+    ☀ the garden is calm — 5 stones...   →   5 stones reachable · 7 offerings running
+    ☁ overcast on the east bed —         →   crystalline-dune unreachable —
+      crystalline-dune expired (90s)         expired after 90s of silence
+    🍂 tranquil-pass said goodbye        →   tranquil-pass said goodbye —
+      (farewell poeticism)                   removed from the room
+    today in the garden: 3 plantings ·   →   today: 3 planted · 1 goodbye ·
+      1 goodbye · 0 interventions            2 models grown · 1 checkpoint
+
+Glyphs stay (a goodbye marker, a dormancy glyph on rested offerings) —
+a glyph is visual language, not vocabulary. The heartbeat sparkline
+stays. The weather LINE becomes a plain status line; the "weather"
+concept survives only as the at-a-glance quality of that line.
+
 ## Gate 5 — Verdicts
 
 | PoC element | Verdict |

@@ -356,3 +356,42 @@ rules already promised a GPU sibling).
 **State left behind**: none — container, image, records, journals, and
 the root-owned model files (cleared via a throwaway container; noted as
 D17: in-container uid 0 writes make host files non-root cannot delete).
+
+## W11 — the release pipeline is real (2026-08-29, tag v0.1.0, GitHub Actions)
+
+M1's pipeline (charter): tag → build matrix → checksums → release →
+install script.
+
+- **One tag, three platforms**: pushing `v0.1.0` built moss + rake
+  release binaries on ubuntu (linux-x86_64), windows (x86_64), and
+  macos (aarch64) and published the release with `checksums.txt` and
+  the two install scripts — no local machine in the loop.
+- **Self-install, the witness run**: `installer/v1/install.ps1` fetched
+  the release bundle, verified its sha256 against checksums.txt,
+  installed to `~\.zen-garden\bin`, and the installed `rake 0.1.0`
+  then walked the LIVE room — tending an unreachable entry stone,
+  re-discovering .195 and .82 by multicast, answering `rake observe`.
+  The connection promise, exercised by a binary that arrived only
+  through the pipeline.
+- **The R4.4 matrix earned its keep on night one** — six real finds,
+  all fixed and green (ubuntu ✓ windows ✓ macos ✓ resolver ✓):
+  the PoC-era root `.cargo/config.toml` forced lld on macOS (Apple
+  clang refuses it); release packaging path; storage/source/http test
+  fixtures faked mount points on an `E:` drive that exists only on the
+  dev workstation (and passed on stale manifests there); the
+  capability growth test needed the http channel's connect timeout;
+  `surface.json` needed an eol=LF pin (CRLF checkouts broke the
+  byte-equality gate); and the rich-ask wire test now composes its
+  promise instead of racing CI multicast routes — which surfaced
+  bind_ear hardening that is production-real: SO_REUSEPORT on unix
+  (D8's note, load-bearing) and an explicitly chosen multicast
+  interface for the send.
+
+**Gate status (honest)**: M1's bar is "a stranger installs from a
+public artifact". The pipeline and artifacts are real and verified by
+self-install; the STRANGER part needs the repo's public flip — the
+operator's call, recorded here so the gate is not silently waived.
+
+DEBT settled en route: D18 records signing deferred to M2 (sha256 +
+TLS is M1's trust anchor); D17 records the root-owned capability
+volume files W10 discovered.

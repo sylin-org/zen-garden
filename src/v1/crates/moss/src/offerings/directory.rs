@@ -53,6 +53,13 @@ impl OfferingDir {
         }
     }
 
+    /// Remove the offering's whole directory (uproot). Fails when
+    /// uid-0 workload files resist the moss's uid — the caller may ask
+    /// the world to purge (D17).
+    pub fn remove(&self) -> std::io::Result<()> {
+        std::fs::remove_dir_all(&self.root)
+    }
+
     pub fn record_json(&self) -> PathBuf {
         self.root.join("record.json")
     }

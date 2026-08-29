@@ -79,6 +79,17 @@ pub trait Runtime: Send + Sync {
         Vec::new()
     }
 
+    /// Remove a host directory through the world (D17): workloads write
+    /// uid-0 files into their volumes, and the moss's own uid cannot
+    /// delete them. The world purges the dir using the offering's OWN
+    /// image — already local, nothing new pulled. Unsupported worlds
+    /// refuse and the caller degrades honestly.
+    async fn purge_dir(&self, _host_path: &std::path::Path, _image: &str) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "this world cannot purge host directories",
+        ))
+    }
+
     /// Follow an offering's logs (docker-logs semantics: history first,
     /// then live). `tail` bounds the history to the last N lines; the
     /// stream runs until the container stops or the client leaves.

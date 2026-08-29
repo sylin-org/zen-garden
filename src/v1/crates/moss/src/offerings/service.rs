@@ -602,6 +602,32 @@ impl OfferingService {
         rt.remove(&fqn).await.map_err(CommandError::Runtime)?;
         self.registry.remove(&offering.offering_id);
         self.audit(&fqn, "Uprooted", serde_json::json!({}));
+
+        // Forgetting the offering means forgetting its directory too.
+        // Workloads write uid-0 files into their volumes; when the moss's
+        // own uid cannot delete them, the WORLD purges via the offering's
+        // own image (D17) - and a world that cannot purge degrades with
+        // an honest warning (R2.5), never a failed uproot.
+        let dir = self.dirs_root.dir_for(&fqn);
+        if let Err(e) = dir.remove() {
+            let image = offering
+                .managed()
+                .map(|m| m.spec.image.clone())
+                .unwrap_or_default();
+            match rt.purge_dir(&dir.root, &image).await {
+                Ok(()) => {
+                    let _ = dir.remove();
+                    tracing::info!(offering = %fqn, "offering directory purged through the world");
+                }
+                Err(pe) => {
+                    tracing::warn!(
+                        offering = %fqn, dir = %dir.root.display(),
+                        rm_error = %e, purge_error = %pe,
+                        "offering directory left in place - the world cannot clean it"
+                    );
+                }
+            }
+        }
         Ok(())
     }
 
@@ -653,11 +679,25 @@ managed:
 ";
 
     /// A place-anywhere fake: binds every role exactly at its ledgered home.
-    /// Lets sequencing tests run real offer flows without Docker.
-    struct RecordingRuntime;
+    /// Lets sequencing tests run real offer flows without Docker. Tracks
+    /// purge calls - the D17 fallback's law, tested.
+    struct RecordingRuntime {
+        purged: Arc<parking_lot::Mutex<Vec<(std::path::PathBuf, String)>>>,
+    }
 
     #[async_trait::async_trait]
     impl Runtime for RecordingRuntime {
+        async fn purge_dir(
+            &self,
+            host_path: &std::path::Path,
+            image: &str,
+        ) -> Result<(), RuntimeError> {
+            self.purged
+                .lock()
+                .push((host_path.to_path_buf(), image.to_string()));
+            let _ = std::fs::remove_dir_all(host_path);
+            Ok(())
+        }
         fn kind(&self) -> &'static str {
             "rec"
         }
@@ -705,7 +745,9 @@ managed:
             Arc::new(Registry::new(Arc::new(MemorySnapshotStore::default()))),
             Arc::new(RuntimeRegistry::build(vec![
                 Arc::new(NullRuntime),
-                Arc::new(RecordingRuntime),
+                Arc::new(RecordingRuntime {
+                    purged: Arc::new(parking_lot::Mutex::new(Vec::new())),
+                }),
             ])),
             "null".into(),
             Arc::new(catalog),
@@ -812,6 +854,28 @@ managed:
             .await
             .unwrap_err();
         assert!(err.to_string().contains("already planted"));
+    }
+
+    /// D17: uproot forgets the offering's DIRECTORY as well - and when
+    /// uid-0 files resist, the world is asked to purge with the
+    /// offering's own image.
+    #[tokio::test]
+    async fn uproot_forgets_the_directory_and_asks_the_world_when_resisted() {
+        let catalog = Catalog::embedded([("redis", REDIS)]).unwrap();
+        let (service, root) = service_with(catalog);
+        service
+            .offer("redis", None, HashMap::new(), None, Some("rec"), &inputs())
+            .await
+            .unwrap();
+
+        let dir = OfferingsRoot::new(root.clone()).dir_for("redis::default");
+        let volumes = dir.volumes();
+        std::fs::create_dir_all(&volumes).unwrap();
+        std::fs::write(volumes.join("data.db"), b"state").unwrap();
+        assert!(dir.root.exists());
+
+        service.uproot("redis").await.unwrap();
+        assert!(!dir.root.exists(), "the offering's memory goes with it");
     }
 
     /// Off-grammar names refuse loudly — image-tag shapes get the '::'

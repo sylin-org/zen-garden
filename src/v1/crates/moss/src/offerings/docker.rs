@@ -81,6 +81,84 @@ impl DockerRuntime {
 
 #[async_trait::async_trait]
 impl Runtime for DockerRuntime {
+    /// D17: purge a host directory through a one-shot container from the
+    /// offering's own image (already local — nothing new pulled), with
+    /// the dir's PARENT bound read-write so the dir itself can go.
+    async fn purge_dir(
+        &self,
+        host_path: &std::path::Path,
+        image: &str,
+    ) -> Result<(), RuntimeError> {
+        use futures::StreamExt;
+        let parent = host_path
+            .parent()
+            .ok_or_else(|| RuntimeError::Failed("path has no parent".into()))?;
+        let name = host_path
+            .file_name()
+            .ok_or_else(|| RuntimeError::Failed("path has no file name".into()))?
+            .to_string_lossy()
+            .to_string();
+        let config = bollard::container::Config {
+            image: Some(image.to_string()),
+            entrypoint: Some(vec!["rm".into(), "-rf".into()]),
+            cmd: Some(vec![format!("/pw/{name}")]),
+            host_config: Some(HostConfig {
+                binds: Some(vec![format!(
+                    "{}:/pw",
+                    parent.to_string_lossy()
+                )]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let created = self
+            .docker
+            .create_container(
+                Some(bollard::container::CreateContainerOptions {
+                    name: format!("zen-purge-{}", uuid::Uuid::now_v7()),
+                    platform: None,
+                }),
+                config,
+            )
+            .await
+            .map_err(|e| RuntimeError::Failed(format!("purge container: {e}")))?;
+        let result = async {
+            self.docker
+                .start_container::<String>(&created.id, None)
+                .await
+                .map_err(|e| RuntimeError::Failed(format!("purge start: {e}")))?;
+            let mut wait = self.docker.wait_container(
+                &created.id,
+                Some(bollard::container::WaitContainerOptions {
+                    condition: "not-running",
+                }),
+            );
+            while let Some(status) = wait.next().await {
+                let status = status
+                    .map_err(|e| RuntimeError::Failed(format!("purge wait: {e}")))?;
+                if status.status_code != 0 {
+                    return Err(RuntimeError::Failed(format!(
+                        "purge exited {}",
+                        status.status_code
+                    )));
+                }
+            }
+            Err(RuntimeError::Failed("purge wait ended without a status".into()))
+        };
+        let outcome = result.await;
+        let _ = self
+            .docker
+            .remove_container(
+                &created.id,
+                Some(bollard::container::RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await;
+        outcome
+    }
+
     fn kind(&self) -> &'static str {
         "docker"
     }

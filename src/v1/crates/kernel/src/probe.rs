@@ -128,7 +128,7 @@ async fn ask_with(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
 
     /// End-to-end over loopback unicast: a stone speaks first, the probe

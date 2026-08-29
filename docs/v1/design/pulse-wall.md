@@ -150,6 +150,40 @@ From the r/homelab and r/selfhosted communities, 2025 sentiment:
    `expired` (silence past the threshold — the soft-honesty hold, row
    dims with "expired"). Two different trust stories; two treatments.
 
+## The geometry ladder (operator feedback, 2026-08-29)
+
+Trash hardware varies wildly — including thin VERTICAL screens mounted
+in gaming-PC case windows (a tall portrait strip), Firefly-grade OLEDs,
+and 80x24 ttys over ssh. The wall's ideal is: **gorgeous at every rung,
+degrading by dropping regions — never by truncating text.**
+
+The layout is a PURE FUNCTION: `layout(cols, rows) -> Regions`, chosen
+from a ladder. Every region's paint takes its own (w, h) and fits
+inside — the PoC's detail-budget idea generalized to the whole frame.
+
+| Rung | Geometry | Arrangement |
+|---|---|---|
+| **wide** | cols >= ~100 | header · gauges row · split: wire left / offerings+beds+status right · footer |
+| **stacked** | 60–100 cols | header · gauges · status · wire · beds strip · footer |
+| **tall** (portrait case screens) | rows >> cols, cols >= ~40 | ONE COLUMN, top to bottom: status · gauges row · wire (long — a tall screen is a feed's best friend) · one-line-per-stone garden strip · footer |
+| **narrow** | 40–60 cols | status · wire · compact garden strip · footer |
+| **tiny** (OLED sidecar) | < 40 cols | status line + last few wire lines, nothing else |
+
+- **Resize-safe**: geometry re-detected on terminal resize (SIGWINCH on
+  unix, console-buffer events on Windows); the frame buffer repaints
+  the new Regions cleanly.
+- **Trash-hardware courtesy**: unicode box glyphs fall back to ASCII,
+  color falls back to plain (NO_COLOR / TERM=dumb / flag), repaint is
+  a diff so slow terminals never flicker, and the redraw throttle
+  stands.
+- **The geometry gallery (tests)**: a unit test renders the frame at a
+  matrix of canonical sizes — 53x120 (portrait case screen), 80x24
+  (ssh tty), 120x40 (wide wall), 200x50 (kiosk TV), 26x12 (OLED) —
+  and asserts the invariants that make it gorgeous: no line exceeds
+  its width, regions never overlap, the status line and wire survive
+  at EVERY size, and text is never truncated mid-word. Layout is a
+  pure function, so the gallery is just assertions over outputs.
+
 ## A register ruling for the wall (operator feedback, 2026-08-29)
 
 The delight lives in the VISUALS — states at a glance, motion, color,

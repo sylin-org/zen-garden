@@ -12,6 +12,7 @@ pub mod consts;
 pub mod discovery;
 pub mod faces;
 pub mod surface;
+pub mod pulse;
 pub mod song;
 pub mod wish;
 pub mod wire;

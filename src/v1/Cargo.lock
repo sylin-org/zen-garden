@@ -685,6 +685,7 @@ dependencies = [
 name = "garden-rake"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "garden-contract",
  "garden-glossary",
@@ -692,6 +693,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2",
+ "terminal_size",
  "tokio",
  "uuid",
 ]
@@ -1795,6 +1797,16 @@ dependencies = [
  "filetime",
  "libc",
  "xattr",
+]
+
+[[package]]
+name = "terminal_size"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
+dependencies = [
+ "rustix",
+ "windows-sys",
 ]
 
 [[package]]

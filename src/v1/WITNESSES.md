@@ -395,3 +395,33 @@ operator's call, recorded here so the gate is not silently waived.
 DEBT settled en route: D18 records signing deferred to M2 (sha256 +
 TLS is M1's trust anchor); D17 records the root-owned capability
 volume files W10 discovered.
+
+## W12 — the garden, alive on a screen (2026-08-29, stone-tranquil-pass / 192.168.1.195, release build)
+
+The pulse wall (ADR-0013): one seq'd feed, one wall.
+
+- **The feed speaks in one voice**: `/pulse/stream` opens with the
+  snapshot (seq 0: stones, offerings, jobs as the stone sees them),
+  then typed events — `stone.load` every 10s, `topology.seen` as the
+  room chirps, `wire.delta` from dispatcher counters (R2.9-clean: no
+  tap on the wire), `pulse.lagged` when a reader falls behind.
+- **The wall renders it**: `rake pulse` (non-tty witness over ssh) —
+  "PULSE · 2 stones reachable · 1 offerings running", gauges fed by
+  real load (CPU 2%, MEM 24%), the heartbeat EKG breathing with the
+  sampler rhythm (▃▁▁▆▁), the wire carrying
+  *"stone-translucent-clearing is here"*, footer honest (evt/min, up
+  time, mode).
+- **The geometry gallery** asserts the frame at 53x120 portrait (case
+  screen), 80x24 ssh, 120x40 wall, 200x50 kiosk, 26x12 OLED: no
+  overflow, no overlap, status and wire alive at every size.
+- En route, three real finds: the write-half drop in `open_stream`
+  sent FIN and hyper cancelled every SSE stream (fixed: the half is
+  deliberately kept alive — this also un-breaks `rake watch`); the
+  wall asked for the feed at the PoC's path instead of the contract's
+  (fixed: paths come from `Face::path()`); the feed's stones now speak
+  the exact GardenStones shape (B1: one shape, wire to wall).
+
+**Gate status (honest)**: the goodbye moment is wired (goodbye removes
+the stone's row; expired dims it) but an actual goodbye was not
+witnessed live — no stone was gracefully shut down during the run; the
+unit tests carry the distinction until then.

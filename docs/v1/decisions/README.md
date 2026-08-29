@@ -30,6 +30,7 @@ is never edited — superseding decisions reference their predecessor.
 | [ADR-0007](ADR-0007-orthogonal-surface-degrees.md) | Accepted | Surface degrees: encoding, projection, extraction are orthogonal |
 | [ADR-0008](ADR-0008-catalog-sourcing-and-layering.md) | Accepted | Catalog sourcing: the approved set is embedded, operators layer on top |
 | [ADR-0009](ADR-0009-contract-first-codegen.md) | Accepted | Contract-first codegen: the faces table is generated truth |
+| [ADR-0013](ADR-0013-pulse-feed-and-wall.md) | Accepted | The pulse: one seq'd feed, one wall |
 
 ## Queued (expected soon)
 

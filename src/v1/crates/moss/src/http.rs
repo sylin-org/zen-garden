@@ -35,6 +35,8 @@ pub struct AppState {
     pub capture: Arc<crate::offerings::capture_run::Runner>,
     /// The async operation tracker (the data plane's async contract).
     pub jobs: crate::jobs::JobTracker,
+    /// The pulse bus (ADR-0013): typed, seq'd news for stream readers.
+    pub pulse: Arc<crate::pulse::Bus>,
     pub topology: Arc<garden_kernel::topology::Topology>,
     pub dispatcher: Dispatcher,
     pub ingest_counters: Arc<IngestCounters>,
@@ -1074,79 +1076,95 @@ async fn pulse_page() -> axum::response::Html<&'static str> {
 /// The SSE firehose (L18 at the edge): topology events and offering
 /// changes, merged into one stream. Each connection holds its own
 /// receivers; events are JSON, keep-alives keep proxies honest.
+/// Pulse stream query: an optional comma-separated category filter
+/// ("offering,topology,job,storage,stone,wire").
+#[derive(serde::Deserialize, Default)]
+struct PulseQuery {
+    categories: Option<String>,
+}
+
+/// Frame one pulse event as SSE; the category filter drops silently.
+fn pulse_sse(
+    ev: &garden_contract::pulse::PulseEvent,
+    filter: Option<&Vec<String>>,
+) -> Option<axum::response::sse::Event> {
+    if let Some(allowed) = filter
+        && !allowed.iter().any(|c| c == &ev.category)
+    {
+        return None;
+    }
+    let data = serde_json::to_string(ev).ok()?;
+    Some(
+        axum::response::sse::Event::default()
+            .id(ev.seq.to_string())
+            .event(ev.kind.clone())
+            .data(data),
+    )
+}
+
+/// The pulse (ADR-0013): snapshot first — the world as this stone sees
+/// it — then typed, seq'd events. A gap between the SSE `id`s is missed
+/// news, said out loud via `pulse.lagged`.
 async fn pulse_stream(
     State(state): State<Arc<AppState>>,
+    Query(query): Query<PulseQuery>,
 ) -> axum::response::Response {
-    let topology = state.topology.events();
-    let offerings = state.garden.events();
+    let filter: Option<Vec<String>> = query.categories.map(|c| {
+        c.split(',').map(str::trim).map(String::from).collect()
+    });
+    let rx = state.pulse.subscribe();
+    // Subscribe BEFORE the snapshot: nothing is missed, and the snapshot
+    // is the newer truth. seq 0 marks it as the opener.
+    let mut snapshot = garden_contract::pulse::PulseEvent::new(
+        "snapshot",
+        "pulse",
+        garden_contract::pulse::LEVEL_INFO,
+        "the world as this stone sees it",
+    )
+    .with_data(crate::pulse::snapshot(
+        &state.garden,
+        &state.topology,
+        &state.jobs,
+        self_view(&state),
+    ));
+    snapshot.seq = 0;
 
     let stream = futures::stream::unfold(
-        (topology, offerings),
-        |(mut topology, mut offerings)| async move {
+        (rx, filter, Some(snapshot)),
+        |(mut rx, filter, mut snapshot)| async move {
+            if let Some(ev) = snapshot.take()
+                && let Some(frame) = pulse_sse(&ev, filter.as_ref())
+            {
+                return Some((Ok::<_, std::convert::Infallible>(frame), (rx, filter, None)));
+            }
             loop {
-                tokio::select! {
-                    ev = topology.recv() => {
-                        match ev {
-                            Ok(ev) => {
-                                let line = match &ev {
-                                    garden_kernel::topology::TopologyEvent::Seen(v) => {
-                                        serde_json::json!({
-                                            "stream": "topology", "kind": "seen",
-                                            "stone": v.body.stone.name,
-                                            "health": v.body.presence.health,
-                                        })
-                                    }
-                                    garden_kernel::topology::TopologyEvent::Goodbye { stone_name, .. } => {
-                                        serde_json::json!({
-                                            "stream": "topology", "kind": "goodbye",
-                                            "stone": stone_name,
-                                        })
-                                    }
-                                    garden_kernel::topology::TopologyEvent::Expired { stone_name, .. } => {
-                                        serde_json::json!({
-                                            "stream": "topology", "kind": "expired",
-                                            "stone": stone_name,
-                                        })
-                                    }
-                                };
-                                let event = axum::response::sse::Event::default()
-                                    .event("topology")
-                                    .data(line.to_string());
-                                return Some((Ok::<_, std::convert::Infallible>(event), (topology, offerings)));
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                let event = axum::response::sse::Event::default()
-                                    .event("lagged")
-                                    .data(serde_json::json!({ "missed": n }).to_string());
-                                return Some((Ok::<_, std::convert::Infallible>(event), (topology, offerings)));
-                            }
-                            Err(_) => continue,
+                match rx.recv().await {
+                    Ok(ev) => {
+                        if let Some(frame) = pulse_sse(&ev, filter.as_ref()) {
+                            return Some((Ok(frame), (rx, filter, None)));
                         }
                     }
-                    ev = offerings.recv() => {
-                        match ev {
-                            Ok(ev) => {
-                                let event = axum::response::sse::Event::default()
-                                    .event("offerings")
-                                    .data(serde_json::json!({ "name": ev.name }).to_string());
-                                return Some((Ok::<_, std::convert::Infallible>(event), (topology, offerings)));
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                let event = axum::response::sse::Event::default()
-                                    .event("lagged")
-                                    .data(serde_json::json!({ "missed": n }).to_string());
-                                return Some((Ok::<_, std::convert::Infallible>(event), (topology, offerings)));
-                            }
-                            Err(_) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        let lag = garden_contract::pulse::PulseEvent::new(
+                            "pulse.lagged",
+                            "pulse",
+                            garden_contract::pulse::LEVEL_WARN,
+                            format!("the stream ran {n} events behind - some news was dropped"),
+                        );
+                        if let Some(frame) = pulse_sse(&lag, filter.as_ref()) {
+                            return Some((Ok(frame), (rx, filter, None)));
                         }
                     }
+                    Err(_) => continue,
                 }
             }
         },
     );
 
-    axum::response::IntoResponse::into_response(axum::response::Sse::new(stream)
-        .keep_alive(axum::response::sse::KeepAlive::default()))
+    axum::response::IntoResponse::into_response(
+        axum::response::Sse::new(stream)
+            .keep_alive(axum::response::sse::KeepAlive::default()),
+    )
 }
 
 /// Every tracked async operation, newest first.
@@ -1539,6 +1557,7 @@ mod tests {
                 Arc::new(crate::offerings::capture_run::NullHooks),
             )),
             jobs: crate::jobs::JobTracker::new(),
+            pulse: Arc::new(crate::pulse::Bus::new()),
             topology: Arc::new(garden_kernel::topology::Topology::new()),
             dispatcher: Dispatcher::new(16).0,
             ingest_counters: Arc::new(IngestCounters::default()),

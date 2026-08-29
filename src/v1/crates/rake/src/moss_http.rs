@@ -364,6 +364,10 @@ pub async fn open_stream(
         .await
         .map_err(|_| StreamError::Connection("write timed out".into()))?
         .map_err(|e| StreamError::Connection(e.to_string()))?;
+    // Keep the write half alive: dropping it sends FIN, and hyper reads
+    // that half-close as "client is done" - cancelling the stream. One
+    // connection per stream; leaking the half is the honest trade.
+    std::mem::forget(write_half);
 
     // The head: status line + headers, line by line, under the budget.
     use tokio::io::{AsyncBufReadExt, BufReader};

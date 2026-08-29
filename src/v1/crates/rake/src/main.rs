@@ -18,6 +18,7 @@
 //! Reads stay tolerant: observation walks past a sick answerer.
 
 mod moss_http;
+mod wall;
 mod tending;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -36,7 +37,7 @@ use std::time::Duration;
 /// How long rake listens for discovery answers after the call (ms).
 const DEFAULT_TIMEOUT_MS: u64 = 2500;
 /// How long rake waits for a moss's HTTP answer to a READ.
-const HTTP_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const HTTP_TIMEOUT: Duration = Duration::from_secs(3);
 /// Mutations can move worlds: plant pulls images and starts containers
 /// (place witnessed taking >3s even warm), so they carry a wider budget.
 /// Rest/wake/uproot ride it too — one mutation budget is easier to reason
@@ -198,6 +199,8 @@ enum Command {
         /// on the connected stone.
         offering: String,
     },
+    /// The garden, alive on this screen: the pulse wall (ADR-0013).
+    Pulse,
     /// Replant an offering from its checkpoint: verify, restore, place.
     /// Same FQN, same connection strings - the incarnation returns.
     Replant {
@@ -1073,6 +1076,10 @@ async fn run(cli: &Cli) -> Result<(), String> {
         }
         Command::Ensure { name, timeout } => cmd_ensure(cli, name, *timeout).await?,
         Command::Capabilities { offering } => cmd_capabilities(cli, offering).await?,
+        Command::Pulse => {
+            wall::run(cli).await?;
+            return Ok(());
+        }
         Command::Nourish { apply, canary } => cmd_nourish(cli, *apply, canary.as_deref()).await?,
         Command::Api { filter } => {
             let needle = filter.as_deref().map(str::to_lowercase);

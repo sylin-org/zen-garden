@@ -1099,6 +1099,65 @@
       ],
       "title": "DiscoveryResponse",
       "type": "object"
+    },
+    "PulseEvent": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One pulse event. `seq` is per-bus, monotonic, gap = missed news.",
+      "properties": {
+        "category": {
+          "description": "Coarse category for filtering (\"offering\", \"topology\", \"job\",\n\"storage\", \"stone\", \"wire\").",
+          "type": "string"
+        },
+        "data": {
+          "description": "Structured detail, sections per kind (R3.9)."
+        },
+        "kind": {
+          "description": "Glossary noun for what happened (\"offering.placed\", \"topology.goodbye\",\n\"job.failed\", \"load.tick\", \"wire.delta\", \"snapshot\").",
+          "type": "string"
+        },
+        "level": {
+          "description": "info | warn | error.",
+          "type": "string"
+        },
+        "offering": {
+          "description": "The offering this news is about, when about one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seq": {
+          "description": "Monotonic per-bus sequence; a gap on reconnect means missed news.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stone": {
+          "description": "The stone this news is about, when about a stone.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "description": "One plain-English sentence — the wire line.",
+          "type": "string"
+        },
+        "ts": {
+          "description": "RFC 3339 wall-clock time at the speaking stone.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "ts",
+        "kind",
+        "category",
+        "level",
+        "summary"
+      ],
+      "title": "PulseEvent",
+      "type": "object"
     }
   }
 }

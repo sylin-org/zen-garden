@@ -13,6 +13,7 @@ pub fn type_schemas() -> Vec<( &'static str, Schema)> {
         ("ChirpFrame", schema_for!(crate::chirp::ChirpFrame)),
         ("DiscoveryRequest", schema_for!(crate::discovery::DiscoveryRequest)),
         ("DiscoveryResponse", schema_for!(crate::discovery::DiscoveryResponse)),
+        ("PulseEvent", schema_for!(crate::pulse::PulseEvent)),
     ]
 }
 

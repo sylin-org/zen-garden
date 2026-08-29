@@ -11,6 +11,7 @@
 mod http;
 mod identity;
 mod jobs;
+mod pulse;
 mod offerings;
 mod source;
 
@@ -409,6 +410,10 @@ async fn main() {
     let jobs_tracker = journal_root
         .map(jobs::JobTracker::with_journal)
         .unwrap_or_default();
+
+    // The pulse bus (ADR-0013): one typed, seq'd channel of the stone's
+    // news; adapters translate existing sources into it.
+    let pulse_bus = pulse::Bus::new();
     pipeline::step::<usize, String, _>("jobs-reconcile", {
         let jobs_tracker = jobs_tracker.clone();
         async move { Ok(jobs_tracker.interrupt_stale_running()) }
@@ -420,16 +425,32 @@ async fn main() {
     let state = Arc::new(http::AppState {
         topology: Arc::clone(&topology),
         dispatcher: dispatcher.clone(),
-        ingest_counters,
-        garden,
+        ingest_counters: Arc::clone(&ingest_counters),
+        garden: Arc::clone(&garden),
         storage: Arc::clone(&storage),
         capture: capture_runner,
-        jobs: jobs_tracker,
+        jobs: jobs_tracker.clone(),
+        pulse: Arc::new(pulse_bus.clone()),
         chirp_source: chirp_source.clone() as Arc<dyn garden_kernel::announce::ChirpSource>,
         stone_name: identity.stone_name.clone(),
         boot_id,
         started_at: chrono::Utc::now(),
     });
+    // The pulse adapters (ADR-0013): translate existing sources into
+    // the bus until cancelled. The same Arcs the faces see.
+    tokio::spawn(pulse::run(
+        pulse_bus,
+        pulse::Sources {
+            garden: Arc::clone(&garden),
+            topology: Arc::clone(&topology),
+            jobs: jobs_tracker,
+            storage: Arc::clone(&storage),
+            dispatcher: dispatcher.clone(),
+            ingest: Arc::clone(&ingest_counters),
+        },
+        token.clone(),
+    ));
+
     let app = http::router(state);
     let listener = pipeline::step("http-listen", async move {
         tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, http_port))

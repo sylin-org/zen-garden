@@ -24,6 +24,11 @@ async fn bind_ear(port: u16, group: Option<Ipv4Addr>) -> std::io::Result<UdpSock
         Some(socket2::Protocol::UDP),
     )?;
     sock.set_reuse_address(true)?;
+    // macOS (BSD) refuses a second bind of one UDP port on
+    // SO_REUSEADDR alone - both sockets must carry SO_REUSEPORT
+    // (D8's "SO_REUSEPORT Unix" note, now load-bearing).
+    #[cfg(unix)]
+    sock.set_reuse_port(true)?;
     sock.bind(&addr.into())?;
     sock.set_nonblocking(true)?;
     let socket = UdpSocket::from_std(sock.into())?;

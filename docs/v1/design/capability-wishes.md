@@ -128,17 +128,34 @@ NOT in this slice.
 | check_updates / upgrade of capabilities | deferred (nourish semantics for content; post-W2) |
 | Garden-wide aggregate face | deferred (free later: chirps already carry entries) |
 
-## Delight / audiences
+## Delight / audiences (walked against dx-delight-research.md, 2026-08-29)
 
 - **Agent (J1)**: `resolve("ollama:llama3")` answers with a connection
   string only when that model truly answers somewhere in the room.
 - **Gardener**: `rake capabilities ollama` reads the models on the stone;
   the room envelope shows which stone holds which model.
 - **Household** (M5 portal, later): "found" markers — the garden speaks
-  content, not just services.
+  content, not just services. Register law (R1.1 amendment, F4):
+  "capability" is plumbing-speak and never reaches household surfaces;
+  the declared rendering ("what it can do" / found) is decided with the
+  portal slice, so W1's wire stays neutral and translation happens at
+  the surface only.
 - **Skeptic demo**: pull a model on one stone → `rake find` room-wide
   flips to answer; stop the stone → honest miss. The connection promise,
   one level deeper.
+
+**Delight acceptance criteria on this slice** (F3 — the error IS the
+guidance; TTFS arcs; the E-disposition pattern from the research doc):
+
+1. **Wish parse errors teach the grammar.** A typo'd selector
+   (`ollama[mode:llama3]`) answers R3.3-complete — and because the
+   offering's manifest DECLARES its capability types, the error names the
+   ones that exist ("ollama speaks: model"). Bridges, never aliases
+   (R3.1).
+2. **The miss answer offers the path.** A wish unmet room-wide doesn't
+   dead-end: it names an offering that could grow the capability and
+   offers `rake ensure` — the showcase moment per F3/TTFS, an acceptance
+   note on this slice the way E was on S5.
 
 ## Cost & size (honest estimate)
 

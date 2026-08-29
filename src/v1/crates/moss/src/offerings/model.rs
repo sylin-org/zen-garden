@@ -296,6 +296,7 @@ impl Offering {
             state: garden_contract::chirp::ServiceState {
                 status: self.status.as_str().into(),
                 role: None,
+                mode: Some(self.mode().as_str().into()),
             },
             ports,
             capabilities: self.sub_capabilities.clone(),

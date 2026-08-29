@@ -1237,7 +1237,7 @@ async fn cmd_ensure(cli: &Cli, name: &str, timeout: u64) -> Result<Answer, Strin
     // capability growth is W2 — so its miss TEACHES instead (F3).
     match garden_contract::wish::parse_wish(name) {
         Err(e) => return Err(e.to_string()),
-        Ok(Some(wish)) => return cmd_ensure_wish(cli, &wish).await,
+        Ok(Some(wish)) => return cmd_ensure_wish(cli, &wish, timeout).await,
         Ok(None) => {}
     }
     let fqn = garden_glossary::fqn::canonicalize(name)
@@ -1266,7 +1266,7 @@ async fn cmd_ensure(cli: &Cli, name: &str, timeout: u64) -> Result<Answer, Strin
                 .and_then(|m| m.values().next())
                 .and_then(|p| p.as_u64());
             let status = svc["state"]["status"].as_str().unwrap_or("unknown").to_string();
-            let uri = connection_uri(svc["stem"].as_str().unwrap_or("?"), &ip, port);
+            let uri = connection_uri(svc["stem"].as_str().unwrap_or("?"), &ip.to_string(), port);
             let value = serde_json::json!({
                 "data": {
                     "ensured": true,
@@ -1380,6 +1380,7 @@ async fn cmd_ensure(cli: &Cli, name: &str, timeout: u64) -> Result<Answer, Strin
 async fn cmd_ensure_wish(
     cli: &Cli,
     wish: &garden_contract::wish::Wish,
+    timeout: u64,
 ) -> Result<Answer, String> {
     let fqn = garden_glossary::fqn::canonicalize(&wish.offering)
         .map_err(|e| format!("'{}' does not speak the name grammar: {e}", wish.offering))?;
@@ -1387,16 +1388,26 @@ async fn cmd_ensure_wish(
     let wished_instance = wish.offering.contains("::");
     let room = cli.garden_envelope().await?;
     let mut could_grow: Vec<String> = Vec::new();
+    let mut managed_holders: Vec<(IpAddr, u16, String)> = Vec::new();
+    let mut adopted_only = false;
     for s in envelope_plain(&room)?["stones"].as_array().into_iter().flatten() {
         let stone = s["stone"]["name"].as_str().unwrap_or("?").to_string();
-        let ip = s["stone"]["network"]["address"]["ip"]
+        let ip: IpAddr = s["stone"]["network"]["address"]["ip"]
             .as_str()
             .unwrap_or("?")
-            .to_string();
+            .parse()
+            .map_err(|e| format!("stone '{stone}' spoke an unreadable address: {e}"))?;
+        let port = s["stone"]["network"]["address"]["port"].as_u64().unwrap_or(7285) as u16;
         for svc in s["inventory"]["services"]["items"].as_array().into_iter().flatten() {
             let svc_name = svc["name"].as_str().unwrap_or("");
+            let svc_mode = svc["state"]["mode"].as_str().unwrap_or("managed");
             if service_matches(&fqn, &stem, wished_instance, svc_name) {
                 could_grow.push(format!("{} on {}", display_name(svc_name), stone));
+                if svc_mode == "managed" {
+                    managed_holders.push((ip, port, svc_name.to_string()));
+                } else {
+                    adopted_only = true;
+                }
             }
             let caps = svc["capabilities"].as_object();
             let satisfied = wish.selectors.iter().all(|sel| {
@@ -1413,7 +1424,7 @@ async fn cmd_ensure_wish(
                 .and_then(|m| m.values().next())
                 .and_then(|p| p.as_u64());
             let status = svc["state"]["status"].as_str().unwrap_or("unknown").to_string();
-            let uri = connection_uri(svc["stem"].as_str().unwrap_or("?"), &ip, port);
+            let uri = connection_uri(svc["stem"].as_str().unwrap_or("?"), &ip.to_string(), port);
             let value = serde_json::json!({
                 "data": {
                     "ensured": true,
@@ -1450,19 +1461,98 @@ async fn cmd_ensure_wish(
         }
     }
     let want = want_string(wish);
-    Err(match could_grow.len() {
-        0 => format!(
-            "no offering '{}' grows anywhere in the room — `rake ensure {}` would plant it; the wish {} waits for content",
-            display_name(&wish.offering),
-            display_name(&wish.offering),
-            want
-        ),
-        _ => format!(
-            "no stone holds {} yet. It could grow on: {} — grow it there, then ask again",
-            want,
-            could_grow.join(", ")
-        ),
-    })
+    if managed_holders.is_empty() {
+        let trust = if adopted_only {
+            " — the garden observes adopted work and never operates it (L25); grow it there yourself, then ask again"
+        } else {
+            " — grow it there, then ask again"
+        };
+        return Err(match could_grow.len() {
+            0 => format!(
+                "no offering '{}' grows anywhere in the room — `rake ensure {}` would plant it; the wish {} waits for content",
+                display_name(&wish.offering),
+                display_name(&wish.offering),
+                want
+            ),
+            _ => format!(
+                "no stone holds {} yet. It could grow on: {}{}",
+                want,
+                could_grow.join(", "),
+                trust
+            ),
+        });
+    }
+
+    // GROW (W2): the wish is unmet and a managed holder exists — ask its
+    // stone to grow the items, then poll the wish green (bounded).
+    let (ip, port, holder) = managed_holders[0].clone();
+    let cap_path = paths::capabilities(&holder);
+    for sel in &wish.selectors {
+        let body = serde_json::json!({ "type": sel.kind, "item": sel.item });
+        if let Err(e) =
+            moss_http::request_json("POST", ip, port, &cap_path, Some(&body), HTTP_TIMEOUT).await
+        {
+            return Err(format!("'{}' refused the growth: {e}", display_name(&holder)));
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+    loop {
+        if let Ok(v) = moss_http::get_json(ip, port, &cap_path, HTTP_TIMEOUT).await {
+            let caps = envelope_plain(&v)?["capabilities"].clone();
+            let satisfied = wish.selectors.iter().all(|sel| {
+                caps.get(&sel.kind)
+                    .and_then(|v| v.as_array())
+                    .map(|items| {
+                        items.iter().any(|i| {
+                            capability_satisfied(i.as_str().unwrap_or(""), &sel.item)
+                        })
+                    })
+                    .unwrap_or(false)
+            });
+            if satisfied {
+                // The connection promise carries the port: read the
+                // holder's record for its observed address.
+                let holder_port = moss_http::get_json(
+                    ip,
+                    port,
+                    &paths::record(&holder),
+                    HTTP_TIMEOUT,
+                )
+                .await
+                .ok()
+                .and_then(|r| {
+                    envelope_plain(&r).ok()?["offering"]["location"]["port"].as_u64()
+                });
+                let uri = connection_uri(&stem, &ip.to_string(), holder_port);
+                let name = holder.clone();
+                return Ok(Answer::new(serde_json::json!({
+                    "data": {
+                        "ensured": true,
+                        "how": "grown",
+                        "name": name,
+                        "uri": uri,
+                    }
+                }))
+                .human(move |v| {
+                    println!(
+                        "{} now holds {} — grown, not planted: {}",
+                        display_name(v["data"]["name"].as_str().unwrap_or("?")),
+                        want,
+                        v["data"]["uri"].as_str().unwrap_or("(no published port)")
+                    );
+                    Ok(())
+                }));
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "'{}' is still growing {} after {timeout}s — the job keeps running; ask again shortly",
+                display_name(&holder),
+                want
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
 }
 
 /// A held item satisfies a wish when it names the same thing: exact, or

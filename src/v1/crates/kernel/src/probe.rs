@@ -262,6 +262,7 @@ mod tests {
                         state: garden_contract::chirp::ServiceState {
                             status: "running".into(),
                             role: None,
+                                                mode: None,
                         },
                         ports: Default::default(),
                 capabilities: Default::default(),

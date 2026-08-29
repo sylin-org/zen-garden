@@ -94,6 +94,8 @@ fn method_router(face: Face) -> axum::routing::MethodRouter<Arc<AppState>> {
             Face::OfferingWake => post(wake_offering),
             Face::OfferingUproot => axum::routing::delete(uproot_offering),
             Face::OfferingCapabilities => get(offering_capabilities),
+            Face::OfferingCapabilityAdd => post(capability_add),
+            Face::OfferingCapabilityRemove => axum::routing::delete(capability_remove),
         }
     }
 
@@ -1285,6 +1287,57 @@ async fn offering_capabilities(
     }
 }
 
+/// Grow one capability item (W2): validated and journaled by the domain;
+/// the answer is the job id — check /api/v1/jobs/{id} or just re-ask the
+/// wish when it goes green.
+async fn capability_add(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    body: Option<Json<serde_json::Value>>,
+) -> ApiResult {
+    let Json(body) = body.ok_or_else(|| {
+        ApiError(CommandError::BadRequest(
+            "grow one item: {\"type\": \"model\", \"item\": \"llama3\"}".into(),
+        ))
+    })?;
+    let kind = body["type"].as_str().ok_or_else(|| {
+        ApiError(CommandError::BadRequest("body needs a \"type\" (the capability type) and an \"item\" (its name)".into()))
+    })?;
+    let item = body["item"].as_str().ok_or_else(|| {
+        ApiError(CommandError::BadRequest("body needs a \"type\" and an \"item\"".into()))
+    })?;
+    let job_id = crate::offerings::capabilities::grow(
+        Arc::clone(&state.garden),
+        state.jobs.clone(),
+        &name,
+        kind,
+        item,
+    )
+    .map_err(|e| ApiError(CommandError::Conflict(e.to_string())))?;
+    Ok(Json(
+        serde_json::json!({ "data": { "accepted": true, "job_id": job_id } }),
+    ))
+}
+
+/// Remove one capability item (W2): the trust law and journaling are the
+/// domain's; this face only carries the wire.
+async fn capability_remove(
+    State(state): State<Arc<AppState>>,
+    Path((name, kind, item)): Path<(String, String, String)>,
+) -> ApiResult {
+    let job_id = crate::offerings::capabilities::prune(
+        Arc::clone(&state.garden),
+        state.jobs.clone(),
+        &name,
+        &kind,
+        &item,
+    )
+    .map_err(|e| ApiError(CommandError::Conflict(e.to_string())))?;
+    Ok(Json(
+        serde_json::json!({ "data": { "accepted": true, "job_id": job_id } }),
+    ))
+}
+
 async fn show_offering(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
@@ -2265,7 +2318,7 @@ mod tests {
                             name: "mongodb::default".into(),
                             stem: "mongodb".into(),
                             category: "data".into(),
-                            state: ServiceState { status: "running".into(), role: None },
+                            state: ServiceState { status: "running".into(), role: None, mode: None },
                             ports: Default::default(),
                 capabilities: Default::default(),
                         }],

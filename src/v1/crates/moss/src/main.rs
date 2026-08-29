@@ -342,6 +342,12 @@ async fn main() {
         }
     };
 
+    // Jobs outlive nothing silently (L11): a journal beside the
+    // offerings, and boot marks what the last process left running.
+    let journal_root = dirs_root
+        .parent()
+        .map(|p| p.join("journal").join("jobs"));
+
     // The offering application service: registry + worlds + catalog + facts,
     // coordinated (OFFERINGS.md §5/§4). The service pool resolves here so a
     // malformed MOSS_SERVICE_PORT_POOL aborts loudly at startup (L17).
@@ -400,7 +406,14 @@ async fn main() {
     ));
 
     // The jobs tracker: the async contract for every long-running operation.
-    let jobs_tracker = jobs::JobTracker::new();
+    let jobs_tracker = journal_root
+        .map(jobs::JobTracker::with_journal)
+        .unwrap_or_default();
+    pipeline::step::<usize, String, _>("jobs-reconcile", {
+        let jobs_tracker = jobs_tracker.clone();
+        async move { Ok(jobs_tracker.interrupt_stale_running()) }
+    })
+    .await;
 
     // HTTP surface, last: the garden answers once it can hear. The same
     // chirp source composes the SelfView — one identity, many mouths (B1).

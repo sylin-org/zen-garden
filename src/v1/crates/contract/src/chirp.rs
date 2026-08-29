@@ -110,6 +110,11 @@ pub struct ServiceState {
     /// Orchestration role when active: primary | replica | joining.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// How this instance came to be here (managed | adopted | borrowed):
+    /// the trust law needs it on the wire — consumers may ask the garden
+    /// to grow MANAGED work; adopted work is never operated (L25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 /// One storage bank in presence (ADR-0005 §8): logical FQN identity plus

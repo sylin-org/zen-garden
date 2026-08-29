@@ -7,9 +7,11 @@
 //! by any client for their lifetime. This is the difference between "I
 //! sent a command and hope" and "I sent a command and can check on it."
 //!
-//! Jobs live in memory for now (they are runtime state, not on-media
-//! identity); persistence arrives when restart-resume of interrupted jobs
-//! becomes a requirement.
+//! Jobs JOURNAL to disk when a journal root is given (L11: no state
+//! machine without its crash-recovery path): start/complete/fail rewrite
+//! one small JSON file per job, and a boot reconcile marks still-running
+//! journals `interrupted` — the truth of what actually landed is
+//! re-observed by the domain sweep, never assumed.
 
 // JobStatus variants land with their consuming slices (faces, scheduler).
 #![allow(dead_code)]
@@ -19,16 +21,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// How far along a job is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JobStatus {
     Running,
     Done,
     Failed,
+    /// The process died mid-job; whatever the operation accomplished is
+    /// re-observed, never resumed blindly (L11).
+    Interrupted,
 }
 
 /// One tracked async operation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct Job {
     pub id: String,
     /// What kind of operation: "capture", "nourish", "replant", ...
@@ -50,6 +55,7 @@ pub struct Job {
 pub struct JobTracker {
     jobs: Arc<parking_lot::Mutex<HashMap<String, Job>>>,
     changes: Arc<tokio::sync::broadcast::Sender<String>>,
+    journal: Option<Arc<std::path::PathBuf>>,
 }
 
 impl Default for JobTracker {
@@ -64,6 +70,73 @@ impl JobTracker {
         Self {
             jobs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             changes: Arc::new(changes),
+            journal: None,
+        }
+    }
+
+    /// Track jobs that survive the process on disk: one JSON file per
+    /// job under `dir`, rewritten at every transition (L11).
+    pub fn with_journal(dir: std::path::PathBuf) -> Self {
+        let mut tracker = Self::new();
+        tracker.journal = Some(Arc::new(dir));
+        tracker
+    }
+
+    /// Boot reconciliation (L11): journals still marked `running` belong
+    /// to jobs the process died inside — mark them `interrupted`, loudly.
+    /// What actually landed is the world's business; the sweeps re-observe.
+    pub fn interrupt_stale_running(&self) -> usize {
+        let Some(dir) = self.journal.as_ref().map(|d| d.as_ref().clone()) else {
+            return 0;
+        };
+        let mut interrupted = 0usize;
+        let Ok(entries) = std::fs::read_dir(&dir) else { return 0 };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let Ok(job) = serde_json::from_slice::<Job>(&bytes) else {
+                continue;
+            };
+            if job.status != JobStatus::Running {
+                continue;
+            }
+            let mut interrupted_job = job.clone();
+            interrupted_job.status = JobStatus::Interrupted;
+            interrupted_job.finished_at = Some(chrono::Utc::now());
+            interrupted_job.error =
+                Some("interrupted by restart — ask again; what landed is re-observed".into());
+            self.jobs.lock().insert(job.id.clone(), interrupted_job.clone());
+            if let Err(e) = serde_json::to_vec_pretty(&interrupted_job)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()))
+            {
+                tracing::warn!(error = %e, "job journal rewrite failed");
+            }
+            interrupted += 1;
+        }
+        if interrupted > 0 {
+            tracing::warn!(interrupted, "jobs interrupted by the last restart");
+        }
+        interrupted
+    }
+
+    fn journal_write(&self, job: &Job) {
+        let Some(dir) = self.journal.as_ref().map(|d| d.as_ref().clone()) else {
+            return;
+        };
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(error = %e, "job journal dir create failed");
+            return;
+        }
+        let path = dir.join(format!("{}.json", job.id));
+        if let Err(e) = serde_json::to_vec_pretty(job)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()))
+        {
+            tracing::warn!(error = %e, "job journal write failed");
         }
     }
 
@@ -86,6 +159,7 @@ impl JobTracker {
             error: None,
             result: None,
         };
+        self.journal_write(&job);
         self.jobs.lock().insert(id.clone(), job);
         let _ = self.changes.send(id.clone());
         id
@@ -97,6 +171,7 @@ impl JobTracker {
             job.status = JobStatus::Done;
             job.finished_at = Some(chrono::Utc::now());
             job.result = Some(result);
+            self.journal_write(job);
         }
         let _ = self.changes.send(id.to_string());
     }
@@ -107,6 +182,7 @@ impl JobTracker {
             job.status = JobStatus::Failed;
             job.finished_at = Some(chrono::Utc::now());
             job.error = Some(error.to_string());
+            self.journal_write(job);
         }
         let _ = self.changes.send(id.to_string());
     }
@@ -128,6 +204,48 @@ impl JobTracker {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    /// L11: a job the process died inside is found again at boot —
+    /// marked interrupted, never haunted as running.
+    #[test]
+    fn journaled_jobs_survive_the_process_and_interrupt_honestly() {
+        let dir = std::env::temp_dir()
+            .join(format!("zg-jobs-{}-{}", std::process::id(), uuid::Uuid::now_v7()));
+        let tracker = JobTracker::with_journal(dir.clone());
+        let id = tracker.start("capability-install", "ollama/model:llama3");
+
+        // The journal exists and reads back as running.
+        let path = dir.join(format!("{id}.json"));
+        let on_disk = serde_json::from_str::<Job>(
+            &std::fs::read_to_string(&path).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(on_disk.status, JobStatus::Running);
+
+        // A NEW process (fresh tracker, same journal) reconciles.
+        let rebooted = JobTracker::with_journal(dir.clone());
+        assert_eq!(rebooted.interrupt_stale_running(), 1);
+        let job = rebooted.get(&id).unwrap();
+        assert_eq!(job.status, JobStatus::Interrupted);
+        assert!(job.error.as_deref().unwrap().contains("interrupted"));
+
+        // Idempotent: a second boot finds nothing running.
+        assert_eq!(rebooted.interrupt_stale_running(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Completions rewrite the journal — a finished job never interrupts.
+    #[test]
+    fn completed_jobs_journal_their_fate() {
+        let dir = std::env::temp_dir()
+            .join(format!("zg-jobs-{}-{}", std::process::id(), uuid::Uuid::now_v7()));
+        let tracker = JobTracker::with_journal(dir.clone());
+        let id = tracker.start("capability-install", "ollama/model:llama3");
+        tracker.complete(&id, serde_json::json!({"item": "llama3"}));
+        let rebooted = JobTracker::with_journal(dir.clone());
+        assert_eq!(rebooted.interrupt_stale_running(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn job_lifecycle_transitions() {

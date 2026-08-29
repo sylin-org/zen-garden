@@ -322,3 +322,37 @@ reaching adopted work.
 
 **State left behind**: none — ollama container, image, and adopted
 record uprooted; .195 as found.
+
+## W10 — the wish grows it (2026-08-29, stone-tranquil-pass / 192.168.1.195, release build)
+
+Capability mutations (W2): `ensure` grows managed content through the
+manifest's add channel, journaled per L11, managed-only per the trust law.
+
+- **The wish grows content**: managed ollama planted from the catalog
+  (ledgered home 7300); `rake ensure 'ollama[model:all-minilm]'` → the
+  stone's add command ran INSIDE the container as a journaled job →
+  *"ollama now holds model:all-minilm — grown, not planted:
+  ollama://192.168.1.195:7300"*, exit 0, port carried from the holder's
+  observed record.
+- **L11, crash and all**: a 270 MB model growth started via the add
+  face; moss KILLED mid-pull. On reboot the journal spoke — *"jobs
+  interrupted by the last restart interrupted=1"*, the job shows
+  `interrupted` with *"interrupted by restart — ask again; what landed
+  is re-observed"* — and the sweep then re-observed the TRUTH: the
+  in-container pull had survived its client and landed. State on disk,
+  facts from the world, nothing resumed blindly.
+- **The trust law holds on the wire**: mode now rides ServiceState
+  (`managed` | `adopted`); with only an adopted ollama in the room, the
+  same wish answers *"It could grow on: ollama::adopted ... — the garden
+  observes adopted work and never operates it (L25); grow it there
+  yourself, then ask again."* The server refuses independently (the law
+  lives in the domain, not the client).
+
+En route: the catalog refusal chain earned its keep (`rake offer ollama
+--image ...` refused — catalog manifests define their own image), and
+the ollama manifest grew its managed section (the ollama-cpu compat
+rules already promised a GPU sibling).
+
+**State left behind**: none — container, image, records, journals, and
+the root-owned model files (cleared via a throwaway container; noted as
+D17: in-container uid 0 writes make host files non-root cannot delete).

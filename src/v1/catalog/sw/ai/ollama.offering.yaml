@@ -7,6 +7,16 @@ description: >-
   record says stopped; it returns, the record says running.
 tags: [ai, llm, inference, embedding, local-ai]
 
+managed:
+  world: oci
+  image: ollama/ollama:latest
+  ports: { default: 11434 }
+  volumes:
+    - { name: ollama-data, mount: /root/.ollama }
+  env:
+    OLLAMA_HOST: "0.0.0.0:11434"
+  restart: unless-stopped
+
 adopted:
   # The household's hand-run ollama: standard container name or the
   # numbered variants (ollama-2...), any ollama/ollama image.
@@ -15,7 +25,8 @@ adopted:
 
 capabilities:
   # What it holds, asked on its own self-description endpoint. Wishes
-  # speak this type: ollama[model:llama3].
+  # speak this type: ollama[model:llama3]. Growth runs INSIDE the
+  # container ({{item}} is the model's name) as a journaled job.
   - type: model
     default: true
     list:
@@ -23,3 +34,9 @@ capabilities:
         path: /api/tags
         item_path: models
         value_path: name
+    add:
+      exec: [ollama, pull, "{{item}}"]
+      timeout_secs: 7200
+    remove:
+      exec: [ollama, rm, "{{item}}"]
+      timeout_secs: 60

@@ -227,6 +227,18 @@
       "method": "GET",
       "path": "/api/v1/offerings/{fqn}/capabilities",
       "summary": "What the offering HOLDS, by capability type (model -> [llama3...]) - observed live through the manifest's list channel (exec or http); also refreshes the record the room's wishes answer from."
+    },
+    {
+      "face": "OfferingCapabilityAdd",
+      "method": "POST",
+      "path": "/api/v1/offerings/{fqn}/capabilities",
+      "summary": "Grow one capability item {type, item}: the manifest's add command runs inside the container as a journaled job (L11 - interrupted jobs are marked at boot, truth is re-observed). MANAGED work only: adopted offerings are observed, never operated (L25)."
+    },
+    {
+      "face": "OfferingCapabilityRemove",
+      "method": "DELETE",
+      "path": "/api/v1/offerings/{fqn}/capabilities/{kind}/{item}",
+      "summary": "Remove one capability item through the manifest's remove channel, journaled. MANAGED work only."
     }
   ],
   "proto": "zg/1",
@@ -632,6 +644,13 @@
         "ServiceState": {
           "description": "Runtime condition of one offering instance.",
           "properties": {
+            "mode": {
+              "description": "How this instance came to be here (managed | adopted | borrowed):\nthe trust law needs it on the wire — consumers may ask the garden\nto grow MANAGED work; adopted work is never operated (L25).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "role": {
               "description": "Orchestration role when active: primary | replica | joining.",
               "type": [
@@ -1003,6 +1022,13 @@
         "ServiceState": {
           "description": "Runtime condition of one offering instance.",
           "properties": {
+            "mode": {
+              "description": "How this instance came to be here (managed | adopted | borrowed):\nthe trust law needs it on the wire — consumers may ask the garden\nto grow MANAGED work; adopted work is never operated (L25).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "role": {
               "description": "Orchestration role when active: primary | replica | joining.",
               "type": [

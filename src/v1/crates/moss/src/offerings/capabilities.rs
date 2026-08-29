@@ -211,9 +211,339 @@ pub async fn refresh_once(service: &OfferingService) -> usize {
 }
 
 
+/// Why the garden refuses to touch (or cannot touch) a capability.
+/// Managed-only is the trust law (L25): adoption observes, it never
+/// operates — and growing content is operating.
+#[derive(Debug)]
+pub enum GrowRefusal {
+    NotFound(String),
+    NotOperable(String),
+    UnknownType { asked: String, declared: Vec<String> },
+    NoChannel { kind: String, op: &'static str },
+    NoWorld(String),
+}
+
+impl std::fmt::Display for GrowRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(m) => write!(f, "{m}"),
+            Self::NotOperable(m) => write!(f, "{m}"),
+            Self::UnknownType { asked, declared } => write!(
+                f,
+                "'{asked}' is not a capability type this offering declares — it speaks: {}",
+                if declared.is_empty() { "(none)".into() } else { declared.join(", ") }
+            ),
+            Self::NoChannel { kind, op } => write!(
+                f,
+                "the manifest declares no {op} channel for '{kind}' — the garden cannot {op} it"
+            ),
+            Self::NoWorld(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+fn declared_types_of(manifest: &crate::offerings::manifest::Manifest) -> Vec<String> {
+    manifest.capabilities.iter().map(|c| c.r#type.clone()).collect()
+}
+
+/// Grow one capability item on a MANAGED offering (W2): validate, open a
+/// journaled job, run the manifest's add command inside the container,
+/// then re-observe and complete. Returns the job id immediately (202).
+#[allow(clippy::too_many_arguments)]
+pub fn grow(
+    service: std::sync::Arc<OfferingService>,
+    tracker: crate::jobs::JobTracker,
+    name: &str,
+    kind: &str,
+    item: &str,
+) -> Result<String, GrowRefusal> {
+    mutate(service, tracker, name, kind, item, Mutation::Add)
+}
+
+/// Remove one capability item (W2): the same law, the remove channel.
+pub fn prune(
+    service: std::sync::Arc<OfferingService>,
+    tracker: crate::jobs::JobTracker,
+    name: &str,
+    kind: &str,
+    item: &str,
+) -> Result<String, GrowRefusal> {
+    mutate(service, tracker, name, kind, item, Mutation::Remove)
+}
+
+enum Mutation {
+    Add,
+    Remove,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mutate(
+    service: std::sync::Arc<OfferingService>,
+    tracker: crate::jobs::JobTracker,
+    name: &str,
+    kind: &str,
+    item: &str,
+    op: Mutation,
+) -> Result<String, GrowRefusal> {
+    let op_word = match op {
+        Mutation::Add => "add",
+        Mutation::Remove => "remove",
+    };
+    let fqn = garden_glossary::fqn::canonicalize(name)
+        .map_err(|e| GrowRefusal::NotFound(format!("'{name}' does not speak the name grammar: {e}")))?;
+    let offering = service
+        .registry()
+        .get_by_name(&fqn)
+        .ok_or_else(|| GrowRefusal::NotFound(format!("'{fqn}' is not planted here")))?;
+    // THE TRUST LAW. Adopted work stays the host's; the garden grows
+    // only what it planted.
+    if offering.adopted().is_some() {
+        return Err(GrowRefusal::NotOperable(format!(
+            "'{fqn}' is ADOPTED — the garden observes it and never operates it; grow it there yourself, then ask again"
+        )));
+    }
+    if offering.managed().is_none() {
+        return Err(GrowRefusal::NotOperable(format!(
+            "'{fqn}' is not managed work — capabilities grow on managed offerings"
+        )));
+    }
+    let manifest = service.catalog.get(&offering.offering).ok_or_else(|| {
+        GrowRefusal::NotFound(format!("'{}' has no catalog manifest", offering.offering))
+    })?;
+    if manifest.capabilities.is_empty() {
+        return Err(GrowRefusal::UnknownType {
+            asked: kind.to_string(),
+            declared: Vec::new(),
+        });
+    }
+    let decl = manifest
+        .capabilities
+        .iter()
+        .find(|c| c.r#type == kind)
+        .ok_or_else(|| GrowRefusal::UnknownType {
+            asked: kind.to_string(),
+            declared: declared_types_of(manifest),
+        })?;
+    let mutation = match op {
+        Mutation::Add => decl.add.as_ref(),
+        Mutation::Remove => decl.remove.as_ref(),
+    }
+    .ok_or_else(|| GrowRefusal::NoChannel { kind: kind.to_string(), op: op_word })?;
+    let hooks = service.hooks().ok_or_else(|| {
+        GrowRefusal::NoWorld("no container runtime on this stone can run it".into())
+    })?;
+    let container = container_name_of(&offering);
+    let argv: Vec<String> =
+        mutation.exec.iter().map(|a| a.replace("{{item}}", item)).collect();
+    let timeout = std::time::Duration::from_secs(mutation.timeout_secs);
+    let subject = format!("{fqn}/{kind}:{item}");
+
+    let job_id = tracker.start(
+        match op {
+            Mutation::Add => "capability-install",
+            Mutation::Remove => "capability-remove",
+        },
+        &subject,
+    );
+    let kind_owned = kind.to_string();
+    let item_owned = item.to_string();
+    let job_ref = job_id.clone();
+    tokio::spawn(async move {
+        let job_id = job_ref;
+        let outcome = hooks.exec(&container, &argv, timeout).await;
+        match outcome {
+            Ok(output) => {
+                let tail: Vec<&str> = output.lines().rev().take(8).collect();
+                let tail: Vec<&str> = tail.into_iter().rev().collect();
+                let refreshed = discover(&service, &offering).await;
+                let capabilities = match &refreshed {
+                    Ok(map) => serde_json::json!(map),
+                    Err(e) => serde_json::json!({ "refresh_error": e.to_string() }),
+                };
+                tracing::info!(offering = %offering.name, kind = %kind_owned, item = %item_owned, "capability mutated");
+                tracker.complete(
+                    &job_id,
+                    serde_json::json!({
+                        "item": item_owned,
+                        "output_tail": tail.join("
+"),
+                        "capabilities": capabilities,
+                    }),
+                );
+            }
+            Err(e) => {
+                tracker.fail(&job_id, &e);
+                tracing::warn!(offering = %offering.name, kind = %kind_owned, item = %item_owned, error = %e, "capability mutation failed");
+            }
+        }
+    });
+    Ok(job_id)
+}
+
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use crate::offerings::directory::OfferingsRoot;
+    use crate::offerings::facts::Factsheet;
+    use crate::offerings::manifest::Catalog;
+    use crate::offerings::model::{Location, ModeData, Offering, Status};
+    use crate::offerings::ports::Pool;
+    use crate::offerings::registry::{MemorySnapshotStore, Registry};
+    use std::sync::Arc;
+
+    const OLLAMA: &str = "kind: software
+name: ollama
+category: ai
+description: Local LLM runtime
+adopted:
+  container_name_pattern: '^ollama(-.+)?$'
+managed:
+  world: oci
+  image: ollama/ollama:latest
+  ports: { default: 11434 }
+capabilities:
+  - type: model
+    default: true
+    list:
+      http: { path: /api/tags, item_path: models, value_path: name }
+    add:
+      exec: [ollama, pull, \"{{item}}\"]
+    remove:
+      exec: [ollama, rm, \"{{item}}\"]
+      timeout_secs: 60
+";
+
+    /// A hooks double that records argv — proves {{item}} substitution
+    /// and lets the grow job complete instantly.
+    struct ScriptedHooks {
+        calls: Arc<parking_lot::Mutex<Vec<Vec<String>>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::offerings::capture_run::HookRunner for ScriptedHooks {
+        async fn exec(
+            &self,
+            _container: &str,
+            argv: &[String],
+            _timeout: std::time::Duration,
+        ) -> Result<String, String> {
+            self.calls.lock().push(argv.to_vec());
+            Ok("pulled \"test\"
+success".into())
+        }
+    }
+
+    type Calls = Arc<parking_lot::Mutex<Vec<Vec<String>>>>;
+
+    fn rig(mode: ModeData, name: &str) -> (Arc<OfferingService>, crate::jobs::JobTracker, Calls) {
+        let catalog = Catalog::embedded([("ollama", OLLAMA)]).unwrap();
+        let registry = Arc::new(Registry::new(Arc::new(MemorySnapshotStore::default())));
+        let now = chrono::Utc::now();
+        let offering = Offering {
+            offering_id: "test-1".into(),
+            name: name.into(),
+            offering: "ollama".into(),
+            category: "ai".into(),
+            status: Status::Running,
+            location: Location { host: "localhost".into(), port: 11434, protocol: "http".into() },
+            sub_capabilities: Default::default(),
+            mode_data: mode,
+            registered_at: now,
+            updated_at: now,
+        };
+        registry.register(offering.clone());
+        // Fresh adopted registers land as candidates (ghost law); the
+        // detector's confirm promotes — the rig replays exactly that.
+        if offering.adopted().is_some() {
+            registry.promote("test-1", Status::Running);
+        }
+        let calls = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let service = Arc::new(OfferingService::new(
+            registry,
+            Arc::new(crate::offerings::runtime::RuntimeRegistry::build(vec![])),
+            "null".into(),
+            Arc::new(catalog),
+            Arc::new(Factsheet::empty()),
+            OfferingsRoot::new(std::env::temp_dir().join(format!("zg-cap-{}", uuid::Uuid::now_v7()))),
+            Pool::default(),
+            Some(Arc::new(ScriptedHooks { calls: Arc::clone(&calls) })),
+        ));
+        (service, crate::jobs::JobTracker::new(), calls)
+    }
+
+    fn managed() -> ModeData {
+        ModeData::Managed(crate::offerings::model::ManagedData {
+            runtime_kind: "oci".into(),
+            spec: Default::default(),
+            port_map: Default::default(),
+            plan: None,
+        })
+    }
+
+    /// THE TRUST LAW, tested: adopted work is observed, never operated.
+    #[tokio::test]
+    async fn adopted_work_is_never_operated() {
+        let (service, tracker, _calls) = rig(
+            ModeData::Adopted(crate::offerings::model::AdoptedData {
+                control_level: "monitor".into(),
+                start_command: None,
+                stop_command: None,
+                health_path: None,
+                container_name: "ollama".into(),
+            }),
+            "ollama::adopted",
+        );
+        let err = grow(Arc::clone(&service), tracker, "ollama::adopted", "model", "llama3")
+            .err()
+            .unwrap();
+        assert!(matches!(err, GrowRefusal::NotOperable(_)), "{err}");
+        assert!(err.to_string().contains("never operates"), "{err}");
+    }
+
+    /// An unknown type teaches the declared ones (R3.3 + F3).
+    #[tokio::test]
+    async fn unknown_types_teach_what_the_offering_declares() {
+        let (service, tracker, _calls) = rig(managed(), "ollama::default");
+        let err = grow(Arc::clone(&service), tracker, "ollama", "plugin", "pdf")
+            .err()
+            .unwrap();
+        match err {
+            GrowRefusal::UnknownType { asked, declared } => {
+                assert_eq!(asked, "plugin");
+                assert_eq!(declared, vec!["model".to_string()]);
+            }
+            other => panic!("wrong refusal: {other:?}"),
+        }
+    }
+
+    /// The happy path: the add command runs with {{item}} substituted,
+    /// the job completes, and the record's cache is refreshed.
+    #[tokio::test]
+    async fn growth_runs_the_add_command_and_refreshes_the_cache() {
+        let (service, tracker, calls) = rig(managed(), "ollama::default");
+        // A list channel that cannot answer (no real container) — the
+        // refresh then records an honest refresh_error, job still done.
+        let job_id = grow(Arc::clone(&service), tracker.clone(), "ollama", "model", "llama3")
+            .unwrap();
+        for _ in 0..100 {
+            if let crate::jobs::JobStatus::Done | crate::jobs::JobStatus::Failed =
+                job_status(&tracker, &job_id)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let argv = calls.lock()[0].clone();
+        assert_eq!(argv, vec!["ollama".to_string(), "pull".to_string(), "llama3".to_string()]);
+        let job = tracker.get(&job_id).unwrap();
+        assert_eq!(job.status, crate::jobs::JobStatus::Done, "{:?}", job.error);
+    }
+
+    fn job_status(tracker: &crate::jobs::JobTracker, id: &str) -> crate::jobs::JobStatus {
+        tracker.get(id).map(|j| j.status).unwrap()
+    }
+
 
     /// The dot-path reader: plain strings, object fields, nested paths.
     #[test]

@@ -117,6 +117,32 @@ pub struct CapabilityDecl {
     pub default: bool,
     /// How to observe what this offering holds right now.
     pub list: CapabilityList,
+    /// How to GROW this capability (W2): an in-container command; `{{item}}`
+    /// is replaced by the capability's name. Long by nature (model pulls) —
+    /// runs as a journaled job, never inline.
+    #[serde(default)]
+    pub add: Option<CapabilityMutation>,
+    /// How to remove one item (W2). Same grammar, short budget.
+    #[serde(default)]
+    pub remove: Option<CapabilityMutation>,
+}
+
+/// A mutation channel (W2): exec only — a mutation is the garden
+/// operating its OWN placed work, and exec into the offering's container
+/// is the one world-honest way to do that. `{{item}}` must appear at
+/// least once: a command that ignores what it was told to touch is a
+/// lie, and lies are refused at load.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityMutation {
+    pub exec: Vec<String>,
+    #[serde(default = "default_add_timeout")]
+    pub timeout_secs: u64,
+}
+
+/// PoC parity: model pulls run for hours (capabilities.rs:224).
+fn default_add_timeout() -> u64 {
+    7200
 }
 
 /// The list channel: exactly ONE of exec or http (validated at load).
@@ -374,6 +400,22 @@ managed:",
 managed:",
         );
         assert!(Catalog::parse("redis", &upper).is_err());
+
+        // A mutation that never names {{item}} ignores what it was told
+        // to touch — refused at load.
+        let noitem = GOOD.replace(
+            "managed:",
+            "capabilities:\n  - type: model\n    list: { exec: [a] }\n    add: { exec: [ollama, pull] }\nmanaged:",
+        );
+        assert!(Catalog::parse("redis", &noitem).is_err());
+
+        // With {{item}} it loads; timeout rides.
+        let withitem = GOOD.replace(
+            "managed:",
+            "capabilities:\n  - type: model\n    list: { exec: [a] }\n    add: { exec: [ollama, pull, \"{{item}}\"], timeout_secs: 60 }\nmanaged:",
+        );
+        let m = Catalog::parse("redis", &withitem).unwrap();
+        assert_eq!(m.capabilities[0].add.as_ref().unwrap().timeout_secs, 60);
     }
 
     /// The catalog derives from the directory: good manifests load, bad
@@ -612,6 +654,27 @@ impl Catalog {
                             m.name, cap.r#type
                         ));
                     }
+                }
+            }
+            for (op, mutation) in [("add", &cap.add), ("remove", &cap.remove)] {
+                let Some(mutation) = mutation else { continue };
+                if mutation.exec.is_empty() {
+                    return Err(format!(
+                        "manifest '{}': capability '{}' {op} exec is empty",
+                        m.name, cap.r#type
+                    ));
+                }
+                if mutation.timeout_secs == 0 {
+                    return Err(format!(
+                        "manifest '{}': capability '{}' {op} timeout must be positive",
+                        m.name, cap.r#type
+                    ));
+                }
+                if !mutation.exec.iter().any(|arg| arg.contains("{{item}}")) {
+                    return Err(format!(
+                        "manifest '{}': capability '{}' {op} never names {{{{item}}}} — it would ignore what it was told to touch",
+                        m.name, cap.r#type
+                    ));
                 }
             }
         }

@@ -161,7 +161,7 @@ mod tests {
                 name: format!("svc{i}::{tag}"),
                 stem: format!("svc{i}"),
                 category: "misc".into(),
-                state: ServiceState { status: "running".into(), role: None },
+                state: ServiceState { status: "running".into(), role: None, mode: None },
                 ports: Default::default(),
                 capabilities: Default::default(),
             })
@@ -209,7 +209,7 @@ mod tests {
                         name: format!("svc{j}::{tag}"),
                         stem: format!("svc{j}"),
                         category: "misc".into(),
-                        state: ServiceState { status: "running".into(), role: None },
+                        state: ServiceState { status: "running".into(), role: None, mode: None },
                         ports: Default::default(),
                 capabilities: Default::default(),
                     })

@@ -149,7 +149,7 @@ mod tests {
                         name: "memcached::default".into(),
                         stem: "memcached".into(),
                         category: "data".into(),
-                        state: ServiceState { status: "running".into(), role: None },
+                        state: ServiceState { status: "running".into(), role: None, mode: None },
                         ports: Default::default(),
                 capabilities: Default::default(),
                     }],

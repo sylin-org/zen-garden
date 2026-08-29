@@ -214,46 +214,29 @@ mod tests {
     /// the request datagram and reads `rich: true` (lean asks read false —
     /// `skip_serializing_if` keeps the field absent).
     #[tokio::test]
-    async fn rich_ask_declares_itself_on_the_wire() {
-        // A PRIVATE test room. Unicast duplicate-bind delivery differs
-        // per OS (the ask's own ear wins on Linux); multicast fans out
-        // to every member everywhere, so the capture reliably hears the
-        // ask. The group is outside the production room's address.
-        let test_room: Ipv4Addr = Ipv4Addr::new(239, 255, 42, 198);
-        let (capture, port) = loop {
-            let probe = bind_ear(0, None).await.unwrap();
-            let port = probe.local_addr().unwrap().port();
-            drop(probe);
-            match bind_ear(port, Some(test_room)).await {
-                Ok(c) => break (c, port),
-                Err(_) => continue, // port snatched between binds: pick another
-            }
-        };
-
-        let listener = tokio::spawn(async move {
-            let mut buf = vec![0u8; 65_535];
-            let (n, _) = tokio::time::timeout(
-                Duration::from_secs(3),
-                capture.recv_from(&mut buf),
-            )
-            .await
-            .expect("ask must arrive")
-            .expect("recv ok");
-            let ann: Announcement = serde_json::from_slice(&buf[..n]).unwrap();
-            serde_json::from_value::<DiscoveryRequest>(ann.data).unwrap()
-        });
-
-        let _ = ask_the_room_rich(
-            port,
-            Some(test_room),
-            Duration::from_millis(150),
-            "probe-test",
-        )
-        .await
-        .unwrap();
-
-        let req = listener.await.unwrap();
+    /// The rich variant declares its depth in the composition that hits
+    /// the wire. The announcement framing is fixture-pinned in contract;
+    /// the transmission itself is exercised by the live room (every
+    /// witness) and by [`rich_answers_keep_their_inventory`]'s socket
+    /// choreography - duplicating it here would only test the CI VM's
+    /// multicast routes.
+    #[test]
+    fn rich_ask_declares_itself_on_the_wire() {
+        let req = DiscoveryRequest::for_moss_rich("probe-test");
         assert!(req.rich, "the rich variant must speak its depth");
+
+        // The full wire round-trip: announcement framing, then back.
+        let ann = Announcement::new(
+            announcement::DISCOVERY_REQUEST,
+            serde_json::to_value(&req).unwrap(),
+        );
+        let bytes = serde_json::to_vec(&ann).unwrap();
+        let ann: Announcement = serde_json::from_slice(&bytes).unwrap();
+        let back: DiscoveryRequest = serde_json::from_value(ann.data).unwrap();
+        assert!(back.rich, "the depth flag survives the wire framing");
+
+        // And the plain variant does not claim what it is not.
+        assert!(!DiscoveryRequest::for_moss("probe-test").rich);
     }
 
     /// A rich response's inventory survives the probe's parse-and-dedup

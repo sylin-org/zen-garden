@@ -17,9 +17,5 @@ incremental = true
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "link-arg=/DEBUG:NONE"]
 
-# macOS: Use lld if available
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+# macOS: no special flags - Apple's linker rejects -fuse-ld=lld (clang:
+# "invalid linker name"), which broke the macos CI/release builds.

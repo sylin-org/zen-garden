@@ -213,7 +213,6 @@ mod tests {
     /// The rich ask declares its depth on the wire: a listener captures
     /// the request datagram and reads `rich: true` (lean asks read false —
     /// `skip_serializing_if` keeps the field absent).
-    #[tokio::test]
     /// The rich variant declares its depth in the composition that hits
     /// the wire. The announcement framing is fixture-pinned in contract;
     /// the transmission itself is exercised by the live room (every

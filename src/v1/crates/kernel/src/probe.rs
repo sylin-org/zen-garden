@@ -199,18 +199,20 @@ mod tests {
     /// `skip_serializing_if` keeps the field absent).
     #[tokio::test]
     async fn rich_ask_declares_itself_on_the_wire() {
-        // Ephemeral ports collide under CI's full parallel load; the
-        // collision is environmental, so a bounded retry is honest here.
-        let capture = loop {
-            match UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await {
-                Ok(s) => break s,
-                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-                Err(e) => panic!("bind failed: {e}"),
+        // A PRIVATE test room. Unicast duplicate-bind delivery differs
+        // per OS (the ask's own ear wins on Linux); multicast fans out
+        // to every member everywhere, so the capture reliably hears the
+        // ask. The group is outside the production room's address.
+        let test_room: Ipv4Addr = Ipv4Addr::new(239, 255, 42, 198);
+        let (capture, port) = loop {
+            let probe = bind_ear(0, None).await.unwrap();
+            let port = probe.local_addr().unwrap().port();
+            drop(probe);
+            match bind_ear(port, Some(test_room)).await {
+                Ok(c) => break (c, port),
+                Err(_) => continue, // port snatched between binds: pick another
             }
         };
-        let port = capture.local_addr().unwrap().port();
 
         let listener = tokio::spawn(async move {
             let mut buf = vec![0u8; 65_535];
@@ -225,9 +227,14 @@ mod tests {
             serde_json::from_value::<DiscoveryRequest>(ann.data).unwrap()
         });
 
-        let _ = ask_the_room_rich(port, None, Duration::from_millis(150), "probe-test")
-            .await
-            .unwrap();
+        let _ = ask_the_room_rich(
+            port,
+            Some(test_room),
+            Duration::from_millis(150),
+            "probe-test",
+        )
+        .await
+        .unwrap();
 
         let req = listener.await.unwrap();
         assert!(req.rich, "the rich variant must speak its depth");

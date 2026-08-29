@@ -21,6 +21,37 @@ delight were right. This harvests the intent.*
 - **SSE**: the substrate — standard, curl-able, browser EventSource
   auto-reconnects. Right choice, kept.
 
+## Gate 1b — Delight research: what homelabbers actually love (2026-08-29)
+
+From the r/homelab and r/selfhosted communities, 2025 sentiment:
+
+- **The sweet spot is LIGHTWEIGHT.** *"Beszel + Uptime Kuma is honestly
+  the sweet spot for most homelabs"* — the community is actively
+  DITCHING Grafana/Prometheus stacks for zero-config, low-resource
+  tools. The garden's leanness is not a compromise here; it IS the
+  delight. `rake pulse` must work with zero setup: run it, and the
+  garden is on the screen.
+- **State-change visibility beats metric precision.** Uptime Kuma's
+  love is up/down at a glance and "your phone buzzes when something
+  breaks" (90+ notification channels). The garden's equivalents are
+  richer: seen / **said goodbye** / expired, running / stopped /
+  degraded / interrupted. The wall leads with STATES, not graphs.
+- **Notifications are the real delight surface** — and the wall is
+  passive. Consequence for design: the pulse feed's event vocabulary
+  (kind + level) must be notification-READY — a future Cricket
+  (audio) or phone bridge subscribes to the same bus the wall reads.
+  Not this slice; the envelope must not preclude it.
+- **btop's TUI craft** — color-coded, real-time, dense but legible —
+  is the terminal aesthetic benchmark. The PoC's pulse belonged in
+  that lineage; port the craft.
+- **The wall kiosk is a beloved physical artifact**: Raspberry Pi +
+  touchscreen running an always-on dashboard is a whole genre
+  (Grafana kiosks, HA panels). The PoC designed pulse for exactly
+  this (tty1, OLED sidecar). Unattended auto-reconnect + low noise
+  is what makes a kiosk real; the frame-buffer wall inherits it.
+- **Shareable status** ("a status page others can look at") — the
+  moss's pulse page is the seed of this; later slice.
+
 ## Gate 2 — PoC homework: the delight, and the mechanism's defects
 
 **The delight (harvest whole)** — `poc/rake/src/commands/pulse.rs`
@@ -110,6 +141,14 @@ delight were right. This harvests the intent.*
    by ⟨connected stone⟩".
 7. WORK on the wall: grow/capture/replant jobs appear as events — the
    garden's working moments visible, which the PoC never showed.
+8. **Goodbye is a moment, not a fade.** The law (topology.rs
+   on_goodbye): a goodbye chirp removes the stone from the room's map
+   IMMEDIATELY — no threshold wait — its offerings and banks vanish
+   from resolution that instant (spoken three times for delivery).
+   The wall renders the distinction the PoC blurred: `goodbye` (the
+   stone SAID farewell — wire line + sidebar row leaves at once) vs
+   `expired` (silence past the threshold — the soft-honesty hold, row
+   dims with "expired"). Two different trust stories; two treatments.
 
 ## Gate 5 — Verdicts
 

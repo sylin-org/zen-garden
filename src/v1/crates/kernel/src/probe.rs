@@ -88,6 +88,16 @@ async fn ask_with(
         Some(g) => SocketAddr::from((g, port)),
         None => SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
     };
+    // A multicast send needs a chosen interface; hosts without a
+    // 224/4 route answer "no route to host" (macOS runners do).
+    if let Some(g) = group {
+        for ip in crate::ingress::eligible_interfaces() {
+            if let IpAddr::V4(v4) = ip {
+                let _ = socket.set_multicast_if_v4(&v4);
+                break;
+            }
+        }
+    }
     socket.send_to(&bytes, target).await?;
 
     // The listen: every answer until the deadline.

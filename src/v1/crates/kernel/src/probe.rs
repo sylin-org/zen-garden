@@ -30,6 +30,17 @@ async fn bind_ear(port: u16, group: Option<Ipv4Addr>) -> std::io::Result<UdpSock
     #[cfg(unix)]
     sock.set_reuse_port(true)?;
     sock.bind(&addr.into())?;
+    // Sends default to the first eligible interface: hosts without a
+    // 224/4 route in their routing table refuse group sends outright
+    // (macOS: "no route to host").
+    if group.is_some() {
+        for ip in crate::ingress::eligible_interfaces() {
+            if let IpAddr::V4(v4) = ip {
+                let _ = sock.set_multicast_if_v4(&v4);
+                break;
+            }
+        }
+    }
     sock.set_nonblocking(true)?;
     let socket = UdpSocket::from_std(sock.into())?;
     if let Some(g) = group {
@@ -88,16 +99,6 @@ async fn ask_with(
         Some(g) => SocketAddr::from((g, port)),
         None => SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
     };
-    // A multicast send needs a chosen interface; hosts without a
-    // 224/4 route answer "no route to host" (macOS runners do).
-    if let Some(g) = group {
-        for ip in crate::ingress::eligible_interfaces() {
-            if let IpAddr::V4(v4) = ip {
-                let _ = socket.set_multicast_if_v4(&v4);
-                break;
-            }
-        }
-    }
     socket.send_to(&bytes, target).await?;
 
     // The listen: every answer until the deadline.

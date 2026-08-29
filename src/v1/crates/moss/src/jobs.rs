@@ -48,6 +48,11 @@ pub struct Job {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
+    /// Runtime-only progress line (the last word the operation said).
+    /// Never journaled: status truth survives restarts, progress does
+    /// not — an interrupted job is interrupted, not partially-alive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<String>,
 }
 
 /// Tracks async operations for the stone. Clone freely; all clones share state.
@@ -71,6 +76,16 @@ impl JobTracker {
             jobs: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             changes: Arc::new(changes),
             journal: None,
+        }
+    }
+
+    /// Speak a progress line for a running job. Runtime state only — the
+    /// journal stays out of it — but the change signal fires so the pulse
+    /// carries the news.
+    pub fn progress(&self, id: &str, line: impl Into<String>) {
+        if let Some(job) = self.jobs.lock().get_mut(id) {
+            job.progress = Some(line.into());
+            let _ = self.changes.send(id.to_string());
         }
     }
 
@@ -158,6 +173,7 @@ impl JobTracker {
             finished_at: None,
             error: None,
             result: None,
+            progress: None,
         };
         self.journal_write(&job);
         self.jobs.lock().insert(id.clone(), job);

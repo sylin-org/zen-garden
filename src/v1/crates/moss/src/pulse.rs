@@ -6,6 +6,7 @@
 //! the feed.
 
 use garden_contract::pulse::{PulseEvent, LEVEL_ERROR, LEVEL_INFO, LEVEL_WARN};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
@@ -73,6 +74,8 @@ pub async fn run(bus: Bus, sources: Sources, token: CancellationToken) {
     storage.mark_changed(); // watch fires immediately; consume the synthetic one
     let mut storage_version = *storage.borrow();
     let mut last_wire: Option<(u64, u64, u64, u64, u64)> = None;
+    // Job progress dedup: only NEW lines are news.
+    let mut last_progress: HashMap<String, Option<String>> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -139,26 +142,55 @@ pub async fn run(bus: Bus, sources: Sources, token: CancellationToken) {
             id = jobs.recv() => match id {
                 Ok(id) => {
                     if let Some(job) = sources.jobs.get(&id) {
+                        // Subject rides the data sections - one object,
+                        // never two writers (a clobber hid progress from
+                        // the wall once; never again).
+                        let with_subject = |mut e: PulseEvent| {
+                            let obj = e.data.get_or_insert_with(|| serde_json::json!({}));
+                            if let Some(o) = obj.as_object_mut() {
+                                o.insert("subject".into(), serde_json::json!(job.subject));
+                            }
+                            e
+                        };
                         let event = match job.status {
-                            crate::jobs::JobStatus::Done => PulseEvent::new(
+                            crate::jobs::JobStatus::Done => with_subject(PulseEvent::new(
                                 "job.done", "job", LEVEL_INFO,
                                 format!("{} - done", job.subject),
-                            ),
-                            crate::jobs::JobStatus::Failed => PulseEvent::new(
+                            )),
+                            crate::jobs::JobStatus::Failed => with_subject(PulseEvent::new(
                                 "job.failed", "job", LEVEL_ERROR,
                                 format!("{} - failed: {}",
                                     job.subject,
                                     job.error.as_deref().unwrap_or("unknown error")),
-                            ),
-                            crate::jobs::JobStatus::Interrupted => PulseEvent::new(
+                            )),
+                            crate::jobs::JobStatus::Interrupted => with_subject(PulseEvent::new(
                                 "job.interrupted", "job", LEVEL_WARN,
                                 format!("{} - interrupted by restart; ask again", job.subject),
-                            ),
-                            crate::jobs::JobStatus::Running => PulseEvent::new(
-                                "job.started", "job", LEVEL_INFO,
-                                format!("{} - started", job.subject),
-                            ),
+                            )),
+                            crate::jobs::JobStatus::Running => {
+                                // Progress only when the line is NEW - the
+                                // throttle lives in the caller, the dedup here.
+                                if last_progress.get(&id) == Some(&job.progress) {
+                                    continue;
+                                }
+                                let event = with_subject(PulseEvent::new(
+                                    "job.progress", "job", LEVEL_INFO,
+                                    format!("{} - {}",
+                                        job.subject,
+                                        job.progress.as_deref().unwrap_or("working")),
+                                ).with_data(serde_json::json!({
+                                    "progress": job.progress,
+                                })));
+                                last_progress.insert(id.clone(), job.progress.clone());
+                                event
+                            }
                         };
+                        if matches!(job.status, crate::jobs::JobStatus::Done
+                            | crate::jobs::JobStatus::Failed
+                            | crate::jobs::JobStatus::Interrupted)
+                        {
+                            last_progress.remove(&id);
+                        }
                         bus.publish(event);
                     }
                 }

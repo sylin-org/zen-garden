@@ -8,7 +8,7 @@
 use crate::offerings::manifest::{CapabilityDecl, HttpList};
 use crate::offerings::model::Offering;
 use crate::offerings::service::OfferingService;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
 /// Wire cap (contract::consts) — a model store with thousands of entries
@@ -350,34 +350,75 @@ fn mutate(
     let job_ref = job_id.clone();
     tokio::spawn(async move {
         let job_id = job_ref;
-        let outcome = hooks.exec(&container, &argv, timeout).await;
-        match outcome {
-            Ok(output) => {
-                let tail: Vec<&str> = output.lines().rev().take(8).collect();
-                let tail: Vec<&str> = tail.into_iter().rev().collect();
-                let refreshed = discover(&service, &offering).await;
-                let capabilities = match &refreshed {
-                    Ok(map) => serde_json::json!(map),
-                    Err(e) => serde_json::json!({ "refresh_error": e.to_string() }),
-                };
-                tracing::info!(offering = %offering.name, kind = %kind_owned, item = %item_owned, "capability mutated");
-                tracker.complete(
-                    &job_id,
-                    serde_json::json!({
-                        "item": item_owned,
-                        "output_tail": tail.join("
-"),
-                        "capabilities": capabilities,
-                    }),
-                );
-            }
+        let outcome = hooks.exec_lines(&container, &argv).await;
+        let mut lines = match outcome {
+            Ok(lines) => lines,
             Err(e) => {
                 tracker.fail(&job_id, &e);
                 tracing::warn!(offering = %offering.name, kind = %kind_owned, item = %item_owned, error = %e, "capability mutation failed");
+                return;
+            }
+        };
+
+        // Consume to the deadline, reporting progress as the operation
+        // speaks (percent lines only — the quiet cadence, not the churn).
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut tail: VecDeque<String> = VecDeque::with_capacity(8);
+        let mut last_report = tokio::time::Instant::now() - std::time::Duration::from_secs(1);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, futures::StreamExt::next(&mut lines)).await {
+                Err(_) => {
+                    tracker.fail(&job_id, &format!("exceeded its {}s budget", timeout.as_secs()));
+                    return;
+                }
+                Ok(None) => break,
+                Ok(Some(line)) => {
+                    if tail.len() == 8 {
+                        tail.pop_front();
+                    }
+                    tail.push_back(line.clone());
+                    if let Some(pct) = extract_percent(&line)
+                        && last_report.elapsed() >= std::time::Duration::from_secs(1)
+                    {
+                        tracker.progress(&job_id, format!("{item_owned}: {pct}%"));
+                        last_report = tokio::time::Instant::now();
+                    }
+                }
             }
         }
+
+        let refreshed = discover(&service, &offering).await;
+        let capabilities = match &refreshed {
+            Ok(map) => serde_json::json!(map),
+            Err(e) => serde_json::json!({ "refresh_error": e.to_string() }),
+        };
+        tracing::info!(offering = %offering.name, kind = %kind_owned, item = %item_owned, "capability mutated");
+        tracker.complete(
+            &job_id,
+            serde_json::json!({
+                "item": item_owned,
+                "output_tail": tail.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("
+"),
+                "capabilities": capabilities,
+            }),
+        );
     });
     Ok(job_id)
+}
+
+/// The first percentage in an operation's output line, if any — the
+/// universal progress dialect (`pulling x: 45%`).
+fn extract_percent(line: &str) -> Option<u8> {
+    static PCT: std::sync::LazyLock<Option<regex::Regex>> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"([0-9]{1,3})%").ok());
+    let re = PCT.as_ref()?;
+    re.captures(line)?
+        .get(1)?
+        .as_str()
+        .parse()
+        .ok()
+        .filter(|p| *p <= 100)
 }
 
 #[cfg(test)]
@@ -431,6 +472,22 @@ capabilities:
             self.calls.lock().push(argv.to_vec());
             Ok("pulled \"test\"
 success".into())
+        }
+
+        async fn exec_lines(
+            &self,
+            _container: &str,
+            argv: &[String],
+        ) -> Result<crate::offerings::capture_run::ExecLines, String> {
+            self.calls.lock().push(argv.to_vec());
+            let item = argv.last().cloned().unwrap_or_default();
+            let lines: Vec<String> = vec![
+                "pulling manifest".into(),
+                format!("pulling {item}: 45%"),
+                format!("pulling {item}: 100%"),
+                "success".into(),
+            ];
+            Ok(Box::pin(futures::stream::iter(lines)))
         }
     }
 
@@ -542,6 +599,27 @@ success".into())
 
     fn job_status(tracker: &crate::jobs::JobTracker, id: &str) -> crate::jobs::JobStatus {
         tracker.get(id).map(|j| j.status).unwrap()
+    }
+
+    /// Progress speaks while the operation runs: the last percent line
+    /// lands on the job, throttled and honest.
+    #[tokio::test]
+    async fn growth_reports_progress_while_running() {
+        let (service, tracker, _calls) = rig(managed(), "ollama::default");
+        let job_id = grow(Arc::clone(&service), tracker.clone(), "ollama", "model", "llama3")
+            .unwrap();
+        for _ in 0..500 {
+            if let Some(j) = tracker.get(&job_id)
+                && j.status != crate::jobs::JobStatus::Running
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let job = tracker.get(&job_id).unwrap();
+        assert_eq!(job.status, crate::jobs::JobStatus::Done);
+        // The 1s throttle: the first percent line is the one that spoke.
+        assert_eq!(job.progress.as_deref(), Some("llama3: 45%"));
     }
 
 

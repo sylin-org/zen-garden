@@ -107,6 +107,7 @@ const DIM: &str = "\x1b[2m";
 const RED: &str = "\x1b[31m";
 const AMBER: &str = "\x1b[33m";
 const GREEN: &str = "\x1b[32m";
+const CYAN: &str = "[36m";
 
 fn paint_color(color: bool, code: &str, text: &str) -> String {
     if color { format!("{code}{text}{RESET}") } else { text.to_string() }
@@ -227,6 +228,9 @@ pub struct WallState {
     pub offerings: Vec<serde_json::Value>,
     pub jobs: Vec<serde_json::Value>,
     pub ring: VecDeque<WireLine>,
+    /// Live work, pinned above the wire: (subject, last progress line).
+    /// A working garden shows its working.
+    pub progress: Vec<(String, String)>,
     pub buckets: Buckets,
     pub cpu: Option<f32>,
     pub memory: Option<f64>,
@@ -334,6 +338,20 @@ impl WallState {
                     _ => "info",
                 };
                 self.push_wire(&ev.ts, level, &ev.summary);
+                // The work's pin leaves when the work ends.
+                if let Some(subject) = ev.data.as_ref().and_then(|d| d["subject"].as_str()) {
+                    self.progress.retain(|(s, _)| s != subject);
+                }
+            }
+            "job.progress" => {
+                let subject = ev.data.as_ref().and_then(|d| d["subject"].as_str());
+                let line = ev.data.as_ref().and_then(|d| d["progress"].as_str());
+                if let (Some(subject), Some(line)) = (subject, line) {
+                    match self.progress.iter_mut().find(|(s, _)| s == subject) {
+                        Some((_, existing)) => *existing = line.to_string(),
+                        None => self.progress.push((subject.to_string(), line.to_string())),
+                    }
+                }
             }
             "storage.mounted" | "storage.ejected" | "storage.changed" => {
                 self.push_wire(
@@ -490,12 +508,21 @@ pub fn render_frame(state: &WallState, r: &Regions, now: Instant, style: Style) 
         out.push(fit(&paint_color(style.color, code, &line), w));
     }
 
-    // The wire: newest first.
+    // The wire: live work pinned on top, moments newest-first below.
     if r.wire > 0 {
         if r.wire > 1 {
             out.push(fit(&separator(Some("the wire"), w, style), w));
         }
-        let wire_rows = r.wire - usize::from(r.wire > 1);
+        let mut wire_rows = r.wire - usize::from(r.wire > 1);
+        for (subject, line) in state.progress.iter().take(wire_rows) {
+            let row = paint_color(
+                style.color,
+                CYAN,
+                &format!("{subject} — {line}"),
+            );
+            out.push(fit(&row, w));
+            wire_rows -= 1;
+        }
         let skip = state.ring.len().saturating_sub(wire_rows);
         for line in state.ring.iter().skip(skip) {
             let code = match line.level.as_str() {
@@ -807,6 +834,28 @@ mod tests {
         assert!(red.contains("\x1b[31m"));
         // Narrow: numbers survive without bars.
         assert_eq!(gauge("CPU", 42.0, 10, false), "CPU 42");
+    }
+
+    /// Live work pins above the wire and leaves when it ends — the
+    /// docker-pull feel, one row per subject.
+    #[test]
+    fn progress_rows_pin_and_leave() {
+        let mut s = sample_state();
+        let mut ev = PulseEvent::new("job.progress", "job", "info",
+            "ollama/model:llama3 - 45%").with_data(serde_json::json!(
+            { "subject": "ollama/model:llama3", "progress": "45%" }));
+        s.apply(&ev, Instant::now());
+        ev = PulseEvent::new("job.progress", "job", "info",
+            "ollama/model:llama3 - 78%").with_data(serde_json::json!(
+            { "subject": "ollama/model:llama3", "progress": "78%" }));
+        s.apply(&ev, Instant::now());
+        assert_eq!(s.progress, vec![("ollama/model:llama3".to_string(), "78%".to_string())]);
+
+        s.apply(&PulseEvent::new("job.done", "job", "info",
+            "ollama/model:llama3 - done").with_data(serde_json::json!(
+            { "subject": "ollama/model:llama3" })), Instant::now());
+        assert!(s.progress.is_empty(), "the pin leaves when the work ends");
+        assert!(s.ring.back().unwrap().summary.contains("done"));
     }
 
     /// The heartbeat counts events per minute and sparks.

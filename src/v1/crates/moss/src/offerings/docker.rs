@@ -562,6 +562,47 @@ impl super::capture_run::HookRunner for DockerRuntime {
             Some(code) => Err(format!("hook exited {code}")),
         }
     }
+
+    /// The live variant: same exec mechanics, but the output streams
+    /// instead of collecting — progress lines reach the pulse as they
+    /// happen.
+    async fn exec_lines(
+        &self,
+        container: &str,
+        argv: &[String],
+    ) -> Result<super::capture_run::ExecLines, String> {
+        use bollard::exec::{CreateExecOptions, StartExecResults};
+        let exec = self
+            .docker
+            .create_exec(
+                container,
+                CreateExecOptions {
+                    cmd: Some(argv.to_vec()),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| format!("exec create: {e}"))?;
+        let started = self
+            .docker
+            .start_exec(&exec.id, None)
+            .await
+            .map_err(|e| format!("exec start: {e}"))?;
+        match started {
+            StartExecResults::Attached { output, .. } => {
+                let lines = output.map(|chunk| match chunk {
+                    Ok(c) => c.to_string(),
+                    Err(e) => format!("stream error: {e}"),
+                });
+                Ok(Box::pin(lines))
+            }
+            StartExecResults::Detached => {
+                Err("exec detached unexpectedly - no progress available".into())
+            }
+        }
+    }
 }
 
 #[cfg(test)]

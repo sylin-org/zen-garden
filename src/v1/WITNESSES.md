@@ -425,3 +425,25 @@ The pulse wall (ADR-0013): one seq'd feed, one wall.
 the stone's row; expired dims it) but an actual goodbye was not
 witnessed live — no stone was gracefully shut down during the run; the
 unit tests carry the distinction until then.
+
+## W13 — the wall shows work: progress, pinned (2026-08-29, stone-tranquil-pass, release build)
+
+The jobs progress stream (W2's named second half, the PoC jobs-stream's
+intent): long operations speak while they run, and the wall pins them.
+
+- **Growth reports live**: `rake ensure 'ollama[model:smollm2:135m]'`
+  against a managed ollama — the add command ran via the NEW streaming
+  exec (`exec_lines`), percent lines extracted (the universal progress
+  dialect), throttled to 1/s, and carried on the pulse as
+  `job.progress` events.
+- **The wall pins the work**: the capture caught the pinned rows —
+  `ollama::default/model:smollm2:135m — smollm2:135m: 1%`, `... 86%`,
+  `... 100%` — updating in place above the wire, then the pin leaves
+  and the moment settles: *"... - done"*. The ensure answered
+  "grown, not planted" with the connection string.
+- En route: a data-clobber bug (the jobs adapter's subject was
+  overwritten by the progress payload, silently hiding progress from
+  the wall) — fixed by one data object, one writer.
+
+**State left behind**: none — ollama container, image, record,
+journals, and root-owned volume files uprooted; .195 as found.

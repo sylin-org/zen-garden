@@ -52,6 +52,15 @@ pub trait HookRunner: Send + Sync {
         argv: &[String],
         timeout: Duration,
     ) -> Result<String, String>;
+
+    /// Run argv inside the container, streaming output lines as they
+    /// come — long operations (model pulls) report progress live. The
+    /// caller enforces its own deadline while consuming.
+    async fn exec_lines(
+        &self,
+        container: &str,
+        argv: &[String],
+    ) -> Result<ExecLines, String>;
 }
 
 /// The no-world hook runner: refuses loudly. A companion modality has no
@@ -63,7 +72,19 @@ impl HookRunner for NullHooks {
     async fn exec(&self, _: &str, _: &[String], _: Duration) -> Result<String, String> {
         Err("no container runtime on this stone: hooks cannot run".into())
     }
+
+    async fn exec_lines(
+        &self,
+        _: &str,
+        _: &[String],
+    ) -> Result<ExecLines, String> {
+        Err("no container runtime on this stone: hooks cannot run".into())
+    }
 }
+
+/// A live line stream from an in-container command (the capability
+/// growth's progress source). The caller owns the deadline.
+pub type ExecLines = std::pin::Pin<Box<dyn futures::Stream<Item = String> + Send>>;
 
 /// What the last (or running) capture of an offering looks like.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -877,6 +898,14 @@ mod tests {
                 .unwrap()
                 .push(argv.first().cloned().unwrap_or_default());
             Ok(String::new())
+        }
+
+        async fn exec_lines(
+            &self,
+            _container: &str,
+            _argv: &[String],
+        ) -> Result<ExecLines, String> {
+            Ok(Box::pin(futures::stream::iter(Vec::new())))
         }
     }
 

@@ -65,11 +65,13 @@ of each.
 |---|-----|---------|
 | B1 | **Contract-first codegen.** One schema source generates moss API, StoneApi, rake, resolvers, web types. Envelope-vs-bare becomes unrepresentable. | L1, L7 |
 | B2 | **Trust chains or no chains.** Every verification names its trust anchor; fails closed; "unsigned during transition" carries CI-enforced expiry. Presign secrets from vault, never identifiers. Pin on join. | L2, L13 |
+| **B2-amended (2026-08-29, operator ruling):** Zen Garden is fully operational WITHOUT Koi, and integrates with it when available. The signing/trust AUTHORITY is a Koi integration (moved to the Integration epic, M6); garden-local trust foundations — TOFU pinning, refuse-unsigned policy hooks, observable posture — stay core. | L2, L13 |
 | B3 | **Observable posture.** Enforcement stage, signing state, degraded capabilities advertised in /health and chirps. Degrade-don't-crash stays; silent-off goes. | L3 |
 | B4 | **Soft presence, leased duties.** Membership stays heartbeat-soft; every duty (primary, update-source, coordinator) carries explicit lease + takeover. Storage primary election gains divergence safety. | L4, L5, L6 |
 | B5 | **Declarative garden.** `garden.yaml` desired state (offerings, placement policy, backup targets) reconciled continuously — generalizing the reconcile loop the PoC already proved. | L4, J2, J3 |
 | B6 | **Intermittent stones first-class.** Third presence state (intermittent), nourish-before-serve on wake, goodbye on sleep. | L10, live evidence |
 | B7 | **Small kernel, guests at the edge.** Kernel = supervisor + registry + presence + routing. Orchestrators, companions, koi sidecar (via KoiGateway port) stay out-of-process guests. | L8 |
+| **B7-amended (2026-08-29, operator ruling):** the same law names Suzu: the garden is fully operational WITHOUT companions, and integrates with them when available. The companions epic (hey/cricket/firefly + Suzu contract) moved to the Integration epic (M6). | L8 |
 | B8 | **Manifest-driven surfaces.** CLI, companions, offerings declare; behavior wires to declarations. | L9 |
 | B9 | **Wrapped distribution.** Tags → built artifacts → checksums/signing → GitHub releases feeding the existing fleet-native deploy. The fake front door becomes real before anything else ships. | L10, L15 |
 | B10 | **Platform citizenship.** Each platform declares its supported surface; outside it, refuse loudly at startup. Windows: offering host (proven) + cloud-drive client (pillar) + storage scan-only (fenced). | L14 |
@@ -112,10 +114,11 @@ design answers only to v1.
 |-----------|----------|------|
 | **M0** | This charter accepted; baseline committed | ✅ |
 | **M1** | Contract + codegen; Node resolver v0; release pipeline real (tag→sign→publish); `rake api` class of bugs unrepresentable | A stranger installs from a public artifact |
-| **M2** | Security prerequisites: chirp CA-chaining, authenticated storage proxy, S3 auth-mode decision, TOFU pinning, observable posture | L2/L3 audits pass |
+| **M2** | Garden-local trust foundations: TOFU pinning, refuse-unsigned policy hooks, S3 auth-mode decision, observable posture. (Signing/CA-chaining moved to M6 — Koi integration.) | L2/L3 audits pass |
 | **M3** | Declarative garden + desired-state reconcile + intermittent stones | Fleet runs on garden.yaml; laptop-stone wakes clean |
 | **M4** | Cloud-drive pillar: recover/rewrite cfapi provider, uploader repaired | Family laptop sees garden storage in Explorer |
 | **M5** | Delight layer: family portal, heal-moments, counters | J1–J4 demonstrable to a non-technical household member |
+| **M6** | Integration epic — Koi + Suzu, once they're baked: signing/CA-chaining and the trust ceremony; authenticated storage proxy auth; companions (hey/cricket/firefly, Suzu contract); borrow vaulting (D13) | The garden degrades cleanly without them; every integration is a KoiGateway-style port with a test double (B7) |
 
 ## Definition of 1.0
 

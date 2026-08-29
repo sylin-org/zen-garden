@@ -101,6 +101,18 @@ Before the gaps, the ledger of places v1 must **not** inherit PoC shape:
 6. **M2 security**: #17 + B2 trust chains — before any public M1.
 7. **Nourish**: #16. Then RC.
 
+## Operator ruling (2026-08-29): the Integration epic
+
+Zen Garden must be fully operational WITHOUT Koi and Suzu, and
+integrate with them when available. Moved to the **Integration epic
+(charter M6, gated on Koi/Suzu being baked)**: #6 hey passthrough,
+#11 companions, #12 cricket, #17 pond security's signing/CA-chaining
+and trust ceremony, authenticated storage proxy auth, borrow vaulting
+(D13). Staying CORE from old #17: TOFU pinning, refuse-unsigned policy
+hooks, S3 auth-mode decision, observable posture (new M2 scope).
+Every integration enters as a KoiGateway-style port with a test
+double — degrade cleanly, never hard-depend (B7).
+
 ## Open operator decisions
 
 1. Companions integration (five questions from the ideation — device

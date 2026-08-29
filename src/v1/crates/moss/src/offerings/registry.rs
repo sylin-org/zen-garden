@@ -111,10 +111,34 @@ pub struct Registry {
 
 impl Registry {
     /// Build from a store, splitting adopted into candidates on load
-    /// (ghost prevention).
+    /// (ghost prevention, OFFERINGS.md §2: "keep exactly"). An adopted
+    /// record whose workload's fate is unknown must not haunt the garden —
+    /// it stays invisible until the detector confirms it again
+    /// (offerings::detect's confirm pass).
     pub fn new(store: Arc<dyn SnapshotStore>) -> Self {
         let (active, candidates) = match store.load() {
-            Some(s) => (s.active, s.candidates),
+            Some(s) => {
+                let mut candidates = s.candidates;
+                let mut ghosts = 0usize;
+                let active: Vec<Offering> = s
+                    .active
+                    .into_iter()
+                    .filter(|o| {
+                        if o.adopted().is_some() {
+                            ghosts += 1;
+                            candidates.retain(|c| c.offering_id != o.offering_id);
+                            candidates.push(o.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .collect();
+                if ghosts > 0 {
+                    tracing::info!(ghosts, "adopted offerings await detection (ghost prevention)");
+                }
+                (active, candidates)
+            }
             None => (Vec::new(), Vec::new()),
         };
         let events_tx = broadcast::channel(256).0;
@@ -199,6 +223,23 @@ impl Registry {
         self.inner.read().candidates.len()
     }
 
+    /// The candidate pool, sorted by name — the detector's confirm pass
+    /// walks it looking for workloads that came back.
+    pub fn candidates_snapshot(&self) -> Vec<Offering> {
+        let mut all = self.inner.read().candidates.clone();
+        all.sort_by(|a, b| a.name.cmp(&b.name));
+        all
+    }
+
+    /// Does this stem already have a home here — active in any mode or
+    /// waiting as a candidate? (R1.1: one concept, one home. Detection
+    /// never mints a second identity for a claimed stem.)
+    pub fn stem_claimed(&self, stem: &str) -> bool {
+        let inner = self.inner.read();
+        inner.active.values().any(|o| o.offering == stem)
+            || inner.candidates.iter().any(|c| c.offering == stem)
+    }
+
     /// Insert or replace an ACTIVE offering. Adopted offerings entering
     /// fresh are diverted to candidates — call [`promote`] once detection
     /// confirms them.
@@ -222,22 +263,27 @@ impl Registry {
 
     /// Awaiting confirmation: stored but invisible to chirps and reconcile.
     pub fn add_candidate(&self, offering: Offering) {
-        let mut inner = self.inner.write();
-        inner.candidates.retain(|c| c.offering_id != offering.offering_id);
-        inner.candidates.push(offering);
-        // Candidates stay memory-only until promoted (poc aggregate.rs:406+);
-        // they ride along inside the next full persist.
+        {
+            let mut inner = self.inner.write();
+            inner.candidates.retain(|c| c.offering_id != offering.offering_id);
+            inner.candidates.push(offering);
+        }
+        // Persist OUTSIDE the lock (parking_lot is not reentrant — the
+        // in-lock persist was a latent deadlock detection just exposed).
         self.persist();
     }
 
-    /// Detection confirmed: promote a candidate into the active pool.
-    pub fn promote(&self, offering_id: &str) -> Option<Offering> {
+    /// Detection confirmed: promote a candidate into the active pool,
+    /// carrying the OBSERVED status — a confirmed workload may be running
+    /// or merely present-but-stopped, and the record tells the truth
+    /// about which.
+    pub fn promote(&self, offering_id: &str, status: Status) -> Option<Offering> {
         let event = {
             let mut inner = self.inner.write();
             let idx =
                 inner.candidates.iter().position(|c| c.offering_id == offering_id)?;
             let mut o = inner.candidates.remove(idx);
-            o.status = Status::Running;
+            o.status = status;
             o.updated_at = chrono::Utc::now();
             let event = OfferingChanged {
                 offering_id: o.offering_id.clone(),

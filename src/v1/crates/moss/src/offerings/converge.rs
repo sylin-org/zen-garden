@@ -136,6 +136,18 @@ pub async fn run(service: Arc<OfferingService>, token: CancellationToken) {
                 for (name, outcome) in converge_once(&service).await {
                     tracing::debug!(%name, ?outcome, "converge");
                 }
+                // The detection domain rides the same protocol floor
+                // (OFFERINGS.md §1 adopted mode): recognize, confirm,
+                // observe — never operate.
+                let report = super::detect::detect_once(&service).await;
+                if !report.is_empty() {
+                    tracing::info!(
+                        minted = report.minted.len(),
+                        confirmed = report.confirmed.len(),
+                        moved = report.observed.len(),
+                        "detection sweep"
+                    );
+                }
             }
         }
     }

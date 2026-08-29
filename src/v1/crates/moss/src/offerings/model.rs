@@ -174,6 +174,11 @@ pub struct AdoptedData {
     pub stop_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_path: Option<String>,
+    /// The world's container name this adoption is bound to (L25:
+    /// remembered binding). Status updates re-find the workload by it;
+    /// without it the record could not tell its container from another's.
+    #[serde(default)]
+    pub container_name: String,
 }
 
 fn default_control() -> String {
@@ -250,6 +255,13 @@ impl Offering {
     pub fn managed(&self) -> Option<&ManagedData> {
         match &self.mode_data {
             ModeData::Managed(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn adopted(&self) -> Option<&AdoptedData> {
+        match &self.mode_data {
+            ModeData::Adopted(a) => Some(a),
             _ => None,
         }
     }

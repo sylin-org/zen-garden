@@ -2,12 +2,15 @@
 //!
 //! The registry is this stone's hot map of placed work (active + candidate
 //! pools); the runtime seam is the pluggable substrate beneath *managed*
-//! work only. Modes know the registry; runtimes know containers.
+//! work only. Modes know the registry; runtimes know containers. The
+//! detection domain (detect) watches the host's containers and adopts
+//! what the catalog recognizes — it observes, it never operates.
 
 pub mod capture;
 pub mod capture_run;
 pub mod compile;
 pub mod converge;
+pub mod detect;
 pub mod directory;
 pub mod docker;
 pub mod evaluate;

@@ -424,6 +424,31 @@ impl Runtime for DockerRuntime {
         }
     }
 
+    /// The unfiltered window (OFFERINGS.md §1, adopted mode): every
+    /// container on this host, garden's own or the household's. Stopped
+    /// ones too — an adopted workload that exists but is stopped must
+    /// report stopped, not vanish.
+    async fn list_running(&self) -> Vec<super::runtime::ContainerFact> {
+        let opts: ListContainersOptions<String> =
+            ListContainersOptions { all: true, ..Default::default() };
+        match self.docker.list_containers(Some(opts)).await {
+            Ok(list) => list
+                .into_iter()
+                .filter_map(|c| {
+                    Some(super::runtime::ContainerFact {
+                        name: c.names.as_ref()?.first()?.trim_start_matches('/').to_string(),
+                        image: c.image.clone().unwrap_or_default(),
+                        state: c.state.clone().unwrap_or_else(|| "unknown".into()),
+                    })
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "container facts unavailable");
+                Vec::new()
+            }
+        }
+    }
+
     /// Docker-logs semantics: history first (bounded by `tail`), then
     /// live follow. stdout/stderr keep their channels; timestamps are
     /// the engine's, not ours.

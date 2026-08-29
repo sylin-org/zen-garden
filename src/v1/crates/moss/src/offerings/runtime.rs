@@ -71,6 +71,14 @@ pub trait Runtime: Send + Sync {
     /// Everything this world currently hosts for the garden.
     async fn list(&self) -> Vec<PlacedRef>;
 
+    /// Every container this world hosts right now — garden-placed or not
+    /// (unlike [`Runtime::list`], there is no prefix filter). The
+    /// detection domain's window onto the host. Returns nothing when the
+    /// world cannot see containers (the null world's honest answer).
+    async fn list_running(&self) -> Vec<ContainerFact> {
+        Vec::new()
+    }
+
     /// Follow an offering's logs (docker-logs semantics: history first,
     /// then live). `tail` bounds the history to the last N lines; the
     /// stream runs until the container stops or the client leaves.
@@ -153,6 +161,36 @@ pub struct RehearsalFate {
 pub struct PlacedRef {
     pub name: String,
     pub status: Status,
+}
+
+/// The world's state string for a living container ([`ContainerFact`]).
+/// Adapter-native vocabulary, pinned here at the seam.
+pub const RUNNING_STATE: &str = "running";
+
+/// One container the host world reports — ANY container, garden-placed or
+/// not. This is the detection domain's raw material (OFFERINGS.md §1,
+/// adopted mode): the garden is a guest on this host and sees the whole
+/// household, not just its own plantings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerFact {
+    /// The world's container name, leading slash stripped.
+    pub name: String,
+    /// The image reference as the world reports it.
+    pub image: String,
+    /// World-native state ("running", "exited", "paused", ...).
+    pub state: String,
+}
+
+impl ContainerFact {
+    pub fn running(&self) -> bool {
+        self.state == RUNNING_STATE
+    }
+
+    /// The honest Status for this fact: alive or not — nothing in between.
+    /// Adoption observes; it does not diagnose.
+    pub fn status(&self) -> Status {
+        if self.running() { Status::Running } else { Status::Stopped }
+    }
 }
 
 /// The host's worlds: every runtime this stone adopted at boot (L25).

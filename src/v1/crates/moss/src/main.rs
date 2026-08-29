@@ -373,7 +373,17 @@ async fn main() {
         async move {
             let results = offerings::converge::converge_once(&garden).await;
             let healed = results.iter().filter(|(_, o)| *o == offerings::converge::Outcome::Healed).count();
-            tracing::info!(checked = results.len(), healed, "boot convergence complete");
+            // Boot is when ghosts confirm: adopted candidates re-enter the
+            // room if their containers are here (OFFERINGS.md §2), and the
+            // household's hand-run work is recognized right away.
+            let detected = offerings::detect::detect_once(&garden).await;
+            tracing::info!(
+                checked = results.len(),
+                healed,
+                adopted_confirmed = detected.confirmed.len(),
+                adopted_minted = detected.minted.len(),
+                "boot convergence complete"
+            );
             Ok(())
         }
     })

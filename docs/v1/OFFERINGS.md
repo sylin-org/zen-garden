@@ -57,8 +57,13 @@ ledger lands (O2), wake re-derives and records remaps rather than lying.
 3. Events inside: runtime event streams drive status; sweeps are floors (L18).
 4. Ceremony ≠ install: install is a job; ceremonies are journaled multi-phase
    rituals — deferred (D11).
-5. Adoption is detection, not conquest: promote on confirmation, demote on
-   silence; compatibility may forbid outright (poc auto_adoption Phase 1A/1B).
+5. Adoption is detection, not conquest: a rule match on a RUNNING
+   container mints the record; boot ghosts wait in candidates until their
+   detector confirms them again; an adopted workload's fate is REPORTED,
+   never driven — it dies, the record says stopped; it returns, running.
+   The host keeps the lifecycle. (v1 ruling 2026-08-28: the PoC's demote-
+   on-silence became observe-through-silence — a hand-stopped service is
+   an honest `stopped`, not a haunting; ghost prevention guards the boot.)
 6. Borrow is registration only: excluded from reconcile, present in discovery.
 
 **The rehydration contract** — an offering is fully determined by three
@@ -143,14 +148,15 @@ managed:                  # ---- placement intent ----
     static_ip: preferred
     static_ip_reason: "DNS servers need stable addresses"
 
-adopted:                  # ---- detection intent ----
-  detect:
-    process: { executable: ollama, args_contain: serve }
-    http: { port: 11434, path: /api/tags, expect_status: 200 }
-    installed: { cmd: "ollama --version", pattern: "version is" }  # dormant-vs-absent
-  control: monitor               # full | monitor | announce (all shipped PoC manifests chose monitor)
-  commands: { start: ..., stop: ... }   # honored only at control: full
-  ports: { default: { value: 11434, remember: true } }
+adopted:                  # ---- detection intent (v1 grammar, 2026-08-28) ----
+  container_name_pattern: '^ollama(-.+)?$'  # regex over the world's container name
+  image_pattern: '^ollama/ollama'           # regex over the image reference
+  # The stem is implicit (the manifest IS the stem); at least one pattern
+  # is required, and patterns must compile at catalog load. The PoC's
+  # multi-method detect DSL (process/http/installed) reshaped to container
+  # facts — the world the first host world speaks. Adoption is observe-
+  # only: control_level rides the model's `monitor` default; command and
+  # port remembrance land with their consumers (control: full slice).
 
 borrowed:
   connection: { protocol: http, uri_template: "http://{host}:{port}" }

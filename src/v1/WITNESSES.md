@@ -245,3 +245,41 @@ service, connection string unchanged.
   crystalline-dune awaits its power button (rejoins as a peer); the
   SanDisk rests on emerald vale with its PoC lineage intact; all three
   live stones now run the living-will build.
+
+## W8 — adoption observes, it never operates (2026-08-29, stone-tranquil-pass / 192.168.1.195, release build, MOSS_RUNTIME=docker)
+
+The adopted mode (OFFERINGS.md §1, L25) made real: catalog detection rules
+× live container facts → adopted offerings, riding the converge sweep
+clock. The one-minute skeptic demo, run against the live stone:
+
+- **Hand-run container → adopted, honestly**: `docker run --name ollama
+  ollama/ollama:latest` at 03:13:44 — by 03:14:12 (one sweep) the garden
+  answers `ollama::adopted` (stem `ollama`, category `ai`,
+  `container_name: "ollama"`, `control_level: monitor`, status
+  **running**). The garden claimed credit for nothing: the mint log line
+  reads *"offering detected on the host - adopted (observe-only)"*.
+- **Killed by hand → recorded, not operated**: `docker stop` at 03:14:54;
+  next sweep the record says **stopped** and STAYS — no vanish, no
+  restart ("adopted workload moved - recorded, not operated").
+- **Returned by its owner → running again**, `RestartCount=0`,
+  `StartedAt` = exactly the operator's `docker start`; zero
+  garden-initiated operations in the moss log. Lifecycle stayed the
+  host's throughout.
+- **Mid-cycle joiner (the ghost law, OFFERINGS.md §2 "keep exactly")**:
+  container removed + moss restarted → the record split to candidates at
+  boot (*"adopted offerings await detection (ghost prevention)
+  ghosts=1"*) and did NOT haunt the room — offerings list clean; the
+  container hand-run again → confirmed back to **running** within one
+  sweep.
+- Free-by-construction surfacing held: the adopted record rode the
+  registry snapshot into the offerings face and chirps with no new code;
+  a bare `resolve("ollama")` wish matches it by the stem law.
+
+En route, the detection tests exposed a LATENT DEADLOCK: `add_candidate`
+called `persist()` while holding the registry write lock (parking_lot is
+not reentrant). Unexercised since the registry was written; fixed in this
+slice, covered by the ghost-law tests.
+
+**State left behind**: none — the ollama container, image, and adopted
+record were uprooted after the proof; .195 as found (witness-db::garden
+running the living-will build, now with the adoption slice).

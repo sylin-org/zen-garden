@@ -1,0 +1,14 @@
+kind: software
+name: ollama
+category: ai
+description: >-
+  Local LLM runtime. Recognized when it is already running on the host —
+  the garden adopts it as-is and never drives its lifecycle: it dies, the
+  record says stopped; it returns, the record says running.
+tags: [ai, llm, inference, embedding, local-ai]
+
+adopted:
+  # The household's hand-run ollama: standard container name or the
+  # numbered variants (ollama-2...), any ollama/ollama image.
+  container_name_pattern: '^ollama(-.+)?$'
+  image_pattern: '^ollama/ollama'

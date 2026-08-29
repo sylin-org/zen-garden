@@ -251,6 +251,20 @@ impl OfferingService {
         self.worlds.kinds()
     }
 
+    /// Live container facts from every world this stone hosts — ALL
+    /// containers, garden's own or the household's (adopted mode,
+    /// OFFERINGS.md §1). A sick world answers empty (R2.5); the sweep
+    /// never dies on a degraded seam.
+    pub(crate) async fn container_facts(&self) -> Vec<super::runtime::ContainerFact> {
+        let mut facts = Vec::new();
+        for kind in self.worlds.kinds() {
+            if let Ok(world) = self.worlds.by_kind(kind) {
+                facts.extend(world.list_running().await);
+            }
+        }
+        facts
+    }
+
     /// Plant an offering by name (OFFERINGS.md §5). Names arrive as
     /// MONIKERS (`ollama`) or explicit FQNs (`ollama::prod`); the grammar
     /// (glossary::fqn) canonicalizes both to machine truth. Instances of a

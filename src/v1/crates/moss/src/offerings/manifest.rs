@@ -25,7 +25,11 @@ pub struct Manifest {
     #[serde(default)]
     pub tags: Vec<String>,
     pub managed: Option<ManagedIntent>,
-    pub adopted: Option<serde_yaml::Value>, // detection DSL lands in O3
+    /// Detection intent (OFFERINGS.md §5.1): how the stone recognizes
+    /// this offering already running on the host. Parsed by the detection
+    /// domain (offerings::detect); rides the ADR-0008 catalog layers like
+    /// every other manifest section.
+    pub adopted: Option<AdoptIntent>,
     pub borrowed: Option<serde_yaml::Value>,
     #[serde(default)]
     pub compatibility: Vec<CompatRule>,
@@ -92,6 +96,20 @@ pub struct HostPortDecl {
     pub port: u16,
     #[serde(default)]
     pub strict: bool,
+}
+
+/// Detection rules for the adopted mode: regular expressions matched
+/// against the host world's container facts (name, image). The stem is
+/// implicit — the manifest IS the stem — so no name rule is needed here.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdoptIntent {
+    /// Regex over the world's container name ("ollama", "ollama-1").
+    #[serde(default)]
+    pub container_name_pattern: Option<String>,
+    /// Regex over the image reference ("ollama/ollama:0.5").
+    #[serde(default)]
+    pub image_pattern: Option<String>,
 }
 
 fn default_world() -> String {
@@ -196,6 +214,48 @@ managed:
             Catalog::parse("redis", &bad).is_err(),
             "typo'd decl keys must fail loudly, not silently degrade"
         );
+    }
+
+    /// Detection rules (adopted mode): typed, at least one pattern, and
+    /// every pattern a valid regex — a rule matching everything would
+    /// adopt the whole host, and a broken regex must die at load, never
+    /// mid-sweep.
+    #[test]
+    fn adopt_rules_need_a_pattern_and_a_valid_regex() {
+        let good = GOOD.replace(
+            "managed:",
+            "adopted:\n  container_name_pattern: '^redis(-.+)?$'\n  image_pattern: '^redis:'\nmanaged:",
+        );
+        let adopt = Catalog::parse("redis", &good).unwrap().adopted.unwrap();
+        assert_eq!(adopt.container_name_pattern.as_deref(), Some("^redis(-.+)?$"));
+        assert_eq!(adopt.image_pattern.as_deref(), Some("^redis:"));
+
+        // Neither pattern: refused.
+        let empty = GOOD.replace("managed:", "adopted: {}\nmanaged:");
+        assert!(
+            Catalog::parse("redis", &empty).is_err(),
+            "a patternless rule would adopt the whole host"
+        );
+
+        // A pattern that cannot compile is a load-time refusal.
+        let bad = GOOD.replace(
+            "managed:",
+            "adopted:\n  container_name_pattern: '^redis('\nmanaged:",
+        );
+        assert!(Catalog::parse("redis", &bad).is_err());
+
+        // Detection alone is a legal manifest: recognizable without being
+        // placeable.
+        let adopt_only = "\
+kind: software
+name: redis
+category: data
+description: d
+adopted:
+  container_name_pattern: '^redis'
+";
+        let m = Catalog::parse("redis", adopt_only).unwrap();
+        assert!(m.managed.is_none() && m.adopted.is_some());
     }
 
     /// The catalog derives from the directory: good manifests load, bad
@@ -359,6 +419,29 @@ impl Catalog {
     /// a host-port declaration must name an EXISTING container port role —
     /// there is nothing to expose otherwise.
     fn validate(m: &Manifest) -> Result<(), String> {
+        // Detection rules: at least one pattern (a rule matching
+        // everything would adopt the whole host), and every pattern must
+        // compile — a broken regex dies at load, never at sweep time.
+        if let Some(adopt) = &m.adopted {
+            if adopt.container_name_pattern.is_none() && adopt.image_pattern.is_none() {
+                return Err(format!(
+                    "manifest '{}': adopted section declares no patterns — \
+                     give a container_name_pattern or an image_pattern",
+                    m.name
+                ));
+            }
+            for pattern in [&adopt.container_name_pattern, &adopt.image_pattern]
+                .into_iter()
+                .flatten()
+            {
+                if let Err(e) = regex::Regex::new(pattern) {
+                    return Err(format!(
+                        "manifest '{}': adopted pattern '{pattern}' is not a valid regex: {e}",
+                        m.name
+                    ));
+                }
+            }
+        }
         // The living will is a managed offering's will: capture without
         // placed work has nothing to preserve and nothing to hook into.
         if let Some(policy) = &m.capture {

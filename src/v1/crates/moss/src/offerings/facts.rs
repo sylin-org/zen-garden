@@ -143,17 +143,17 @@ pub fn builtin_contributors(worlds_present: &[String]) -> Vec<Arc<dyn Contributo
     }
     // Linux cpu flags from /proc/cpuinfo (Windows leaves them unknown).
     #[cfg(target_os = "linux")]
-    if let Ok(info) = std::fs::read_to_string("/proc/cpuinfo") {
-        if let Some(line) = info.lines().find(|l| l.starts_with("flags")) {
-            let flags: Vec<serde_json::Value> = line
-                .split(':')
-                .nth(1)
-                .unwrap_or("")
-                .split_whitespace()
-                .map(serde_json::Value::from)
-                .collect();
-            c.insert("cpu.features".into(), serde_json::Value::Array(flags));
-        }
+    if let Ok(info) = std::fs::read_to_string("/proc/cpuinfo")
+        && let Some(line) = info.lines().find(|l| l.starts_with("flags"))
+    {
+        let flags: Vec<serde_json::Value> = line
+            .split(':')
+            .nth(1)
+            .unwrap_or("")
+            .split_whitespace()
+            .map(serde_json::Value::from)
+            .collect();
+        c.insert("cpu.features".into(), serde_json::Value::Array(flags));
     }
     out.push(Arc::new(SimpleContributor { concern: "cpu", nodes: c }));
 

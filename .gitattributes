@@ -1,14 +1,4 @@
-﻿# Force LF line endings for YAML manifest files
-*.yaml text eol=lf
-*.yml text eol=lf
-
-# Rust source files
-*.rs text eol=lf
-*.toml text eol=lf
-
-# Scripts
-*.sh text eol=lf
-*.ps1 text eol=crlf
-
-# Markdown and docs
-*.md text eol=lf
+# The generated contract artifact must be byte-stable across platforms -
+# the embedded copy is compared against regeneration in tests (R4.7);
+# CRLF checkouts would break the equality.
+src/v1/crates/contract/surface.json text eol=lf

@@ -44,3 +44,7 @@ src/v1/target/
 
 # Session-local working memory (durable content belongs in tracked docs - see local/README.md)
 local/NOTES.md
+
+# deploy-ritual build outputs (cross-compile droppoint)
+.cargo/moss
+.cargo/rake

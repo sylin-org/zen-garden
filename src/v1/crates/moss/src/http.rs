@@ -93,6 +93,7 @@ fn method_router(face: Face) -> axum::routing::MethodRouter<Arc<AppState>> {
             Face::OfferingRest => post(rest_offering),
             Face::OfferingWake => post(wake_offering),
             Face::OfferingUproot => axum::routing::delete(uproot_offering),
+            Face::OfferingCapabilities => get(offering_capabilities),
         }
     }
 
@@ -1255,6 +1256,35 @@ fn record_view(offering: &crate::offerings::model::Offering) -> serde_json::Valu
 /// §5.3: the placed record with its plan attached. Off-grammar names
 /// refuse loudly here too — a tag-shaped read is an identity question,
 /// not a quiet miss.
+/// What the offering holds (W1): observed LIVE through its manifest's
+/// list channel, and the record refreshed so chirps answer wishes from
+/// fresh truth. Read-only — discovery never operates on the workload.
+async fn offering_capabilities(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult {
+    let fqn = garden_glossary::fqn::canonicalize(&name)
+        .map_err(|e| CommandError::Conflict(e.to_string()))?;
+    let offering = state.garden.placed(&fqn).ok_or(CommandError::NotFound(fqn.clone()))?;
+    match crate::offerings::capabilities::discover(&state.garden, &offering).await {
+        Ok(map) => {
+            if map != offering.sub_capabilities {
+                let mut fresh = offering.clone();
+                fresh.sub_capabilities = map.clone();
+                fresh.updated_at = chrono::Utc::now();
+                state.garden.registry().replace(fresh);
+            }
+            Ok(Json(serde_json::json!({
+                "data": { "offering": fqn, "capabilities": map },
+            })))
+        }
+        Err(crate::offerings::capabilities::DiscoverError::Unsupported(m)) => {
+            Err(ApiError(CommandError::Conflict(m)))
+        }
+        Err(e) => Err(ApiError(CommandError::Conflict(e.to_string()))),
+    }
+}
+
 async fn show_offering(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
@@ -1435,6 +1465,7 @@ mod tests {
                 std::env::temp_dir().join(format!("moss-test-offer-{}", Uuid::now_v7())),
             ),
             crate::offerings::ports::Pool::default(),
+            None,
         ));
         let chirp_source = DynamicChirpSource::new(
             Voice {
@@ -2236,6 +2267,7 @@ mod tests {
                             category: "data".into(),
                             state: ServiceState { status: "running".into(), role: None },
                             ports: Default::default(),
+                capabilities: Default::default(),
                         }],
                     }),
                     banks: Some(Inventory {

@@ -283,3 +283,42 @@ slice, covered by the ghost-law tests.
 **State left behind**: none — the ollama container, image, and adopted
 record were uprooted after the proof; .195 as found (witness-db::garden
 running the living-will build, now with the adoption slice).
+
+## W9 — the wish answers: content, not just services (2026-08-29, stone-tranquil-pass / 192.168.1.195, release build)
+
+Capability wishes (W1, docs/v1/design/capability-wishes.md): the
+connection promise reaches past the offering to its content, read-only,
+room-wide.
+
+- **Adopted content is addressable**: ollama hand-run with a published
+  port → adopted within one sweep carrying the OBSERVED port
+  (`location.port = 11434`); the port rides the chirp (`ports.default`),
+  so `ollama://192.168.1.195:11434` is true on the wire, not a guess.
+- **The miss teaches (F3 acceptance)**: `rake ensure
+  'ollama[model:all-minilm]'` BEFORE the model existed → *"no stone
+  holds model:all-minilm yet. It could grow on: ollama::adopted on
+  stone-tranquil-pass — grow it there, then ask again."* A malformed
+  wish teaches the grammar: *"selector 'model' needs a type — use
+  type:item, e.g. model:llama3."*
+- **The wish answers**: `ollama pull all-minilm` by hand → the stone's
+  capability sweep re-observed within one tick (exec/http are reads;
+  nothing operated on the workload) → `rake ensure` flipped to
+  *"ollama::adopted holds model:all-minilm on stone-tranquil-pass —
+  ollama://192.168.1.195:11434"*, exit 0; `--format uri` prints the
+  connection string.
+- **The shipped resolver agrees**: Node `resolve("ollama[model:all-minilm]")`
+  against the live room returns the same answer JSON; a miss teaches.
+- **`rake capabilities ollama::adopted`** reads what it holds, live
+  (human: `model: all-minilm:latest`; machine: the full map).
+
+En route, three real finds: the on-media record round-trip DROPPED
+`sub_capabilities` (record.rs hardcoded the default — remembered caches
+now persist honestly, serde-default keeps old records readable); a
+registry tag needs the `:latest` normalization law (matched by exact or
+tag-default spelling, both in rake and the Node resolver); adopted
+offerings previously had no wire address at all (port 0 forever) — the
+observed published port now rides, which is the connection promise
+reaching adopted work.
+
+**State left behind**: none — ollama container, image, and adopted
+record uprooted; .195 as found.

@@ -114,6 +114,45 @@ export function serviceMatches(wishFqn, wishNamedInstance, serviceName) {
   return !wishNamedInstance && serviceName.split("::")[0] === stem;
 }
 
+/**
+ * Parse a capability wish's bracket body: `model:llama3,multi:10` ->
+ * [{kind, item}]. The bracket marker is stripped by the caller. Same
+ * grammar as contract::wish (comma separates pairs; a pipe continues
+ * the previous type).
+ */
+export function parseSelectors(body) {
+  const selectors = [];
+  for (const group of body.split(",")) {
+    const parts = group.split("|");
+    const first = parts[0];
+    const colon = first.indexOf(":");
+    const kindRaw = colon < 0 ? first : first.slice(0, colon);
+    const itemRaw = colon < 0 ? "" : first.slice(colon + 1);
+    const kind = (kindRaw ?? "").trim().toLowerCase();
+    const item = (itemRaw ?? "").trim();
+    if (!kind || !item) throw new Error(`selector '${group.trim()}' needs type:item, e.g. model:llama3`);
+    selectors.push({ kind, item });
+    for (const rest of parts.slice(1)) {
+      const item2 = rest.trim();
+      if (!item2) throw new Error("empty selector after '|'");
+      selectors.push({ kind, item: item2 });
+    }
+  }
+  return selectors;
+}
+
+/** Every selector holds: svc.capabilities[type] names the item — exact,
+ * or the tag-default spelling (all-minilm == all-minilm:latest). */
+export function capabilitySatisfied(held, wanted) {
+  return held === wanted || held === `${wanted}:latest`;
+}
+
+export function satisfiesWish(svc, selectors) {
+  return selectors.every(({ kind, item }) =>
+    (svc.capabilities?.[kind] ?? []).some((held) => capabilitySatisfied(held, item))
+  );
+}
+
 /** Extract the first published host port from a service entry. */
 function firstPort(ports) {
   const values = ports ? Object.values(ports) : [];
@@ -135,8 +174,21 @@ export function connectionUri(stem, ip, port) {
  * @returns {Promise<{ensured: true, how: "found", name: string, stone: string, uri: string, status: string}>}
  */
 export async function resolve(name, opts = {}) {
-  const fqn = name.includes("::") ? name : `${name}::default`;
-  const namedInstance = name.includes("::");
+  // Bracket syntax makes it a wish: `ollama[model:llama3]` asks for
+  // content, and only a service that HOLDS it answers.
+  const open = name.indexOf("[");
+  let selectors = [];
+  let offeringPart = name;
+  if (open >= 0) {
+    if (!name.endsWith("]")) {
+      throw new Error("capability selectors must end with ']' — e.g. ollama[model:llama3]");
+    }
+    offeringPart = name.slice(0, open).trim();
+    if (!offeringPart) throw new Error("name the offering before the brackets — e.g. ollama[model:llama3]");
+    selectors = parseSelectors(name.slice(open + 1, -1));
+  }
+  const fqn = offeringPart.includes("::") ? offeringPart : `${offeringPart}::default`;
+  const namedInstance = offeringPart.includes("::");
   const stones = opts.stones ?? await discover(opts.timeoutMs, opts.group, opts.port);
   if (!stones.length) {
     throw new Error("no moss answered the discovery ask — the room is out of reach");
@@ -146,6 +198,7 @@ export async function resolve(name, opts = {}) {
     for (const row of view.data?.stones ?? []) {
       for (const svc of row.inventory?.services?.items ?? []) {
         if (!serviceMatches(fqn, namedInstance, svc.name)) continue;
+        if (!satisfiesWish(svc, selectors)) continue;
         const ip = row.stone?.network?.address?.ip ?? stone.ip;
         const port = firstPort(svc.ports);
         const stem = svc.stem ?? svc.name.split("::")[0];
@@ -160,7 +213,12 @@ export async function resolve(name, opts = {}) {
       }
     }
   }
-  throw new Error(`no room member carries '${name}'`);
+  const want = selectors.map((s) => `${s.kind}:${s.item}`).join(", ");
+  throw new Error(
+    selectors.length
+      ? `no stone holds ${want} yet — ask again once it grows`
+      : `no room member carries '${name}'`
+  );
 }
 
 /** GET one JSON document from a moss. */

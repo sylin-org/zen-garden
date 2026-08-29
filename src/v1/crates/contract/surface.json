@@ -221,6 +221,12 @@
       "method": "DELETE",
       "path": "/api/v1/offerings/{fqn}",
       "summary": "Uproot - remove the workload and forget the offering."
+    },
+    {
+      "face": "OfferingCapabilities",
+      "method": "GET",
+      "path": "/api/v1/offerings/{fqn}/capabilities",
+      "summary": "What the offering HOLDS, by capability type (model -> [llama3...]) - observed live through the manifest's list channel (exec or http); also refreshes the record the room's wishes answer from."
     }
   ],
   "proto": "zg/1",
@@ -573,6 +579,16 @@
         "ServiceEntry": {
           "description": "One offering a stone runs, as seen in presence. Identity fields speak\nFQN verbatim (ADR-0003); moniker suppression is a rendering concern.",
           "properties": {
+            "capabilities": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "description": "Content this instance holds, by capability type (\"model\" ->\n[\"llama3\"]). Declared in the offering's manifest, observed by the\nstone's capability sweep; omitted when the offering declares no\ncapability types. Capped (MAX_CAPABILITY_ITEMS).",
+              "type": "object"
+            },
             "category": {
               "description": "Catalog category (glossary noun).",
               "type": "string"
@@ -934,6 +950,16 @@
         "ServiceEntry": {
           "description": "One offering a stone runs, as seen in presence. Identity fields speak\nFQN verbatim (ADR-0003); moniker suppression is a rendering concern.",
           "properties": {
+            "capabilities": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "description": "Content this instance holds, by capability type (\"model\" ->\n[\"llama3\"]). Declared in the offering's manifest, observed by the\nstone's capability sweep; omitted when the offering declares no\ncapability types. Capped (MAX_CAPABILITY_ITEMS).",
+              "type": "object"
+            },
             "category": {
               "description": "Catalog category (glossary noun).",
               "type": "string"

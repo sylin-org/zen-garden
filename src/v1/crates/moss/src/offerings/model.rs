@@ -237,6 +237,11 @@ pub struct Offering {
     pub category: String,
     pub status: Status,
     pub location: Location,
+    /// Content this instance holds, by capability type, as last observed
+    /// by the stone's capability sweep (offerings::capabilities). Empty
+    /// until the offering's manifest declares capability types.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub sub_capabilities: HashMap<String, Vec<String>>,
     #[serde(flatten)]
     pub mode_data: ModeData,
     pub registered_at: chrono::DateTime<chrono::Utc>,
@@ -272,7 +277,16 @@ impl Offering {
     pub fn service_entry(&self) -> garden_contract::chirp::ServiceEntry {
         let ports = match &self.mode_data {
             ModeData::Managed(m) => m.port_map.clone(),
-            _ => Default::default(),
+            // Adopted work publishes its own port — the observed host
+            // port IS its address (the connection promise reaches
+            // adopted offerings too).
+            _ => {
+                if self.location.port > 0 {
+                    HashMap::from([("default".to_string(), self.location.port)])
+                } else {
+                    Default::default()
+                }
+            }
         };
         garden_contract::chirp::ServiceEntry {
             offering_id: self.offering_id.clone(),
@@ -284,6 +298,7 @@ impl Offering {
                 role: None,
             },
             ports,
+            capabilities: self.sub_capabilities.clone(),
         }
     }
 }

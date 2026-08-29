@@ -179,6 +179,8 @@ pub struct ContainerFact {
     pub image: String,
     /// World-native state ("running", "exited", "paused", ...).
     pub state: String,
+    /// Host ports the container publishes (empty when none).
+    pub host_ports: Vec<u16>,
 }
 
 impl ContainerFact {

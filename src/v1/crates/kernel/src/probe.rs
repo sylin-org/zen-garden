@@ -264,6 +264,7 @@ mod tests {
                             role: None,
                         },
                         ports: Default::default(),
+                capabilities: Default::default(),
                     }],
                 }),
                 ..Default::default()

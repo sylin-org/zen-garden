@@ -491,6 +491,7 @@ mod tests {
                 port: 7300,
                 protocol: "http".into(),
             },
+            sub_capabilities: Default::default(),
             mode_data: ModeData::Managed(ManagedData {
                 runtime_kind: "oci".into(),
                 spec: Default::default(),

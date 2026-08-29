@@ -94,6 +94,12 @@ pub struct ServiceEntry {
     /// Absent/empty = defaults stand.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub ports: std::collections::HashMap<String, u16>,
+    /// Content this instance holds, by capability type ("model" ->
+    /// ["llama3"]). Declared in the offering's manifest, observed by the
+    /// stone's capability sweep; omitted when the offering declares no
+    /// capability types. Capped (MAX_CAPABILITY_ITEMS).
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub capabilities: std::collections::HashMap<String, Vec<String>>,
 }
 
 /// Runtime condition of one offering instance.

@@ -36,6 +36,11 @@ pub struct Manifest {
     /// Declared install form (OFFERINGS.md §5.1): ask/secret/default.
     #[serde(default)]
     pub inputs: BTreeMap<String, InputField>,
+    /// Capability types this offering holds (OFFERINGS.md §5.1 — the
+    /// reserved `capabilities:` grammar, unparked). Observed read-only by
+    /// the stone's capability sweep; W1 ships the list channel only.
+    #[serde(default)]
+    pub capabilities: Vec<CapabilityDecl>,
     /// The living will (ADR-0005 §1): how this offering asks to be
     /// remembered. Lifecycle intent — never hashed into plans (§7).
     #[serde(default)]
@@ -96,6 +101,50 @@ pub struct HostPortDecl {
     pub port: u16,
     #[serde(default)]
     pub strict: bool,
+}
+
+/// One capability type an offering holds (W1: observe-only; the
+/// add/remove/upgrade operations wait for W2's job semantics — L11).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityDecl {
+    /// Capability type identifier ("model"). Lowercase plain name; the
+    /// same word a wish selector speaks (`ollama[model:llama3]`).
+    pub r#type: String,
+    /// The wish shorthand's default type when an offering declares
+    /// several. At most one per manifest.
+    #[serde(default)]
+    pub default: bool,
+    /// How to observe what this offering holds right now.
+    pub list: CapabilityList,
+}
+
+/// The list channel: exactly ONE of exec or http (validated at load).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityList {
+    /// Run inside the offering's container (HookRunner seam); stdout is
+    /// the payload. Read-only inspection — observation, not operation.
+    #[serde(default)]
+    pub exec: Option<Vec<String>>,
+    /// GET `http://localhost:<offering port><path>`; the JSON answer is
+    /// the payload. Localhost only — a capability endpoint is the
+    /// offering's own self-description.
+    #[serde(default)]
+    pub http: Option<HttpList>,
+}
+
+/// The http channel's JSON grammar: where the item array lives and which
+/// field of each element names the item. Dot notation, explicit beats
+/// clever — no transform DSL (gate-4 ruling).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpList {
+    pub path: String,
+    /// Dot path to the item array (e.g. "models").
+    pub item_path: String,
+    /// Dot path to the item's name within each element (e.g. "name").
+    pub value_path: String,
 }
 
 /// Detection rules for the adopted mode: regular expressions matched
@@ -256,6 +305,75 @@ adopted:
 ";
         let m = Catalog::parse("redis", adopt_only).unwrap();
         assert!(m.managed.is_none() && m.adopted.is_some());
+    }
+
+    /// Capability declarations (W1): one list channel per type, plain
+    /// lowercase types, at most one default, no duplicates — all refused
+    /// at load, never mid-sweep.
+    #[test]
+    fn capability_declarations_are_validated_at_load() {
+        let good = GOOD.replace(
+            "managed:",
+            "capabilities:
+  - type: model
+    default: true
+    list:
+      http: { path: /api/tags, item_path: models, value_path: name }
+managed:",
+        );
+        let m = Catalog::parse("redis", &good).unwrap();
+        assert_eq!(m.capabilities.len(), 1);
+        assert_eq!(m.capabilities[0].r#type, "model");
+        assert!(m.capabilities[0].default);
+
+        // Two channels: refused.
+        let both = good.replace(
+            "      http: { path: /api/tags, item_path: models, value_path: name }",
+            "      http: { path: /api/tags, item_path: models, value_path: name }
+      exec: [list, things]",
+        );
+        assert!(Catalog::parse("redis", &both).is_err());
+
+        // Neither channel: refused.
+        let none = good.replace(
+            "      http: { path: /api/tags, item_path: models, value_path: name }",
+            "      http: null",
+        );
+        assert!(Catalog::parse("redis", &none).is_err());
+
+        // Duplicate type and two defaults: refused.
+        let dup = GOOD.replace(
+            "managed:",
+            "capabilities:
+  - type: model
+    list: { exec: [a] }
+  - type: model
+    list: { exec: [b] }
+managed:",
+        );
+        assert!(Catalog::parse("redis", &dup).is_err());
+        let twodefaults = GOOD.replace(
+            "managed:",
+            "capabilities:
+  - type: model
+    default: true
+    list: { exec: [a] }
+  - type: other
+    default: true
+    list: { exec: [b] }
+managed:",
+        );
+        assert!(Catalog::parse("redis", &twodefaults).is_err());
+
+        // Uppercase type: refused.
+        let upper = GOOD.replace(
+            "managed:",
+            "capabilities:
+  - type: Model
+    list: { exec: [a] }
+managed:",
+        );
+        assert!(Catalog::parse("redis", &upper).is_err());
     }
 
     /// The catalog derives from the directory: good manifests load, bad
@@ -441,6 +559,67 @@ impl Catalog {
                     ));
                 }
             }
+        }
+        // Capability declarations: plain lowercase types, exactly one
+        // list channel each, at most one default type, no duplicates —
+        // every refusal dies at load, never mid-sweep (§5.1 law).
+        let mut default_types = 0usize;
+        let mut seen_types = std::collections::BTreeSet::new();
+        for cap in &m.capabilities {
+            let valid_name = !cap.r#type.is_empty()
+                && cap
+                    .r#type
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+            if !valid_name {
+                return Err(format!(
+                    "manifest '{}': capability type '{}' must be a lowercase plain name",
+                    m.name, cap.r#type
+                ));
+            }
+            if !seen_types.insert(cap.r#type.clone()) {
+                return Err(format!(
+                    "manifest '{}': capability type '{}' declared twice",
+                    m.name, cap.r#type
+                ));
+            }
+            if cap.default {
+                default_types += 1;
+            }
+            let channels =
+                cap.list.exec.is_some() as usize + cap.list.http.is_some() as usize;
+            if channels != 1 {
+                return Err(format!(
+                    "manifest '{}': capability '{}' list needs exactly one channel (exec or http)",
+                    m.name, cap.r#type
+                ));
+            }
+            if let Some(http) = &cap.list.http {
+                if !http.path.starts_with('/') {
+                    return Err(format!(
+                        "manifest '{}': capability '{}' http path must start with '/'",
+                        m.name, cap.r#type
+                    ));
+                }
+                for p in [&http.item_path, &http.value_path] {
+                    if p.is_empty()
+                        || p.starts_with('.')
+                        || p.ends_with('.')
+                        || !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                    {
+                        return Err(format!(
+                            "manifest '{}': capability '{}' json path '{p}' is not a dot path",
+                            m.name, cap.r#type
+                        ));
+                    }
+                }
+            }
+        }
+        if default_types > 1 {
+            return Err(format!(
+                "manifest '{}': at most one capability type may be default",
+                m.name
+            ));
         }
         // The living will is a managed offering's will: capture without
         // placed work has nothing to preserve and nothing to hook into.

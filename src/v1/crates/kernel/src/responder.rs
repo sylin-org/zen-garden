@@ -151,6 +151,7 @@ mod tests {
                         category: "data".into(),
                         state: ServiceState { status: "running".into(), role: None },
                         ports: Default::default(),
+                capabilities: Default::default(),
                     }],
                 })
                 .unwrap(),

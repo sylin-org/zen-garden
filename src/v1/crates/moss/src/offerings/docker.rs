@@ -435,10 +435,21 @@ impl Runtime for DockerRuntime {
             Ok(list) => list
                 .into_iter()
                 .filter_map(|c| {
+                    let host_ports: Vec<u16> = c
+                        .ports
+                        .as_ref()
+                        .map(|ports| {
+                            ports
+                                .iter()
+                                .filter_map(|p| p.public_port)
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     Some(super::runtime::ContainerFact {
                         name: c.names.as_ref()?.first()?.trim_start_matches('/').to_string(),
                         image: c.image.clone().unwrap_or_default(),
                         state: c.state.clone().unwrap_or_else(|| "unknown".into()),
+                        host_ports,
                     })
                 })
                 .collect(),
@@ -508,7 +519,7 @@ impl super::capture_run::HookRunner for DockerRuntime {
         container: &str,
         argv: &[String],
         timeout: std::time::Duration,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         use bollard::exec::{CreateExecOptions, StartExecResults};
         let exec = self
             .docker
@@ -528,11 +539,16 @@ impl super::capture_run::HookRunner for DockerRuntime {
             .start_exec(&exec.id, None)
             .await
             .map_err(|e| format!("exec start: {e}"))?;
+        let mut collected = String::new();
         if let StartExecResults::Attached { mut output, .. } = started {
-            let drain = async {
-                while let Some(_line) = futures::StreamExt::next(&mut output).await {}
+            let read = async {
+                while let Some(line) = futures::StreamExt::next(&mut output).await {
+                    if let Ok(chunk) = line {
+                        collected.push_str(&chunk.to_string());
+                    }
+                }
             };
-            tokio::time::timeout(timeout, drain)
+            tokio::time::timeout(timeout, read)
                 .await
                 .map_err(|_| format!("hook exceeded its {}s budget", timeout.as_secs()))?;
         }
@@ -542,7 +558,7 @@ impl super::capture_run::HookRunner for DockerRuntime {
             .await
             .map_err(|e| format!("exec inspect: {e}"))?;
         match inspect.exit_code {
-            Some(0) | None => Ok(()),
+            Some(0) | None => Ok(collected),
             Some(code) => Err(format!("hook exited {code}")),
         }
     }

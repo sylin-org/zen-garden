@@ -58,6 +58,11 @@ pub const OFFLINE_THRESHOLD_SECS: u64 = 90;
 /// retires the rumor, whichever comes first.
 pub const CANDIDATE_TTL_SECS: u64 = 300;
 
+/// Upper bound on capability items carried per type on the wire — a
+/// model store listing thousands of entries must not bloat every chirp
+/// (contract::chirp::ServiceEntry::capabilities).
+pub const MAX_CAPABILITY_ITEMS: usize = 64;
+
 /// Announcement `type` discriminators, byte-exact with the PoC wire
 /// (transcribed from `poc/common/src/infra/communications/announcement_types.rs`
 /// — lowercase; pinned again by fixture test).

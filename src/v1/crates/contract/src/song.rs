@@ -163,6 +163,7 @@ mod tests {
                 category: "misc".into(),
                 state: ServiceState { status: "running".into(), role: None },
                 ports: Default::default(),
+                capabilities: Default::default(),
             })
             .collect();
         (
@@ -210,6 +211,7 @@ mod tests {
                         category: "misc".into(),
                         state: ServiceState { status: "running".into(), role: None },
                         ports: Default::default(),
+                capabilities: Default::default(),
                     })
                     .collect();
                 (

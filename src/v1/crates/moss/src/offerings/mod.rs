@@ -6,6 +6,7 @@
 //! detection domain (detect) watches the host's containers and adopts
 //! what the catalog recognizes — it observes, it never operates.
 
+pub mod capabilities;
 pub mod capture;
 pub mod capture_run;
 pub mod compile;

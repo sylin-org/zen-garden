@@ -13,4 +13,5 @@ pub mod discovery;
 pub mod faces;
 pub mod surface;
 pub mod song;
+pub mod wish;
 pub mod wire;

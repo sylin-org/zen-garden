@@ -83,6 +83,8 @@ pub enum Face {
     OfferingWake,
     /// Uproot - remove the workload and forget the offering.
     OfferingUproot,
+    /// What the offering HOLDS, by capability type (model -> [llama3...]) - observed live through the manifest's list channel.
+    OfferingCapabilities,
 }
 
 /// A face's declaration: the wire verb, the path, and the promise.
@@ -134,6 +136,7 @@ pub const FACES: &[FaceDef] = &[
     FaceDef { face: Face::OfferingRest, method: "POST", path: "/api/v1/offerings/{fqn}/rest", summary: "Rest a managed offering - stopped, and reconcile will keep it so." },
     FaceDef { face: Face::OfferingWake, method: "POST", path: "/api/v1/offerings/{fqn}/wake", summary: "Wake a rested offering; resurrects from its stored spec if reality lost it." },
     FaceDef { face: Face::OfferingUproot, method: "DELETE", path: "/api/v1/offerings/{fqn}", summary: "Uproot - remove the workload and forget the offering." },
+    FaceDef { face: Face::OfferingCapabilities, method: "GET", path: "/api/v1/offerings/{fqn}/capabilities", summary: "What the offering HOLDS, by capability type (model -> [llama3...]) - observed live through the manifest's list channel (exec or http); also refreshes the record the room's wishes answer from." },
 ];
 
 impl Face {

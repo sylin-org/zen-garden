@@ -169,7 +169,12 @@ compatibility:            # ---- compile-time knowledge (see §6) ----
     because: "MongoDB 5.0+ requires AVX"
     source: "https://mongodb.com/docs/..."     # citation travels with the rule
 
-capabilities: {}          # RESERVED (D14) — grammar name claimed, design parked
+capabilities:             # ---- what it holds (W1, 2026-08-29; design: capability-wishes.md) ----
+  - type: model               # lowercase plain name; the word wishes speak
+    default: true             # at most one per manifest
+    list:                     # exactly ONE channel; read-only observation
+      http: { path: /api/tags, item_path: models, value_path: name }
+      # exec: [ollama, list]  # in-container read — the HookRunner seam
 ```
 
 Format laws:
@@ -310,6 +315,6 @@ timings surface in posture (B3).
 | **O1** ✅ 2026-08-26 | DockerRuntime + stone-category routes (plant/rest/wake/uproot); nginx planted→served→rested→woken→resurrected→uprooted, witnessed |
 | **O2** | This document's compiler: manifest parser + facts census (contributors/generations) + PlacementPlan + decision log + Converger + port ledger |
 | **O3** | Adoption detectors, borrow registration, full stone-category API, rake verbs (offer/explain) |
-| later | Ceremonies (D11), orchestration roles (D12), borrow vaulting (D13), capabilities DSL (D14), podman/systemd adapters beyond oci (D10 tail) |
+| later | Ceremonies (D11), orchestration roles (D12), borrow vaulting (D13), capability MUTATIONS — W2 add/remove/upgrade (W1 observation shipped 2026-08-29), podman/systemd adapters beyond oci (D10 tail) |
 
 Open debts live in `DEBT.md`.

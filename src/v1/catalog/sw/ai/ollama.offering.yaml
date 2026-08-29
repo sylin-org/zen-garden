@@ -12,3 +12,14 @@ adopted:
   # numbered variants (ollama-2...), any ollama/ollama image.
   container_name_pattern: '^ollama(-.+)?$'
   image_pattern: '^ollama/ollama'
+
+capabilities:
+  # What it holds, asked on its own self-description endpoint. Wishes
+  # speak this type: ollama[model:llama3].
+  - type: model
+    default: true
+    list:
+      http:
+        path: /api/tags
+        item_path: models
+        value_path: name

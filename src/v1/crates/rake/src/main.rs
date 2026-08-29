@@ -191,6 +191,13 @@ enum Command {
         #[arg(long, default_value_t = 240)]
         timeout: u64,
     },
+    /// What an offering HOLDS, by capability type (model -> [llama3...])
+    /// - observed live through its manifest's list channel.
+    Capabilities {
+        /// The offering's name (FQN or bare stem) - it must be planted
+        /// on the connected stone.
+        offering: String,
+    },
     /// Replant an offering from its checkpoint: verify, restore, place.
     /// Same FQN, same connection strings - the incarnation returns.
     Replant {
@@ -1065,6 +1072,7 @@ async fn run(cli: &Cli) -> Result<(), String> {
             Answer::new(v).human(|v| render_rehearsal(&envelope_plain(v)?))
         }
         Command::Ensure { name, timeout } => cmd_ensure(cli, name, *timeout).await?,
+        Command::Capabilities { offering } => cmd_capabilities(cli, offering).await?,
         Command::Nourish { apply, canary } => cmd_nourish(cli, *apply, canary.as_deref()).await?,
         Command::Api { filter } => {
             let needle = filter.as_deref().map(str::to_lowercase);
@@ -1198,7 +1206,40 @@ async fn stream_logs(
 /// in the room, answer where; otherwise plant it here and wait until it
 /// answers. Garden-wide first, never reinstall what already grows.
 /// Exits: 0 ready · 2 unknown name · 4 gave up waiting.
+/// What an offering holds, observed live (W1). Human rendering speaks
+/// the type's items one per line; machine output is the full map.
+async fn cmd_capabilities(cli: &Cli, offering: &str) -> Result<Answer, String> {
+    let (_, v) = cli.stone_op("GET", paths::capabilities(offering), None).await?;
+    let data = envelope_plain(&v)?;
+    Ok(Answer::new(serde_json::json!({ "data": data }))
+        .human(|v| {
+            let caps = v["data"]["capabilities"].as_object();
+            let Some(caps) = caps else {
+                println!("(no capabilities declared)");
+                return Ok(());
+            };
+            if caps.is_empty() {
+                println!("(declares capabilities, holds nothing observed yet)");
+            }
+            for (kind, items) in caps {
+                for item in items.as_array().into_iter().flatten() {
+                    println!("{}: {}", kind, item.as_str().unwrap_or("?"));
+                }
+            }
+            Ok(())
+        })
+)
+}
+
 async fn cmd_ensure(cli: &Cli, name: &str, timeout: u64) -> Result<Answer, String> {
+    // Brackets make it a WISH: content, not just a service (J1's deep
+    // end). A wish is never planted — `ensure` grows offerings, and
+    // capability growth is W2 — so its miss TEACHES instead (F3).
+    match garden_contract::wish::parse_wish(name) {
+        Err(e) => return Err(e.to_string()),
+        Ok(Some(wish)) => return cmd_ensure_wish(cli, &wish).await,
+        Ok(None) => {}
+    }
     let fqn = garden_glossary::fqn::canonicalize(name)
         .map_err(|e| format!("'{name}' does not speak the name grammar: {e}"))?;
     let stem = fqn.split("::").next().unwrap_or(name).to_string();
@@ -1334,6 +1375,112 @@ async fn cmd_ensure(cli: &Cli, name: &str, timeout: u64) -> Result<Answer, Strin
 /// The ensure lookup rule: a room service satisfies the wish when its
 /// full FQN matches the canonical wish, or when its stem matches the
 /// wished stem — any instance of the capability counts.
+/// Answer a capability wish against the room. Found = where the content
+/// answers; missed = an honest teaching miss naming what could grow it.
+async fn cmd_ensure_wish(
+    cli: &Cli,
+    wish: &garden_contract::wish::Wish,
+) -> Result<Answer, String> {
+    let fqn = garden_glossary::fqn::canonicalize(&wish.offering)
+        .map_err(|e| format!("'{}' does not speak the name grammar: {e}", wish.offering))?;
+    let stem = fqn.split("::").next().unwrap_or(&wish.offering).to_string();
+    let wished_instance = wish.offering.contains("::");
+    let room = cli.garden_envelope().await?;
+    let mut could_grow: Vec<String> = Vec::new();
+    for s in envelope_plain(&room)?["stones"].as_array().into_iter().flatten() {
+        let stone = s["stone"]["name"].as_str().unwrap_or("?").to_string();
+        let ip = s["stone"]["network"]["address"]["ip"]
+            .as_str()
+            .unwrap_or("?")
+            .to_string();
+        for svc in s["inventory"]["services"]["items"].as_array().into_iter().flatten() {
+            let svc_name = svc["name"].as_str().unwrap_or("");
+            if service_matches(&fqn, &stem, wished_instance, svc_name) {
+                could_grow.push(format!("{} on {}", display_name(svc_name), stone));
+            }
+            let caps = svc["capabilities"].as_object();
+            let satisfied = wish.selectors.iter().all(|sel| {
+                caps.and_then(|m| m.get(&sel.kind))
+                    .and_then(|v| v.as_array())
+                    .map(|items| items.iter().any(|i| capability_satisfied(i.as_str().unwrap_or(""), &sel.item)))
+                    .unwrap_or(false)
+            });
+            if !satisfied {
+                continue;
+            }
+            let port = svc["ports"]
+                .as_object()
+                .and_then(|m| m.values().next())
+                .and_then(|p| p.as_u64());
+            let status = svc["state"]["status"].as_str().unwrap_or("unknown").to_string();
+            let uri = connection_uri(svc["stem"].as_str().unwrap_or("?"), &ip, port);
+            let value = serde_json::json!({
+                "data": {
+                    "ensured": true,
+                    "how": "found",
+                    "name": svc_name,
+                    "stone": stone,
+                    "uri": uri,
+                    "status": status,
+                    "offering": svc,
+                }
+            });
+            let want = want_string(wish);
+            return Ok(Answer::new(value)
+                .human(move |v| {
+                    println!(
+                        "{} holds {} on {} — {}",
+                        display_name(v["data"]["name"].as_str().unwrap_or("?")),
+                        want,
+                        v["data"]["stone"].as_str().unwrap_or("?"),
+                        v["data"]["uri"].as_str().unwrap_or("(no published port)")
+                    );
+                    Ok(())
+                })
+                .view(
+                    "uri",
+                    |v| Ok(serde_json::json!([v["data"]["uri"]])),
+                    |v| {
+                        for u in v.as_array().into_iter().flatten() {
+                            println!("{}", u.as_str().unwrap_or(""));
+                        }
+                        Ok(())
+                    },
+                ));
+        }
+    }
+    let want = want_string(wish);
+    Err(match could_grow.len() {
+        0 => format!(
+            "no offering '{}' grows anywhere in the room — `rake ensure {}` would plant it; the wish {} waits for content",
+            display_name(&wish.offering),
+            display_name(&wish.offering),
+            want
+        ),
+        _ => format!(
+            "no stone holds {} yet. It could grow on: {} — grow it there, then ask again",
+            want,
+            could_grow.join(", ")
+        ),
+    })
+}
+
+/// A held item satisfies a wish when it names the same thing: exact, or
+/// the tag-default spelling (`all-minilm` == `all-minilm:latest`) — the
+/// registry's own convention, not a heuristic about content.
+fn capability_satisfied(held: &str, wanted: &str) -> bool {
+    held == wanted || held.strip_suffix(":latest") == Some(wanted)
+}
+
+/// The wish's selectors, as the operator typed them conceptually.
+fn want_string(wish: &garden_contract::wish::Wish) -> String {
+    wish.selectors
+        .iter()
+        .map(|s| format!("{}:{}", s.kind, s.item))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn service_matches(
     wish_fqn: &str,
     wish_stem: &str,
@@ -2006,6 +2153,11 @@ mod paths {
     /// The restore-rehearsal face (J2's proof loop).
     pub fn rehearse(name: &str) -> String {
         format!("{OFFERINGS}/{}/rehearse", encode_segment(name))
+    }
+
+    /// The capabilities face (W1): what an offering holds.
+    pub fn capabilities(name: &str) -> String {
+        format!("{OFFERINGS}/{}/capabilities", encode_segment(name))
     }
 
     /// The offering-logs stream face. `tail` and `timestamps` ride as

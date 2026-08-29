@@ -40,6 +40,11 @@ pub struct OfferingRecord {
     pub identity: Identity,
     pub state: State,
     pub location: Location,
+    /// Content observed on the offering (capability type -> items),
+    /// remembered across restarts (on-media: serde default keeps old
+    /// records readable).
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub sub_capabilities: std::collections::HashMap<String, Vec<String>>,
     #[serde(rename = "mode")]
     pub mode_data: super::model::ModeData,
     pub registered_at: chrono::DateTime<chrono::Utc>,
@@ -57,6 +62,7 @@ impl OfferingRecord {
             },
             state: State { status: o.status },
             location: o.location.clone(),
+            sub_capabilities: o.sub_capabilities.clone(),
             mode_data: o.mode_data.clone(),
             registered_at: o.registered_at,
             updated_at: o.updated_at,
@@ -71,6 +77,7 @@ impl OfferingRecord {
             category: self.identity.category,
             status: self.state.status,
             location: self.location,
+            sub_capabilities: self.sub_capabilities,
             mode_data: self.mode_data,
             registered_at: self.registered_at,
             updated_at: self.updated_at,

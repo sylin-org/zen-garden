@@ -74,9 +74,10 @@ fn mint(service: &OfferingService, facts: &[ContainerFact], report: &mut Detecti
             status: fact.status(),
             location: Location {
                 host: "localhost".into(),
-                port: 0,
+                port: fact.host_ports.first().copied().unwrap_or(0),
                 protocol: "http".into(),
             },
+            sub_capabilities: Default::default(),
             mode_data: ModeData::Adopted(AdoptedData {
                 control_level: garden_glossary::offering::control::MONITOR.into(),
                 start_command: None,
@@ -260,6 +261,7 @@ adopted:
             Arc::new(Factsheet::empty()),
             OfferingsRoot::new(root.clone()),
             Pool::default(),
+            None,
         );
         Rig { service, facts, operated, _root: root }
     }
@@ -269,6 +271,7 @@ adopted:
             name: "ollama".into(),
             image: "ollama/ollama:latest".into(),
             state: "running".into(),
+            host_ports: vec![11434],
         }
     }
 
@@ -327,6 +330,7 @@ adopted:
                 name: "ollama-2".into(),
                 image: "ollama/ollama:latest".into(),
                 state: "running".into(),
+                host_ports: vec![],
             });
         let second = detect_once(&rig.service).await;
         assert!(second.minted.is_empty(), "stem already claimed");
@@ -350,6 +354,7 @@ adopted:
             category: "ai".into(),
             status: Status::Running,
             location: Location { host: "localhost".into(), port: 0, protocol: "http".into() },
+            sub_capabilities: Default::default(),
             mode_data: ModeData::Adopted(AdoptedData {
                 control_level: "monitor".into(),
                 start_command: None,
@@ -381,6 +386,7 @@ adopted:
             Arc::new(Factsheet::empty()),
             OfferingsRoot::new(root),
             Pool::default(),
+            None,
         );
         let report = detect_once(&service).await;
         assert!(report.is_empty());
@@ -392,6 +398,7 @@ adopted:
             name: "ollama".into(),
             image: "ollama/ollama:latest".into(),
             state: "exited".into(),
+            host_ports: vec![],
         });
         let report = detect_once(&service).await;
         assert_eq!(report.confirmed, vec!["ollama::adopted".to_string()]);
@@ -415,6 +422,7 @@ adopted:
             name: "someone-elses-llm".into(),
             image: "ollama/ollama:0.5".into(),
             state: "running".into(),
+            host_ports: vec![],
         });
         let report = detect_once(&rig.service).await;
         assert_eq!(report.minted, vec!["ollama::adopted".to_string()]);
@@ -433,6 +441,7 @@ adopted:
             name: "ollama".into(),
             image: "ollama/ollama:latest".into(),
             state: "exited".into(),
+            host_ports: vec![],
         });
         let report = detect_once(&rig.service).await;
         assert!(report.is_empty());

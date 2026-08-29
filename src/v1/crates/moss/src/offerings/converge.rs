@@ -148,6 +148,12 @@ pub async fn run(service: Arc<OfferingService>, token: CancellationToken) {
                         "detection sweep"
                     );
                 }
+                // Capability caches ride the same floor so the room's
+                // wishes answer against fresh truth (W1).
+                let refreshed = super::capabilities::refresh_once(&service).await;
+                if refreshed > 0 {
+                    tracing::debug!(refreshed, "capability sweep");
+                }
             }
         }
     }

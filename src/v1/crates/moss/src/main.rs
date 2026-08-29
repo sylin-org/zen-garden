@@ -271,7 +271,7 @@ async fn main() {
         };
     let capture_runner = Arc::new(offerings::capture_run::Runner::new(
         Arc::clone(&storage),
-        hook_runner,
+        Arc::clone(&hook_runner),
     ));
 
     let announce_socket = ingress.socket();
@@ -361,6 +361,7 @@ async fn main() {
         Arc::clone(&factsheet),
         OfferingsRoot::new(dirs_root),
         pool,
+        Some(Arc::clone(&hook_runner)),
     ));
 
     // The Converger: reality chases the stored plans until cancelled.

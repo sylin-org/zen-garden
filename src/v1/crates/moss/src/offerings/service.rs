@@ -62,6 +62,9 @@ pub struct OfferingService {
     pub dirs_root: OfferingsRoot,
     /// The stone's service pool for address allocation (ADR-0002 ruling 1).
     pool: Pool,
+    /// The exec seam for read-only in-container reads (the capability
+    /// sweep's list channel). None where no world can run hooks.
+    hooks: Option<Arc<dyn super::capture_run::HookRunner>>,
     /// Per-offering convergence failure counters (converge.rs drives them).
     failures: Arc<parking_lot::Mutex<HashMap<String, u32>>>,
 }
@@ -76,6 +79,7 @@ impl OfferingService {
         facts: Arc<Factsheet>,
         dirs_root: OfferingsRoot,
         pool: Pool,
+        hooks: Option<Arc<dyn super::capture_run::HookRunner>>,
     ) -> Self {
         Self {
             registry,
@@ -85,8 +89,15 @@ impl OfferingService {
             facts,
             dirs_root,
             pool,
+            hooks,
             failures: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// The exec seam, when this stone has a world that can run in-
+    /// container reads.
+    pub fn hooks(&self) -> Option<Arc<dyn super::capture_run::HookRunner>> {
+        self.hooks.clone()
     }
 
     /// The address ledger (ADR-0002): every managed offering's held port,
@@ -336,6 +347,7 @@ impl OfferingService {
                     port: placement.named_host_ports.values().copied().next().unwrap_or(0),
                     protocol: "http".into(),
                 },
+            sub_capabilities: Default::default(),
                 mode_data: ModeData::Managed(ManagedData {
                     runtime_kind: kind.clone(),
                     spec: plan.workload.clone(),
@@ -407,6 +419,7 @@ impl OfferingService {
                 port: placement.named_host_ports.values().copied().next().unwrap_or(0),
                 protocol: "http".into(),
             },
+            sub_capabilities: Default::default(),
             mode_data: ModeData::Managed(ManagedData {
                 runtime_kind: kind.clone(),
                 spec,
@@ -699,6 +712,7 @@ managed:
             Arc::new(Factsheet::empty()),
             OfferingsRoot::new(root.clone()),
             super::ports::Pool::default(),
+            None,
         );
         (service, root)
     }

@@ -43,12 +43,15 @@ fn dirs_or_home() -> PathBuf {
 /// Docker implements it with `exec`; tests doubles script the server.
 #[async_trait::async_trait]
 pub trait HookRunner: Send + Sync {
+    /// Run argv inside the container; the collected output returns for
+    /// readers (the capability sweep's list channel). Hooks that only
+    /// care about success ignore it.
     async fn exec(
         &self,
         container: &str,
         argv: &[String],
         timeout: Duration,
-    ) -> Result<(), String>;
+    ) -> Result<String, String>;
 }
 
 /// The no-world hook runner: refuses loudly. A companion modality has no
@@ -57,7 +60,7 @@ pub struct NullHooks;
 
 #[async_trait::async_trait]
 impl HookRunner for NullHooks {
-    async fn exec(&self, _: &str, _: &[String], _: Duration) -> Result<(), String> {
+    async fn exec(&self, _: &str, _: &[String], _: Duration) -> Result<String, String> {
         Err("no container runtime on this stone: hooks cannot run".into())
     }
 }
@@ -868,12 +871,12 @@ mod tests {
             _container: &str,
             argv: &[String],
             _timeout: Duration,
-        ) -> Result<(), String> {
+        ) -> Result<String, String> {
             self.calls
                 .lock()
                 .unwrap()
                 .push(argv.first().cloned().unwrap_or_default());
-            Ok(())
+            Ok(String::new())
         }
     }
 
@@ -1150,6 +1153,7 @@ capture:
             Arc::new(crate::offerings::facts::Factsheet::empty()),
             OfferingsRoot::new(tmp.join("offerings")),
             crate::offerings::ports::Pool::default(),
+            None,
         ));
         // A placed managed offering whose stem declares the will.
         registry.register(Offering {
@@ -1159,6 +1163,7 @@ capture:
             category: "data".into(),
             status: Status::Running,
             location: Location { host: "localhost".into(), port: 0, protocol: "http".into() },
+            sub_capabilities: Default::default(),
             mode_data: ModeData::Managed(ManagedData {
                 runtime_kind: "null".into(),
                 spec: Default::default(),
@@ -1303,6 +1308,7 @@ async fn replant_restores_the_incarnation_from_a_checkpoint() {
         state: crate::offerings::record::State {
             status: crate::offerings::model::Status::Running,
         },
+        sub_capabilities: Default::default(),
         location: crate::offerings::model::Location {
             host: "localhost".into(),
             port: 7300,

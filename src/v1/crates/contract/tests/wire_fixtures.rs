@@ -49,6 +49,7 @@ fn sample_frame() -> ChirpFrame {
                     category: "cache".into(),
                     state: ServiceState { status: "running".into(), role: None },
                     ports: Default::default(),
+                capabilities: Default::default(),
                 }],
             }),
             ..Default::default()

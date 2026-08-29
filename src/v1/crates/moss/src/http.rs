@@ -91,6 +91,7 @@ fn method_router(face: Face) -> axum::routing::MethodRouter<Arc<AppState>> {
             Face::JobDetail => get(job_detail),
             Face::PulsePage => get(pulse_page),
             Face::PulseStream => get(pulse_stream),
+            Face::Mcp => post(crate::mcp::handle),
             Face::OfferingShow => get(show_offering),
             Face::OfferingRest => post(rest_offering),
             Face::OfferingWake => post(wake_offering),
@@ -158,7 +159,7 @@ async fn posture(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> 
 /// The SelfView (ADR-0004 §3): self is rebuilt, never stored. The stone's
 /// own frame, re-voiced with its full inventory — one composer, many
 /// mouths (B1).
-fn self_view(state: &AppState) -> serde_json::Value {
+pub(crate) fn self_view(state: &AppState) -> serde_json::Value {
     let mut body = state.chirp_source.body();
     body.inventory =
         garden_contract::chirp::InventoryMap::from_pairs(state.chirp_source.song_blocks());
@@ -1510,7 +1511,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     // R4.1: unwrap/expect sanctioned in tests.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
@@ -1522,7 +1523,7 @@ mod tests {
     use garden_kernel::topology::StoneView;
     use tower::ServiceExt;
 
-    fn test_state() -> Arc<AppState> {
+    pub(crate) fn test_state() -> Arc<AppState> {
         let registry = Arc::new(Registry::new(Arc::new(MemorySnapshotStore::default())));
         let worlds = Arc::new(RuntimeRegistry::build(vec![Arc::new(NullRuntime)]));
         let factsheet = Arc::new(crate::offerings::facts::Factsheet::empty());

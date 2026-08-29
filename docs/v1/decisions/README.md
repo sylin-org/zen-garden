@@ -31,6 +31,7 @@ is never edited — superseding decisions reference their predecessor.
 | [ADR-0008](ADR-0008-catalog-sourcing-and-layering.md) | Accepted | Catalog sourcing: the approved set is embedded, operators layer on top |
 | [ADR-0009](ADR-0009-contract-first-codegen.md) | Accepted | Contract-first codegen: the faces table is generated truth |
 | [ADR-0013](ADR-0013-pulse-feed-and-wall.md) | Accepted | The pulse: one seq'd feed, one wall |
+| [ADR-0014](ADR-0014-mcp-channels-law.md) | Accepted | The channels law: MCP, CLI, API are mouths, not brains |
 
 ## Queued (expected soon)
 

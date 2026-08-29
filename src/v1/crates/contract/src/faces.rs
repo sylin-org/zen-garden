@@ -85,6 +85,8 @@ pub enum Face {
     OfferingUproot,
     /// What the offering HOLDS, by capability type (model -> [llama3...]) - observed live through the manifest's list channel.
     OfferingCapabilities,
+    /// The MCP surface (ADR-0014): JSON-RPC over POST - AI assistants speak the same pipeline the CLI and API speak.
+    Mcp,
     /// Grow one capability item {type, item}: the manifest's add command runs in the container as a journaled job. MANAGED work only - adopted offerings are observed, never operated (L25).
     OfferingCapabilityAdd,
     /// Remove one capability item by type and name: the manifest's remove channel, journaled. MANAGED work only.
@@ -140,6 +142,7 @@ pub const FACES: &[FaceDef] = &[
     FaceDef { face: Face::OfferingRest, method: "POST", path: "/api/v1/offerings/{fqn}/rest", summary: "Rest a managed offering - stopped, and reconcile will keep it so." },
     FaceDef { face: Face::OfferingWake, method: "POST", path: "/api/v1/offerings/{fqn}/wake", summary: "Wake a rested offering; resurrects from its stored spec if reality lost it." },
     FaceDef { face: Face::OfferingUproot, method: "DELETE", path: "/api/v1/offerings/{fqn}", summary: "Uproot - remove the workload and forget the offering." },
+    FaceDef { face: Face::Mcp, method: "POST", path: "/mcp", summary: "The MCP surface (ADR-0014): JSON-RPC over Streamable HTTP's legal minimum - initialize, tools/list, tools/call. The tools enter the same command pipeline as the CLI and API; the garden speaks natively to AI assistants." },
     FaceDef { face: Face::OfferingCapabilities, method: "GET", path: "/api/v1/offerings/{fqn}/capabilities", summary: "What the offering HOLDS, by capability type (model -> [llama3...]) - observed live through the manifest's list channel (exec or http); also refreshes the record the room's wishes answer from." },
     FaceDef { face: Face::OfferingCapabilityAdd, method: "POST", path: "/api/v1/offerings/{fqn}/capabilities", summary: "Grow one capability item {type, item}: the manifest's add command runs inside the container as a journaled job (L11 - interrupted jobs are marked at boot, truth is re-observed). MANAGED work only: adopted offerings are observed, never operated (L25)." },
     FaceDef { face: Face::OfferingCapabilityRemove, method: "DELETE", path: "/api/v1/offerings/{fqn}/capabilities/{kind}/{item}", summary: "Remove one capability item through the manifest's remove channel, journaled. MANAGED work only." },

@@ -447,3 +447,20 @@ intent): long operations speak while they run, and the wall pins them.
 
 **State left behind**: none — ollama container, image, record,
 journals, and root-owned volume files uprooted; .195 as found.
+
+## W14 — the garden speaks MCP (2026-08-29, stone-tranquil-pass, release build)
+
+D5's channels law (ADR-0014): MCP, CLI, API are mouths, not brains.
+
+- **The handshake is real**: POST /mcp initialize answers
+  protocolVersion 2025-03-26, serverInfo zen-garden-moss 0.1.0;
+  tools/list names nine garden verbs — observe, offerings, plant,
+  rest, wake, uproot, capabilities, grow, jobs — each described in
+  plain English for an assistant.
+- **observe answers with the LIVE room**: the tool call returned
+  stone-tranquil-pass and witness-db::garden — the same shapes the
+  wall and the CLI read (B1: one shape, every mouth).
+- **The channels law holds by construction**: every tool delegates to
+  the exact application-service calls the HTTP faces use — no second
+  brain to drift (the founding disease of the PoC, structurally
+  impossible here). Refusals surface the pipeline's own errors.

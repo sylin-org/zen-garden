@@ -223,6 +223,12 @@
       "summary": "Uproot - remove the workload and forget the offering."
     },
     {
+      "face": "Mcp",
+      "method": "POST",
+      "path": "/mcp",
+      "summary": "The MCP surface (ADR-0014): JSON-RPC over Streamable HTTP's legal minimum - initialize, tools/list, tools/call. The tools enter the same command pipeline as the CLI and API; the garden speaks natively to AI assistants."
+    },
+    {
       "face": "OfferingCapabilities",
       "method": "GET",
       "path": "/api/v1/offerings/{fqn}/capabilities",

@@ -86,7 +86,13 @@ directly anymore.
     and places nothing.
 13. **DONE — the Moss facade begins**: `state.provenance()` —
     `moss.provenance().install("ollama")` is now the shape.
-14. **Settled by decision**: jobs.rs IS the Job aggregate's durable
+14. **DONE — nourish is an entity verb**: `offering.nourish_check` /
+    `nourish_apply(&world)` (pull, rebuild, revert — loudly, even when
+    the revert saves the stone); the service methods are coordinators.
+15. **DONE — the hook seam's imports follow it home**: every
+    HookRunner reference points at the runtime layer; the will::saga
+    re-export is gone. The audit→journal bridge has its own test.
+16. **Settled by decision**: jobs.rs IS the Job aggregate's durable
     store (per-job documents, boot reconciliation) — complementary to
     the stone's fact stream, not a duplicate; the per-offering
     events.jsonl is the aggregate's own chain and rides the checkpoint.

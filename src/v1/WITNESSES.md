@@ -702,3 +702,18 @@ rake tests, the full workspace suite green.
   `Runner::replant_from`; the face translates.
 - Deployed to .195 (hash-verified); suite green (207 tests). Fleet as
   found.
+
+### W16, closed — the audit is clean (2026-08-30)
+
+The re-audit found three loose threads; all pulled:
+- nourish became entity verbs (`nourish_check` / `nourish_apply` —
+  pull, rebuild, revert, loudly); the service methods are
+  coordinators.
+- every HookRunner reference points at the runtime layer; the
+  `will::saga` re-export is deleted. One seam, one home.
+- the audit→journal bridge has a test: typed facts land on the stream,
+  chain-local history stays local.
+Deployed to .195; the journal grows as the room speaks. Remaining:
+nothing structural — rake's 3k-line main.rs could split into verb
+modules (tidying), glossary-into-contract stays optional, D16 stays
+functional debt.

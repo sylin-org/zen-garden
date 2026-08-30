@@ -303,3 +303,77 @@ impl Offering {
         }
     }
 }
+
+impl Offering {
+    /// The Incarnation law (ADR-0015; ADR-0005 §6): FQN, identity, the
+    /// declared will, the image, port ROLES and tiers, and volume NAMES
+    /// travel with the offering. Host paths and port numbers are a
+    /// stone's projection — recompiled here, on arrival. `dir` is the
+    /// restored offering directory on THIS stone; `claims` is this
+    /// stone's address ledger; `pool` its service pool.
+    pub fn reincarnate_on(
+        &mut self,
+        dir: &super::directory::OfferingDir,
+        claims: &[super::ports::Claim],
+        pool: super::ports::Pool,
+    ) -> Result<(), String> {
+        let ModeData::Managed(managed) = &mut self.mode_data else {
+            return Err("only managed work reincarnates".to_string());
+        };
+        // The stored spec speaks the DEAD stone's filesystem; the tail
+        // segment splits on BOTH separators — the stored path may speak
+        // a foreign OS's dialect (`C:\...` has no `/` on Linux).
+        for v in &mut managed.spec.volumes {
+            if let Some(name) = tail_segment(&v.host_path) {
+                v.host_path = dir.volumes().join(name).to_string_lossy().into_owned();
+            }
+        }
+        for c in &mut managed.spec.configs {
+            if let Some(file) = tail_segment(&c.host_path) {
+                c.host_path = dir.configs().join(file).to_string_lossy().into_owned();
+            }
+        }
+        // Addresses are per-stone law (ADR-0002): the dead stone's
+        // ledger died with it. Re-arbitrate the stored intents — a free
+        // home is kept (the ledger-first promise), an occupied flexible
+        // home redraws from the pool, a strict dispute refuses loudly.
+        let mut intents = std::collections::BTreeMap::new();
+        for (role, a) in &managed.spec.allocations {
+            intents.insert(
+                role.clone(),
+                super::ports::Intent { tier: a.tier, home: Some(a.home) },
+            );
+        }
+        let homes = super::ports::allocate(&intents, claims, pool)
+            .map_err(|e| format!("replant address arbitration: {e}"))?;
+        for (role, home) in &homes {
+            if let Some(a) = managed.spec.allocations.get_mut(role) {
+                a.home = *home;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The last path segment under EITHER separator dialect. A stored
+/// spec's host paths speak the stone that wrote them; a checkpoint
+/// replanted across OS lines carries paths the local parser cannot
+/// split.
+fn tail_segment(path: &str) -> Option<&str> {
+    path.split(['/', '\\'])
+        .filter(|s| !s.is_empty())
+        .next_back()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_segment_reads_both_path_dialects() {
+        assert_eq!(tail_segment("/home/stone/.zen-garden/offerings/ntfy/default/volumes/ntfy-cache"), Some("ntfy-cache"));
+        assert_eq!(tail_segment(r"C:\Users\onose\.zen-garden\offerings\ntfy\default\volumes\ntfy-cache"), Some("ntfy-cache"));
+        assert_eq!(tail_segment("ntfy-cache"), Some("ntfy-cache"));
+        assert_eq!(tail_segment(""), None);
+    }
+}

@@ -151,6 +151,13 @@ impl OfferingService {
                 "'{fqn}' is already incarnate here - replant restores the dead, not the doubled"
             )));
         }
+        // The Incarnation law, on the entity (ADR-0015): paths and
+        // addresses are this stone's projection — recompiled on arrival;
+        // identity, will, and roles travel unchanged.
+        let claims = self.ledger();
+        offering
+            .reincarnate_on(&self.dirs_root.dir_for(&fqn), &claims, self.pool)
+            .map_err(CommandError::Conflict)?;
         let ModeData::Managed(managed) = &mut offering.mode_data else {
             return Err(CommandError::Conflict(format!(
                 "'{fqn}' is not a managed offering - only managed work replants"
@@ -161,43 +168,6 @@ impl OfferingService {
         } else {
             managed.runtime_kind.clone()
         };
-        // The stored spec speaks the DEAD stone's filesystem: host paths
-        // are stone-local facts, not part of the incarnation. Re-root
-        // them into this stone's restored directory - FQN, identity, and
-        // ledgered addresses ride unchanged (ADR-0005 §6: same connection
-        // strings; the filesystem was never one of them). The tail segment
-        // splits on BOTH separators: the stored path may speak a foreign
-        // OS's dialect (a Windows stone's checkpoint replanted on Linux).
-        let dir = self.dirs_root.dir_for(&fqn);
-        for v in &mut managed.spec.volumes {
-            if let Some(name) = tail_segment(&v.host_path) {
-                v.host_path = dir.volumes().join(name).to_string_lossy().into_owned();
-            }
-        }
-        for c in &mut managed.spec.configs {
-            if let Some(file) = tail_segment(&c.host_path) {
-                c.host_path = dir.configs().join(file).to_string_lossy().into_owned();
-            }
-        }
-        // Addresses are per-stone law (ADR-0002): the dead stone's ledger
-        // died with it. Re-arbitrate the stored intents against THIS
-        // stone's ledger - a free home is kept (the ledger-first promise),
-        // an occupied flexible home redraws from the pool, a strict
-        // dispute refuses loudly. The connection string survives when the
-        // room can keep it, and says so when it cannot.
-        let claims = self.ledger();
-        let mut intents = std::collections::BTreeMap::new();
-        for (role, a) in &managed.spec.allocations {
-            intents.insert(role.clone(), super::ports::Intent { tier: a.tier, home: Some(a.home) });
-        }
-        let homes = super::ports::allocate(&intents, &claims, self.pool).map_err(|e| {
-            CommandError::Conflict(format!("replant address arbitration: {e}"))
-        })?;
-        for (role, home) in &homes {
-            if let Some(a) = managed.spec.allocations.get_mut(role) {
-                a.home = *home;
-            }
-        }
         let rt = self.worlds.by_kind(&kind).map_err(CommandError::Conflict)?;
         let placement = rt
             .place(&fqn, &managed.spec)
@@ -695,16 +665,6 @@ impl OfferingService {
     }
 }
 
-/// The last path segment under EITHER separator dialect. A stored spec's
-/// host paths speak the stone that wrote them; a checkpoint replanted
-/// across OS lines carries paths the local parser cannot split (`C:\...`
-/// has no `/` on Linux). The volume name is the dialect-free tail.
-fn tail_segment(path: &str) -> Option<&str> {
-    path.split(['/', '\\'])
-        .filter(|s| !s.is_empty())
-        .next_back()
-}
-
 #[cfg(test)]
 mod tests {
     // R4.1: unwrap/expect sanctioned in tests.
@@ -712,13 +672,7 @@ mod tests {
     use super::*;
     use crate::garden::manifest::Catalog;
 
-    #[test]
-    fn tail_segment_reads_both_path_dialects() {
-        assert_eq!(tail_segment("/home/stone/.zen-garden/offerings/ntfy/default/volumes/ntfy-cache"), Some("ntfy-cache"));
-        assert_eq!(tail_segment("C:\\Users\\onose\\.zen-garden\\offerings\\ntfy\\default\\volumes\\ntfy-cache"), Some("ntfy-cache"));
-        assert_eq!(tail_segment("ntfy-cache"), Some("ntfy-cache"));
-        assert_eq!(tail_segment(""), None);
-    }
+
     use crate::garden::registry::MemorySnapshotStore;
     use crate::garden::runtime::{NullRuntime, Observed, Placement, PlacedRef, Runtime, RuntimeError, RuntimeRegistry};
 

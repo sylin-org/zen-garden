@@ -628,24 +628,6 @@ name = "garden-glossary"
 version = "0.1.0"
 
 [[package]]
-name = "garden-kernel"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "garden-contract",
- "garden-glossary",
- "if-addrs",
- "parking_lot",
- "serde",
- "serde_json",
- "socket2",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "garden-moss"
 version = "0.1.0"
 dependencies = [
@@ -658,7 +640,7 @@ dependencies = [
  "futures",
  "garden-contract",
  "garden-glossary",
- "garden-kernel",
+ "garden-room",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -689,12 +671,30 @@ dependencies = [
  "clap",
  "garden-contract",
  "garden-glossary",
- "garden-kernel",
+ "garden-room",
  "serde",
  "serde_json",
  "socket2",
  "terminal_size",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "garden-room"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "garden-contract",
+ "garden-glossary",
+ "if-addrs",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "socket2",
+ "tokio",
+ "tokio-util",
+ "tracing",
  "uuid",
 ]
 

@@ -24,7 +24,7 @@ mod tending;
 use clap::{CommandFactory, Parser, Subcommand};
 use garden_contract::chirp::ChirpFrame;
 use garden_contract::consts;
-use garden_kernel::probe;
+use garden_room::probe;
 use moss_http::{AttachError, StreamError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

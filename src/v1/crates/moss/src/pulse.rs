@@ -51,11 +51,11 @@ impl Bus {
 /// says, gathered once (R1.4: declared dependencies, then spawn).
 pub struct Sources {
     pub garden: Arc<crate::garden::service::OfferingService>,
-    pub topology: Arc<garden_kernel::topology::Topology>,
+    pub topology: Arc<crate::room::topology::Topology>,
     pub jobs: crate::jobs::JobTracker,
     pub storage: Arc<crate::garden::storage::Storage>,
-    pub dispatcher: garden_kernel::dispatch::Dispatcher,
-    pub ingest: Arc<garden_kernel::ingress::IngestCounters>,
+    pub dispatcher: crate::room::dispatch::Dispatcher,
+    pub ingest: Arc<crate::room::ingress::IngestCounters>,
 }
 
 /// Run the adapters until cancelled: translate existing events into
@@ -112,19 +112,19 @@ pub async fn run(bus: Bus, sources: Sources, token: CancellationToken) {
             },
 
             ev = topology.recv() => match ev {
-                Ok(garden_kernel::topology::TopologyEvent::Seen(v)) => {
+                Ok(crate::room::topology::TopologyEvent::Seen(v)) => {
                     bus.publish(PulseEvent::new(
                         "topology.seen", "topology", LEVEL_INFO,
                         format!("{} is here", v.body.stone.name),
                     ).with_stone(v.body.stone.name.clone()));
                 }
-                Ok(garden_kernel::topology::TopologyEvent::Goodbye { stone_name, .. }) => {
+                Ok(crate::room::topology::TopologyEvent::Goodbye { stone_name, .. }) => {
                     bus.publish(PulseEvent::new(
                         "topology.goodbye", "topology", LEVEL_WARN,
                         format!("{stone_name} said goodbye - removed from the room"),
                     ).with_stone(stone_name));
                 }
-                Ok(garden_kernel::topology::TopologyEvent::Expired { stone_name, .. }) => {
+                Ok(crate::room::topology::TopologyEvent::Expired { stone_name, .. }) => {
                     bus.publish(PulseEvent::new(
                         "topology.expired", "topology", LEVEL_WARN,
                         format!("{stone_name} expired - silent past the threshold"),
@@ -283,7 +283,7 @@ fn sample_load() -> Option<Load> {
 /// GardenStones face speaks (B1: one shape, wire to wall).
 pub fn snapshot(
     garden: &crate::garden::service::OfferingService,
-    topology: &garden_kernel::topology::Topology,
+    topology: &crate::room::topology::Topology,
     jobs: &crate::jobs::JobTracker,
     self_row: serde_json::Value,
 ) -> serde_json::Value {

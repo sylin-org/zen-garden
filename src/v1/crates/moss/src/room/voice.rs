@@ -12,7 +12,7 @@ use garden_contract::chirp::{
     BankEntry, ChirpFrame, Inventory, InventoryMap, Moss, Network, PeerAddress, Presence,
     Reception, ServiceEntry, Stone, INVENTORY_CAP,
 };
-use garden_kernel::announce::ChirpSource;
+use crate::room::announce::ChirpSource;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

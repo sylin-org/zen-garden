@@ -100,7 +100,7 @@ pub struct Runner {
     /// The room's ears: lets the ferry reach sink banks this stone does
     /// not hold (ADR-0005 §4's tier-1 sink, wherever the operator plugged
     /// it). None where only the local lane is exercised.
-    topology: Option<Arc<garden_kernel::topology::Topology>>,
+    topology: Option<Arc<crate::room::topology::Topology>>,
     runs: parking_lot::Mutex<HashMap<String, Run>>,
 }
 
@@ -118,7 +118,7 @@ impl Runner {
 
     /// Give the ferry the room: remote sink banks, heard through the
     /// chirp, are reached through their holder's file face.
-    pub fn with_topology(mut self, topology: Arc<garden_kernel::topology::Topology>) -> Self {
+    pub fn with_topology(mut self, topology: Arc<crate::room::topology::Topology>) -> Self {
         self.topology = Some(topology);
         self
     }
@@ -630,7 +630,7 @@ const FERRY_HTTP_TIMEOUT_SECS: u64 = 300;
 /// Sinks the room hears about but `skip` (the locally reached) does not:
 /// (bank fqn, holder's http base). Only mounted sink banks count — a
 /// plugged-but-unclaimed drive is nobody's backup (ADR-0005 §4, §8).
-fn remote_sinks(snapshot: &[garden_kernel::topology::StoneView], skip: &[String]) -> Vec<(String, String)> {
+fn remote_sinks(snapshot: &[crate::room::topology::StoneView], skip: &[String]) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     for peer in snapshot {
         let Some(banks) = &peer.body.inventory.banks else {
@@ -1346,7 +1346,7 @@ capture:
             BankEntry, ChirpFrame, Inventory, Moss, Network, PeerAddress, Presence, Reception,
             Stone,
         };
-        use garden_kernel::topology::StoneView;
+        use crate::room::topology::StoneView;
 
         fn peer(id: &str, ip: [u8; 4], banks: Option<Inventory<BankEntry>>) -> StoneView {
             let now = chrono::Utc::now();

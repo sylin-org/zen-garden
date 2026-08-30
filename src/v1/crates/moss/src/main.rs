@@ -14,18 +14,18 @@ mod jobs;
 mod journal;
 mod mcp;
 mod pulse;
+mod room;
 mod garden;
-mod source;
 
 use clap::Parser;
-use garden_kernel::announce::{self, ChirpSource};
-use garden_kernel::config::{DiscoveryConfig, HttpConfig};
-use garden_kernel::dispatch::Dispatcher;
-use garden_kernel::ingress::Ingress;
-use garden_kernel::pipeline;
-use garden_kernel::topology::Topology;
+use crate::room::announce::{self, ChirpSource};
+use crate::room::config::{DiscoveryConfig, HttpConfig};
+use crate::room::dispatch::Dispatcher;
+use crate::room::ingress::Ingress;
+use crate::room::pipeline;
+use crate::room::topology::Topology;
 use garden::directory::OfferingsRoot;
-use garden_kernel::responder;
+use crate::room::responder;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -105,7 +105,7 @@ async fn main() {
 
     // The stone's voice: identity + port + version. The chirp source that
     // speaks it is built AFTER the offerings load (it composes inventory).
-    let voice = source::Voice {
+    let voice = room::voice::Voice {
         stone_id: identity.stone_id.clone(),
         stone_name: identity.stone_name.clone(),
         http_port,
@@ -256,14 +256,14 @@ async fn main() {
     // change-songs after (ADR-0004 A2.2). The source is DYNAMIC (S2): it
     // composes the offerings AND banks inventories, bumping their revs on
     // OfferingChanged / storage news (follow_* below).
-    let chirp_source = source::DynamicChirpSource::new(
+    let chirp_source = room::voice::DynamicChirpSource::new(
         voice.clone(),
         boot_id.to_string(),
         Arc::clone(&offerings),
         Arc::clone(&storage),
     );
-    source::follow_offering_changes(&chirp_source, &offerings, token.clone());
-    source::follow_storage_changes(&chirp_source, &storage, token.clone());
+    room::voice::follow_offering_changes(&chirp_source, &offerings, token.clone());
+    room::voice::follow_storage_changes(&chirp_source, &storage, token.clone());
 
     // The living will's runner (ADR-0005 §2): hooks via docker when it
     // answers; loud refusal where no world can run them (companion).
@@ -437,7 +437,7 @@ async fn main() {
         capture: capture_runner,
         jobs: jobs_tracker.clone(),
         pulse: Arc::new(pulse_bus.clone()),
-        chirp_source: chirp_source.clone() as Arc<dyn garden_kernel::announce::ChirpSource>,
+        chirp_source: chirp_source.clone() as Arc<dyn crate::room::announce::ChirpSource>,
         stone_name: identity.stone_name.clone(),
         boot_id,
         started_at: chrono::Utc::now(),

@@ -6,7 +6,7 @@
 //! explicit `--stone-name` renames by operator intent (the id never
 //! changes); otherwise the flag is absent and the well speaks.
 
-use garden_kernel::probe;
+use crate::room::probe;
 use garden_glossary::naming;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -69,7 +69,7 @@ fn write(identity: &Identity) -> Result<(), String> {
 /// quirk to shrug off.
 pub async fn load_or_mint(
     explicit_name: Option<&str>,
-    discovery: &garden_kernel::config::DiscoveryConfig,
+    discovery: &crate::room::config::DiscoveryConfig,
 ) -> Result<Identity, String> {
     if let Some(existing) = read() {
         match explicit_name {

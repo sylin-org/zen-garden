@@ -14,7 +14,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use garden_contract::consts::PROTO_V1;
-use garden_kernel::announce::ChirpSource;
+use crate::room::announce::ChirpSource;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,7 +37,7 @@ pub struct AppState {
     pub jobs: crate::jobs::JobTracker,
     /// The pulse bus (ADR-0013): typed, seq'd news for stream readers.
     pub pulse: Arc<crate::pulse::Bus>,
-    pub topology: Arc<garden_kernel::topology::Topology>,
+    pub topology: Arc<crate::room::topology::Topology>,
     pub dispatcher: Dispatcher,
     pub ingest_counters: Arc<IngestCounters>,
     /// This stone's voice — the SelfView's composer (self is a projection,
@@ -51,8 +51,8 @@ pub struct AppState {
     pub shutdown: tokio_util::sync::CancellationToken,
 }
 
-use garden_kernel::dispatch::Dispatcher;
-use garden_kernel::ingress::IngestCounters;
+use crate::room::dispatch::Dispatcher;
+use crate::room::ingress::IngestCounters;
 
 /// The surface, declared once — now FROM THE CONTRACT (ADR-0009/B1):
 /// the Face enum and its declarations live in garden_contract::faces;
@@ -1531,10 +1531,10 @@ pub(crate) mod tests {
     use super::*;
     use crate::garden::registry::{MemorySnapshotStore, Registry};
     use crate::garden::runtime::{NullRuntime, RuntimeRegistry};
-    use crate::source::{DynamicChirpSource, Voice};
+    use crate::room::voice::{DynamicChirpSource, Voice};
     use axum::http::StatusCode;
     use garden_contract::chirp::ChirpFrame;
-    use garden_kernel::topology::StoneView;
+    use crate::room::topology::StoneView;
     use tower::ServiceExt;
 
     pub(crate) fn test_state() -> Arc<AppState> {
@@ -1573,7 +1573,7 @@ pub(crate) mod tests {
             )),
             jobs: crate::jobs::JobTracker::new(),
             pulse: Arc::new(crate::pulse::Bus::new()),
-            topology: Arc::new(garden_kernel::topology::Topology::new()),
+            topology: Arc::new(crate::room::topology::Topology::new()),
             dispatcher: Dispatcher::new(16).0,
             ingest_counters: Arc::new(IngestCounters::default()),
             chirp_source,
@@ -1705,13 +1705,13 @@ pub(crate) mod tests {
 
     /// Land a peer frame in the topology through the real claim path —
     /// the same door the wire uses (R4.5: test the promise, not the guts).
-    async fn wire_peer(topology: &Arc<garden_kernel::topology::Topology>, peer: StoneView) {
+    async fn wire_peer(topology: &Arc<crate::room::topology::Topology>, peer: StoneView) {
         let (dispatcher, handle) = Dispatcher::new(16);
         let token = tokio_util::sync::CancellationToken::new();
         topology.claim(&dispatcher, token.clone());
         tokio::spawn(handle.run(token.clone()));
         dispatcher
-            .ingest(garden_kernel::ingress::Ingested {
+            .ingest(crate::room::ingress::Ingested {
                 announcement: garden_contract::wire::Announcement::new(
                     garden_contract::consts::announcement::STONE_CHIRP,
                     serde_json::to_value(&peer.body).unwrap(),

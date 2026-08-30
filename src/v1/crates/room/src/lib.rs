@@ -1,4 +1,5 @@
-//! The garden kernel: presence, ingestion, dispatch, announcement.
+//! The room's wire plane: presence, ingestion, dispatch, announcement
+//! (the `room` context's transport; ADR-0015).
 //!
 //! Shape (CODE-RULES R2.8/R2.9): listeners feed ONE ingestion point; the
 //! ingress parses, dedups, and hands every datagram to the dispatcher;

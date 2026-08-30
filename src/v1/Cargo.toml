@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/glossary", "crates/contract", "crates/kernel", "crates/moss", "crates/rake"]
+members = ["crates/glossary", "crates/contract", "crates/room", "crates/moss", "crates/rake"]
 
 [workspace.package]
 edition = "2024"
@@ -10,7 +10,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 garden-glossary = { path = "crates/glossary" }
 garden-contract = { path = "crates/contract" }
-garden-kernel = { path = "crates/kernel" }
+garden-room = { path = "crates/room" }
 garden-moss = { path = "crates/moss" }
 garden-rake = { path = "crates/rake" }
 

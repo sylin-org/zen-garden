@@ -2214,14 +2214,6 @@ async fn cmd_stone_op(cli: &Cli) -> Result<Answer, String> {
                     for why in plan["because"].as_array().into_iter().flatten() {
                         println!("  · {}", why.as_str().unwrap_or("?"));
                     }
-                    for d in plan["decisions"].as_array().into_iter().flatten() {
-                        println!(
-                            "  · {} — {} ({})",
-                            d["rule"].as_str().unwrap_or("?"),
-                            d["chose"].as_str().unwrap_or("?"),
-                            d["because"].as_str().unwrap_or("declared")
-                        );
-                    }
                     Ok(())
                 }));
             }

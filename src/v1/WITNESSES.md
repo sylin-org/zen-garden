@@ -664,3 +664,23 @@ rake tests, the full workspace suite green.
   duplicates.
 - Deployed to .195 (observe + list verified); suite green: 206 tests
   across the workspace.
+
+### W16, concluded — the examples are the API (2026-08-30)
+
+- **The everyday verbs are entity verbs**: `offering.rest(&world)`,
+  `offering.wake(&world)` (returns what actually happened — started,
+  resurrected, already-running — so the audit journals the truth),
+  `offering.uproot(&world)` (idempotent at the world's edge). The
+  service is a coordinator: load, invoke, persist.
+- **Provenance speaks before it places**: `plan_install` is the dry
+  twin — the SAME compile install will run, nothing touched — and it
+  answered live on .195: `offer ollama --plan` → "cannot: already
+  planted"; `offer mongodb --plan` → "can grow here" with the whole
+  decision trail (compatibility, memory, address draw :7302) and
+  nothing placed. `install` runs the plan as a JOB; the plant face
+  returns an additive job_id.
+- **The Moss facade begins**: `state.provenance()` — the root's mouth.
+- Additive, per the freeze: the PlanInstall face (surface.json
+  regenerated per ADR-0009), the MCP `plan-install` tool,
+  `rake offer --plan`.
+- Deployed to .195; suite green (207 tests).

@@ -69,7 +69,22 @@ directly anymore.
    a heard name is proof enough to refuse).
 10. **DONE — the wall never haunts**: feed loss renders the strip as
     "last known", dimmed.
-11. **Settled by decision**: jobs.rs IS the Job aggregate's durable
+11. **DONE — the everyday verbs come home**: `offering.rest(&world)`,
+    `.wake(&world)` (returns WakeOutcome: started / resurrected /
+    already-running), `.uproot(&world)` (idempotent at the world's
+    edge). The service slims to load-invoke-persist; faces unchanged.
+12. **DONE — Provenance**: `garden/provenance.rs`. `plan_install` is
+    the dry twin (same compile install will run, NOTHING placed,
+    can/cannot + the decision trail); `install` runs the plan as a
+    JOB (progress rides the pulse; the plant face answers with an
+    additive job_id). Additive surfaces: the PlanInstall face
+    (+ regenerated surface.json), the MCP plan-install tool, and
+    `rake offer --plan` — witnessed live on .195: ollama --plan says
+    "already planted"; mongodb --plan speaks the whole decision trail
+    and places nothing.
+13. **DONE — the Moss facade begins**: `state.provenance()` —
+    `moss.provenance().install("ollama")` is now the shape.
+14. **Settled by decision**: jobs.rs IS the Job aggregate's durable
     store (per-job documents, boot reconciliation) — complementary to
     the stone's fact stream, not a duplicate; the per-offering
     events.jsonl is the aggregate's own chain and rides the checkpoint.

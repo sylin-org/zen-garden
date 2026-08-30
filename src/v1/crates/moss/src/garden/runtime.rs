@@ -6,7 +6,7 @@
 //! shared vocabulary; adapters live beside it (docker.rs, null here) and
 //! the domain (model.rs) owns the spec types they consume.
 
-use crate::offerings::model::{Status, WorkloadSpec};
+use crate::garden::model::{Status, WorkloadSpec};
 use std::collections::HashMap;
 
 /// What placement produced — already translated to port NAMES (PORT-0001).

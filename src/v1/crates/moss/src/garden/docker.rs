@@ -347,7 +347,7 @@ impl Runtime for DockerRuntime {
     ) -> Option<super::runtime::RehearsalFate> {
         use bollard::container::{Config, CreateContainerOptions};
         use bollard::models::HostConfig;
-        let full = format!("zen-rehearsal-{}", Self::container_name(name).trim_start_matches(crate::offerings::docker::CONTAINER_PREFIX));
+        let full = format!("zen-rehearsal-{}", Self::container_name(name).trim_start_matches(crate::garden::docker::CONTAINER_PREFIX));
 
         // No exposed ports, no bindings: a rehearsal never publishes or
         // collides — it boots restored data and speaks to no one.
@@ -502,7 +502,7 @@ impl Runtime for DockerRuntime {
                             .trim_start_matches('/')
                             .trim_start_matches(CONTAINER_PREFIX)
                             .to_string(),
-                        status: crate::offerings::model::Status::parse_or_unknown(&status),
+                        status: crate::garden::model::Status::parse_or_unknown(&status),
                     })
                 })
                 .collect(),
@@ -602,7 +602,7 @@ impl Runtime for DockerRuntime {
 }
 
 #[async_trait::async_trait]
-impl super::capture_run::HookRunner for DockerRuntime {
+impl super::will::saga::HookRunner for DockerRuntime {
     async fn exec(
         &self,
         container: &str,
@@ -659,7 +659,7 @@ impl super::capture_run::HookRunner for DockerRuntime {
         &self,
         container: &str,
         argv: &[String],
-    ) -> Result<super::capture_run::ExecLines, String> {
+    ) -> Result<super::will::saga::ExecLines, String> {
         use bollard::exec::{CreateExecOptions, StartExecResults};
         let exec = self
             .docker

@@ -10,7 +10,7 @@ use super::directory::OfferingDir;
 use super::facts::Generation;
 use super::manifest::{Decide, Manifest};
 use super::ports::{self, Claim, Intent, Pool, Tier};
-use crate::offerings::model::{PortAllocation, WorkloadSpec};
+use crate::garden::model::{PortAllocation, WorkloadSpec};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -143,7 +143,7 @@ pub fn compile(
     };
     workload.restart = managed.restart.clone();
     for v in &managed.volumes {
-        workload.volumes.push(crate::offerings::model::VolumeMount {
+        workload.volumes.push(crate::garden::model::VolumeMount {
             host_path: dir.volumes().join(&v.name).to_string_lossy().into_owned(),
             container_path: v.mount.clone(),
         });
@@ -164,7 +164,7 @@ pub fn compile(
             _ => "",
         };
         let file_name = mount.split('/').next_back().unwrap_or("config");
-        workload.configs.push(crate::offerings::model::ConfigMount {
+        workload.configs.push(crate::garden::model::ConfigMount {
             host_path: dir.configs().join(file_name).to_string_lossy().into_owned(),
             container_path: mount.to_string(),
             content: content.into(),
@@ -308,8 +308,8 @@ mod tests {
     // R4.1: unwrap/expect sanctioned in tests.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::offerings::facts::{Contributor, FactValue, Factsheet};
-    use crate::offerings::manifest::Catalog;
+    use crate::garden::facts::{Contributor, FactValue, Factsheet};
+    use crate::garden::manifest::Catalog;
     use std::collections::BTreeMap;
 
     struct Static(BTreeMap<String, FactValue>);
@@ -342,7 +342,7 @@ mod tests {
 
         let facts_snapshot = factsheet.snapshot();
         let inputs = BTreeMap::new();
-        let dir = crate::offerings::directory::OfferingsRoot::new(std::path::PathBuf::from(
+        let dir = crate::garden::directory::OfferingsRoot::new(std::path::PathBuf::from(
             ".zen-garden-probe",
         ))
         .dir_for("mongodb");
@@ -429,7 +429,7 @@ compatibility:
         let facts_snapshot = factsheet.snapshot();
 
         let inputs = BTreeMap::new();
-        let dir = crate::offerings::directory::OfferingsRoot::new(std::path::PathBuf::from(
+        let dir = crate::garden::directory::OfferingsRoot::new(std::path::PathBuf::from(
             ".zen-garden-probe",
         ))
         .dir_for("small");
@@ -477,7 +477,7 @@ managed:
             .collect(&[std::sync::Arc::new(Static(nodes))])
             .await;
         let snapshot = factsheet.snapshot();
-        let dir = crate::offerings::directory::OfferingsRoot::new(std::path::PathBuf::from(
+        let dir = crate::garden::directory::OfferingsRoot::new(std::path::PathBuf::from(
             ".zen-garden-probe",
         ))
         .dir_for("pinned");
@@ -518,7 +518,7 @@ managed:
             .collect(&[std::sync::Arc::new(Static(nodes))])
             .await;
         let claims = vec![Claim::new("technitium", 53)];
-        let dir = crate::offerings::directory::OfferingsRoot::new(std::path::PathBuf::from(
+        let dir = crate::garden::directory::OfferingsRoot::new(std::path::PathBuf::from(
             ".zen-garden-probe",
         ))
         .dir_for("pinned2");
@@ -551,9 +551,9 @@ managed:
 async fn capture_policy_never_flips_the_plan_hash() {
     // ADR-0005 §7: capture rides the manifest but sits outside plan_hash —
     // backup policy is lifecycle intent, not desired execution.
-    use crate::offerings::facts::{Factsheet};
-    use crate::offerings::manifest::Catalog;
-    use crate::offerings::ports::Pool;
+    use crate::garden::facts::{Factsheet};
+    use crate::garden::manifest::Catalog;
+    use crate::garden::ports::Pool;
 
     let without = r#"
 kind: software
@@ -577,7 +577,7 @@ capture:
     let factsheet = Factsheet::empty();
     let snapshot = factsheet.snapshot();
     let inputs = std::collections::BTreeMap::new();
-    let dir = crate::offerings::directory::OfferingsRoot::new(std::path::PathBuf::from(
+    let dir = crate::garden::directory::OfferingsRoot::new(std::path::PathBuf::from(
         ".zen-garden-probe",
     ))
     .dir_for("witnessdb");

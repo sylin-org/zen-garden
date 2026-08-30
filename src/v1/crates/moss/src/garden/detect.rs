@@ -8,10 +8,10 @@
 //! lifecycle stays the host's. It dies → the record reports stopped; it
 //! returns → the record reports running.
 
-use crate::offerings::manifest::AdoptIntent;
-use crate::offerings::model::{AdoptedData, Location, ModeData, Offering, Status};
-use crate::offerings::runtime::ContainerFact;
-use crate::offerings::service::OfferingService;
+use crate::garden::manifest::AdoptIntent;
+use crate::garden::model::{AdoptedData, Location, ModeData, Offering, Status};
+use crate::garden::runtime::ContainerFact;
+use crate::garden::service::OfferingService;
 
 /// What one sweep did — every entry is a fact the operator may hear about.
 #[derive(Debug, Default, Clone)]
@@ -167,13 +167,13 @@ mod tests {
     // R4.1: unwrap/expect sanctioned in tests.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::offerings::directory::OfferingsRoot;
-    use crate::offerings::facts::Factsheet;
-    use crate::offerings::manifest::Catalog;
-    use crate::offerings::model::WorkloadSpec;
-    use crate::offerings::ports::Pool;
-    use crate::offerings::registry::{MemorySnapshotStore, Registry, Snapshot, SnapshotStore};
-    use crate::offerings::runtime::{
+    use crate::garden::directory::OfferingsRoot;
+    use crate::garden::facts::Factsheet;
+    use crate::garden::manifest::Catalog;
+    use crate::garden::model::WorkloadSpec;
+    use crate::garden::ports::Pool;
+    use crate::garden::registry::{MemorySnapshotStore, Registry, Snapshot, SnapshotStore};
+    use crate::garden::runtime::{
         Observed, Placement, PlacedRef, Runtime, RuntimeError, RuntimeRegistry,
     };
     use std::sync::Arc;

@@ -44,7 +44,7 @@ pub struct Manifest {
     /// The living will (ADR-0005 §1): how this offering asks to be
     /// remembered. Lifecycle intent — never hashed into plans (§7).
     #[serde(default)]
-    pub capture: Option<super::capture::CapturePolicy>,
+    pub capture: Option<super::will::policy::CapturePolicy>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

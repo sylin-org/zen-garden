@@ -14,7 +14,7 @@ mod jobs;
 mod journal;
 mod mcp;
 mod pulse;
-mod offerings;
+mod garden;
 mod source;
 
 use clap::Parser;
@@ -24,7 +24,7 @@ use garden_kernel::dispatch::Dispatcher;
 use garden_kernel::ingress::Ingress;
 use garden_kernel::pipeline;
 use garden_kernel::topology::Topology;
-use offerings::directory::OfferingsRoot;
+use garden::directory::OfferingsRoot;
 use garden_kernel::responder;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -115,7 +115,7 @@ async fn main() {
     // The stone's offerings: loaded from disk via the store port, adopted
     // split to candidates (ghost prevention, OFFERINGS.md §2).
     let offerings = pipeline::step::<
-        Arc<offerings::registry::Registry>,
+        Arc<garden::registry::Registry>,
         String,
         _,
     >("offerings-load", {
@@ -135,11 +135,11 @@ async fn main() {
                         })
                 })
                 .ok_or_else(|| "no home directory known".to_string())?;
-            let store = Arc::new(offerings::directory::DirectoryStore::new(
+            let store = Arc::new(garden::directory::DirectoryStore::new(
                 OfferingsRoot::new(root).base,
             ));
-            let registry = Arc::new(offerings::registry::Registry::new(
-                store as Arc<dyn offerings::registry::SnapshotStore>,
+            let registry = Arc::new(garden::registry::Registry::new(
+                store as Arc<dyn garden::registry::SnapshotStore>,
             ));
             // ADR-0002 slice 2: legacy records receive ledgered homes.
             registry.derive_missing_allocations();
@@ -158,19 +158,19 @@ async fn main() {
     // the DEFAULT world; naming an absent one aborts loudly (L17).
     let requested = std::env::var("MOSS_RUNTIME").ok();
     let (runtime_registry, default_runtime) = pipeline::step::<
-        (Arc<offerings::runtime::RuntimeRegistry>, String),
+        (Arc<garden::runtime::RuntimeRegistry>, String),
         String,
         _,
     >("runtime-select", {
         async move {
             // Adopt the worlds that answer (L25): null always exists.
-            let mut worlds: Vec<Arc<dyn offerings::runtime::Runtime>> =
-                vec![Arc::new(offerings::runtime::NullRuntime)];
-            match offerings::docker::DockerRuntime::connect() {
+            let mut worlds: Vec<Arc<dyn garden::runtime::Runtime>> =
+                vec![Arc::new(garden::runtime::NullRuntime)];
+            match garden::docker::DockerRuntime::connect() {
                 Ok(d) => worlds.push(Arc::new(d)),
                 Err(e) => tracing::info!(error = %e, "docker world not present"),
             }
-            let registry = offerings::runtime::RuntimeRegistry::build(worlds);
+            let registry = garden::runtime::RuntimeRegistry::build(worlds);
 
             // Explicit intent must exist among adopted worlds (L17);
             // otherwise the host default is companion-grade "null".
@@ -212,7 +212,7 @@ async fn main() {
         .into_iter()
         .collect::<Vec<_>>();
     let catalog = pipeline::step::<
-        Arc<offerings::manifest::Catalog>,
+        Arc<garden::manifest::Catalog>,
         String,
         _,
     >("catalog-load", {
@@ -220,7 +220,7 @@ async fn main() {
             // ADR-0008 layering: the embedded approved catalog is the
             // floor; the operator dir and the manifests overlay adjust
             // by name. No directory needs to exist for first light.
-            Ok(Arc::new(offerings::manifest::Catalog::load_fully_layered(
+            Ok(Arc::new(garden::manifest::Catalog::load_fully_layered(
                 catalog_root.as_deref(),
                 &catalog_overlays,
             )))
@@ -244,9 +244,9 @@ async fn main() {
 
     // Storage banks (ADR-0005 §8): boot scan recognizes adopted devices
     // (the manifest rides the drive); the watcher keeps reality fresh.
-    let storage = Arc::new(offerings::storage::Storage::new());
-    storage.reconcile(&offerings::storage::scan_volumes());
-    tokio::spawn(offerings::storage::watch_mounts(
+    let storage = Arc::new(garden::storage::Storage::new());
+    storage.reconcile(&garden::storage::scan_volumes());
+    tokio::spawn(garden::storage::watch_mounts(
         Arc::clone(&storage),
         token.clone(),
     ));
@@ -267,13 +267,13 @@ async fn main() {
 
     // The living will's runner (ADR-0005 §2): hooks via docker when it
     // answers; loud refusal where no world can run them (companion).
-    let hook_runner: Arc<dyn offerings::capture_run::HookRunner> =
-        match offerings::docker::DockerRuntime::connect() {
+    let hook_runner: Arc<dyn garden::will::HookRunner> =
+        match garden::docker::DockerRuntime::connect() {
             Ok(d) => Arc::new(d),
-            Err(_) => Arc::new(offerings::capture_run::NullHooks),
+            Err(_) => Arc::new(garden::will::NullHooks),
         };
     let capture_runner = Arc::new(
-        offerings::capture_run::Runner::new(Arc::clone(&storage), Arc::clone(&hook_runner))
+        garden::will::Runner::new(Arc::clone(&storage), Arc::clone(&hook_runner))
             .with_topology(Arc::clone(&topology)),
     );
 
@@ -307,7 +307,7 @@ async fn main() {
 
     // Facts census (OFFERINGS.md §6): contributors fire in parallel at
     // boot; the Converger and compile read the published generation.
-    let factsheet = Arc::new(offerings::facts::Factsheet::empty());
+    let factsheet = Arc::new(garden::facts::Factsheet::empty());
     pipeline::step::<(), String, _>("facts-census", {
         let factsheet = Arc::clone(&factsheet);
         let kinds: Vec<String> = runtime_registry
@@ -317,7 +317,7 @@ async fn main() {
             .collect();
         async move {
             let contributors =
-                offerings::facts::builtin_contributors(&kinds);
+                garden::facts::builtin_contributors(&kinds);
             let snapshot = factsheet.collect(&contributors).await;
             tracing::info!(generation = snapshot.id, facts = snapshot.facts.len(), "facts census complete");
             Ok(())
@@ -354,15 +354,15 @@ async fn main() {
     // The offering application service: registry + worlds + catalog + facts,
     // coordinated (OFFERINGS.md §5/§4). The service pool resolves here so a
     // malformed MOSS_SERVICE_PORT_POOL aborts loudly at startup (L17).
-    let pool = pipeline::step::<offerings::ports::Pool, String, _>("port-pool", async {
+    let pool = pipeline::step::<garden::ports::Pool, String, _>("port-pool", async {
         match std::env::var("MOSS_SERVICE_PORT_POOL") {
-            Ok(v) => offerings::ports::Pool::parse(&v)
+            Ok(v) => garden::ports::Pool::parse(&v)
                 .map_err(|e| format!("MOSS_SERVICE_PORT_POOL={v}: {e}")),
-            Err(_) => Ok(offerings::ports::Pool::default()),
+            Err(_) => Ok(garden::ports::Pool::default()),
         }
     })
     .await;
-    let garden = Arc::new(offerings::service::OfferingService::new(
+    let garden = Arc::new(garden::service::OfferingService::new(
         Arc::clone(&offerings),
         runtime_registry,
         default_runtime.clone(),
@@ -374,19 +374,19 @@ async fn main() {
     ));
 
     // The Converger: reality chases the stored plans until cancelled.
-    tokio::spawn(offerings::converge::run(Arc::clone(&garden), token.clone()));
+    tokio::spawn(garden::converge::run(Arc::clone(&garden), token.clone()));
 
     // Rehydration moment (OFFERINGS.md): one immediate convergence sweep —
     // if Docker lost everything, this brings offerings back before HTTP.
     pipeline::step::<(), String, _>("rehydrate", {
         let garden = Arc::clone(&garden);
         async move {
-            let results = offerings::converge::converge_once(&garden).await;
-            let healed = results.iter().filter(|(_, o)| *o == offerings::converge::Outcome::Healed).count();
+            let results = garden::converge::converge_once(&garden).await;
+            let healed = results.iter().filter(|(_, o)| *o == garden::converge::Outcome::Healed).count();
             // Boot is when ghosts confirm: adopted candidates re-enter the
             // room if their containers are here (OFFERINGS.md §2), and the
             // household's hand-run work is recognized right away.
-            let detected = offerings::detect::detect_once(&garden).await;
+            let detected = garden::detect::detect_once(&garden).await;
             tracing::info!(
                 checked = results.len(),
                 healed,
@@ -401,10 +401,10 @@ async fn main() {
 
     // The capture scheduler (ADR-0005 §3: five daily implies daily) walks
     // the placed set against the catalog's declared wills.
-    tokio::spawn(offerings::capture_run::run_scheduler(
+    tokio::spawn(garden::will::run_scheduler(
         Arc::clone(&garden),
         Arc::clone(&capture_runner),
-        std::time::Duration::from_secs(offerings::capture_run::CAPTURE_CADENCE_SECS),
+        std::time::Duration::from_secs(garden::will::CAPTURE_CADENCE_SECS),
         token.clone(),
     ));
 

@@ -7,8 +7,7 @@
 //! what the catalog recognizes — it observes, it never operates.
 
 pub mod capabilities;
-pub mod capture;
-pub mod capture_run;
+pub mod will;
 pub mod compile;
 pub mod converge;
 pub mod detect;

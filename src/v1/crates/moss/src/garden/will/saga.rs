@@ -4,18 +4,15 @@
 //! pack, ferry to sinks, commit, reclaim. Lock time belongs to disk speed,
 //! never network speed.
 
-use super::capture::{CaptureMode, CapturePolicy};
-use super::storage::Storage;
-use sha2::{Digest, Sha256};
+use super::checkpoint;
+use super::checkpoint::SINK_CHECKPOINT_DIR;
+use super::policy::{CaptureMode, CapturePolicy};
+use super::run::{Phase, Run, RunInfo};
+use crate::garden::storage::Storage;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-
-/// Checkpoints kept per offering per location (§3 rotation default).
-pub const CHECKPOINT_KEEP: usize = 5;
-/// Directory under a sink bank that receives ferried checkpoints.
-pub const SINK_CHECKPOINT_DIR: &str = "zen-garden/checkpoints";
 
 /// Where capture work happens: `~/.zen-garden/workspace/{fqn}/{run}/`
 /// (MOSS_WORKSPACE_DIR overrides the root — deployment concern, R3.7).
@@ -23,20 +20,13 @@ pub fn workspace_root() -> PathBuf {
     std::env::var("MOSS_WORKSPACE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            dirs_or_home().join(".zen-garden").join("workspace")
+            std::env::var("USERPROFILE")
+                .or_else(|_| std::env::var("HOME"))
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(".zen-garden")
+                .join("workspace")
         })
-}
-
-/// Local checkpoint ledger: `~/.zen-garden/checkpoints/{fqn}/{run}/`.
-pub fn checkpoints_root() -> PathBuf {
-    dirs_or_home().join(".zen-garden").join("checkpoints")
-}
-
-fn dirs_or_home() -> PathBuf {
-    std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 /// The seam hooks run through: argv inside the offering's container.
@@ -86,23 +76,6 @@ impl HookRunner for NullHooks {
 /// growth's progress source). The caller owns the deadline.
 pub type ExecLines = std::pin::Pin<Box<dyn futures::Stream<Item = String> + Send>>;
 
-/// What the last (or running) capture of an offering looks like.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct RunInfo {
-    pub fqn: String,
-    pub run_id: String,
-    pub started_at: chrono::DateTime<chrono::Utc>,
-    pub phase: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub checkpoint: Option<String>,
-    /// Where the checkpoint landed (local ledger always; sinks — local
-    /// mounted banks, then the room's heard sinks through their holder).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ferried_to: Option<Vec<String>>,
-}
-
 /// What Phase A needs to know about the workload being imprinted.
 #[derive(Debug, Clone)]
 pub struct Workload {
@@ -128,14 +101,14 @@ pub struct Runner {
     /// not hold (ADR-0005 §4's tier-1 sink, wherever the operator plugged
     /// it). None where only the local lane is exercised.
     topology: Option<Arc<garden_kernel::topology::Topology>>,
-    runs: parking_lot::Mutex<HashMap<String, RunInfo>>,
+    runs: parking_lot::Mutex<HashMap<String, Run>>,
 }
 
 impl Runner {
     pub fn new(storage: Arc<Storage>, hooks: Arc<dyn HookRunner>) -> Self {
         Self {
             workspace_root: workspace_root(),
-            checkpoints_root: checkpoints_root(),
+            checkpoints_root: checkpoint::checkpoints_root(),
             storage,
             hooks,
             topology: None,
@@ -170,11 +143,11 @@ impl Runner {
     }
 
     pub fn last_run(&self, fqn: &str) -> Option<RunInfo> {
-        self.runs.lock().get(fqn).cloned()
+        self.runs.lock().get(fqn).map(|r| r.snapshot())
     }
 
-    fn record(&self, info: RunInfo) {
-        self.runs.lock().insert(info.fqn.clone(), info);
+    fn record(&self, run: Run) {
+        self.runs.lock().insert(run.info().fqn.clone(), run);
     }
 
     /// Select a checkpoint: the named run, or the newest across the local
@@ -185,7 +158,7 @@ impl Runner {
         fqn: &str,
         run: Option<&str>,
     ) -> Result<PathBuf, String> {
-        let slug = super::directory::slug(fqn);
+        let slug = crate::garden::directory::slug(fqn);
         let mut roots = vec![self.checkpoints_root.join(&slug)];
         for bank in self.storage.banks() {
             if bank.roles.iter().any(|r| r == garden_glossary::bank::role::SINK)
@@ -239,7 +212,7 @@ impl Runner {
                 dir.display()
             ));
         }
-        let report = verify_checkpoint(checkpoint)?;
+        let report = checkpoint::verify(checkpoint)?;
         let manifest: serde_json::Value = serde_json::from_slice(
             &std::fs::read(checkpoint.join("manifest.json"))
                 .map_err(|e| format!("manifest unreadable: {e}"))?,
@@ -290,13 +263,14 @@ impl Runner {
     /// runs tracked, and how many of those last failed.
     pub fn run_stats(&self) -> (usize, usize) {
         let runs = self.runs.lock();
-        let failed = runs.values().filter(|r| r.phase == "failed").count();
+        let failed = runs.values().filter(|r| r.info().phase == "failed").count();
         (runs.len(), failed)
     }
 
-    /// Publish the caller-visible "accepted" record before the task starts.
+    /// Publish the caller-visible "accepted" record before the task
+    /// starts (a Run::begin snapshot — imprint is the first phase).
     pub fn announce(&self, info: RunInfo) {
-        self.record(info);
+        self.record(Run::from_snapshot(info));
     }
 
     /// Execute with a caller-chosen run id (the HTTP face mints it so the
@@ -308,39 +282,25 @@ impl Runner {
         workload: &Workload,
         run_id: &str,
     ) -> Result<PathBuf, String> {
-        let mut info = RunInfo {
-            fqn: fqn.to_string(),
-            run_id: run_id.to_string(),
-            started_at: chrono::Utc::now(),
-            phase: "imprint".into(),
-            error: None,
-            checkpoint: None,
-            ferried_to: None,
-        };
-        self.record(info.clone());
+        let mut run = Run::begin(fqn, run_id);
+        self.record(Run::from_snapshot(run.snapshot()));
         let workspace = self
             .workspace_root
-            .join(super::directory::slug(fqn))
+            .join(crate::garden::directory::slug(fqn))
             .join(run_id);
         let result = self
-            .execute_inner(fqn, policy, workload, &workspace, run_id, &mut info)
+            .execute_inner(fqn, policy, workload, &workspace, run_id, &mut run)
             .await;
         match &result {
-            Ok(checkpoint) => {
-                info.phase = "done".into();
-                info.checkpoint = Some(checkpoint.display().to_string());
-            }
-            Err(e) => {
-                info.phase = "failed".into();
-                info.error = Some(e.clone());
-            }
+            Ok(checkpoint) => run.finish(checkpoint),
+            Err(e) => run.fail(e),
         }
         // Reclaim the workspace either way (§2 Phase B's last step; a
         // failed run must not leak disk). The emptied offering directory
         // goes too, best-effort.
         let _ = std::fs::remove_dir_all(&workspace);
         let _ = std::fs::remove_dir(workspace.parent().unwrap_or(&workspace));
-        self.record(info);
+        self.record(run);
         result
     }
 
@@ -365,22 +325,22 @@ impl Runner {
         workload: &Workload,
         workspace: &Path,
         run_id: &str,
-        info: &mut RunInfo,
+        run: &mut Run,
     ) -> Result<PathBuf, String> {
         // ---- Phase A: synchronous, bounded (disk speed) ----
         std::fs::create_dir_all(workspace)
             .map_err(|e| format!("workspace carve failed: {e}"))?;
-        self.phase_a(policy, workload, workspace, run_id, info).await?;
+        self.phase_a(policy, workload, workspace, run_id, run).await?;
 
         // ---- Phase B: pack, ferry, commit, reclaim ----
-        info.phase = "pack".into();
-        self.record(info.clone());
+        run.advance(Phase::Pack);
+        self.record(Run::from_snapshot(run.snapshot()));
         let checkpoint = self.pack(fqn, workload, workspace, run_id)?;
-        info.phase = "ferry".into();
-        self.record(info.clone());
+        run.advance(Phase::Ferry);
+        self.record(Run::from_snapshot(run.snapshot()));
         let ferried = self.ferry(fqn, &checkpoint).await;
-        info.ferried_to = Some(ferried);
-        self.rotate(&self.checkpoints_root.join(super::directory::slug(fqn)));
+        run.delivered_to(ferried);
+        checkpoint::rotate(&checkpoint::dir_for(&self.checkpoints_root, fqn));
         Ok(checkpoint)
     }
 
@@ -392,7 +352,7 @@ impl Runner {
         workload: &Workload,
         workspace: &Path,
         run_id: &str,
-        info: &mut RunInfo,
+        run: &mut Run,
     ) -> Result<(), String> {
         match policy.mode {
             CaptureMode::Stateless => Ok(()), // signature only; Phase B carries it
@@ -468,12 +428,13 @@ impl Runner {
                 Ok(())
             }
         }
-        .inspect(|_| info.phase = "pack".into())
+        .inspect(|_| run.advance(Phase::Pack))
     }
 
-    /// Pack the workspace into `checkpoint.tar.zst` + a SHA-256 manifest,
-    /// then commit atomically: everything lands in `{run}.partial/` and
-    /// ONE rename makes it `{run}` (§3 — dumb-storage-friendly).
+    /// Pack the workspace into a committed checkpoint (§3): the
+    /// offering's signature files plus the imprint, tar'd, zstd'd,
+    /// hashed, manifest-last, ONE rename. The mechanics live on the
+    /// entity; the saga only gathers what the checkpoint must carry.
     fn pack(
         &self,
         fqn: &str,
@@ -481,8 +442,7 @@ impl Runner {
         workspace: &Path,
         run_id: &str,
     ) -> Result<PathBuf, String> {
-        // Collect the file set: signature (record/plan/configs) + imprint.
-        let mut files: Vec<(PathBuf, String)> = Vec::new(); // (abs, rel)
+        let mut files: Vec<(PathBuf, String)> = Vec::new();
         for entry in ["record.json", "candidate.json", "plan.json", "events.jsonl"] {
             let p = workload.dir.join(entry);
             if p.is_file() {
@@ -490,78 +450,13 @@ impl Runner {
             }
         }
         let configs = workload.dir.join("configs");
-        collect_files(&configs, &configs, &mut files)?;
-        collect_files(workspace, workspace, &mut files)?;
-
-        // Deterministic order for stable manifests.
-        files.sort_by(|a, b| a.1.cmp(&b.1));
-
-        let staged = self
-            .checkpoints_root
-            .join(super::directory::slug(fqn))
-            .join(format!("{run_id}.partial"));
-        std::fs::create_dir_all(&staged)
-            .map_err(|e| format!("checkpoint stage failed: {e}"))?;
-
-        // tar the file set, zstd the stream, hash the bytes as they flow.
-        let archive_path = staged.join("checkpoint.tar.zst");
-        let tar_buffer = tar::Builder::new(Vec::new());
-        let mut tar_buffer = tar_buffer;
-        for (abs, rel) in &files {
-            tar_buffer
-                .append_path_with_name(abs, rel)
-                .map_err(|e| format!("pack: {}: {e}", rel))?;
-        }
-        let tar_bytes = tar_buffer
-            .into_inner()
-            .map_err(|e| format!("pack: {e}"))?;
-        let mut hasher = Sha256::new();
-        hasher.update(&tar_bytes);
-        let archive_sha = hex(&hasher.finalize());
-        let compressed = zstd::stream::encode_all(&tar_bytes[..], 3)
-            .map_err(|e| format!("pack compress: {e}"))?;
-        std::fs::write(&archive_path, &compressed)
-            .map_err(|e| format!("archive write: {e}"))?;
-
-        // The embedded manifest: per-file hashes plus the archive's own.
-        let mut manifest = serde_json::json!({
-            "fqn": fqn,
-            "run": run_id,
-            "created_at": chrono::Utc::now().to_rfc3339(),
-            "archive": {
-                "file": "checkpoint.tar.zst",
-                "sha256": archive_sha,
-                "bytes": compressed.len(),
-            },
-            "files": [],
-        });
-        let file_records: Vec<serde_json::Value> = files
-            .iter()
-            .map(|(abs, rel)| {
-                let mut h = Sha256::new();
-                let bytes = std::fs::read(abs).unwrap_or_default();
-                h.update(&bytes);
-                serde_json::json!({
-                    "path": rel,
-                    "sha256": hex(&h.finalize()),
-                    "bytes": bytes.len(),
-                })
-            })
-            .collect();
-        manifest["files"] = serde_json::Value::Array(file_records);
-        let manifest_path = staged.join("manifest.json");
-        // fs::write closes the handle before we rename the directory
-        // (Windows denies renaming a tree with an open file in it).
-        let manifest_bytes = serde_json::to_vec_pretty(&manifest)
-            .map_err(|e| format!("manifest encode: {e}"))?;
-        std::fs::write(&manifest_path, manifest_bytes)
-            .map_err(|e| format!("manifest write: {e}"))?;
-
-        // The commit: one rename makes it a checkpoint (§3).
-        let final_dir = staged.with_file_name(run_id);
-        std::fs::rename(&staged, &final_dir)
-            .map_err(|e| format!("checkpoint commit rename: {e}"))?;
-        Ok(final_dir)
+        checkpoint::collect_files(&configs, &configs, &mut files)?;
+        let workspace_files = {
+            let mut wf = Vec::new();
+            checkpoint::collect_files(workspace, workspace, &mut wf)?;
+            wf
+        };
+        checkpoint::commit(fqn, files, &workspace_files, &self.checkpoints_root, run_id)
     }
 
     /// Copy the committed checkpoint to every mounted sink bank (§4):
@@ -578,7 +473,7 @@ impl Runner {
             }
             let target = Path::new(&bank.mount_point)
                 .join(SINK_CHECKPOINT_DIR)
-                .join(super::directory::slug(fqn));
+                .join(crate::garden::directory::slug(fqn));
             if copy_tree(checkpoint, &target.join(checkpoint.file_name().unwrap_or_default())).is_ok() {
                 reached.push(bank.fqn.clone());
             } else {
@@ -602,22 +497,6 @@ impl Runner {
         reached
     }
 
-    /// Keep the newest [`CHECKPOINT_KEEP`] checkpoints in one location.
-    fn rotate(&self, dir: &Path) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        let mut runs: Vec<PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_dir() && !p.ends_with(".partial"))
-            .collect();
-        runs.sort();
-        while runs.len() > CHECKPOINT_KEEP {
-            let oldest = runs.remove(0);
-            let _ = std::fs::remove_dir_all(&oldest);
-        }
-    }
 }
 
 /// Recursively copy one directory tree to another (imprint, ferry).
@@ -687,7 +566,7 @@ async fn ferry_via_http(fqn: &str, checkpoint: &Path, base: &str, bank_fqn: &str
         .to_string_lossy()
         .into_owned();
     let mut files = Vec::new();
-    collect_files(checkpoint, checkpoint, &mut files)?;
+    checkpoint::collect_files(checkpoint, checkpoint, &mut files)?;
     if files.is_empty() {
         return Err("checkpoint dir is empty; nothing to ferry".into());
     }
@@ -695,7 +574,7 @@ async fn ferry_via_http(fqn: &str, checkpoint: &Path, base: &str, bank_fqn: &str
     files.sort_by_key(|(_, rel)| (rel == "manifest.json", rel.clone()));
     let prefix = format!(
         "{base}/api/v1/storage/{bank_fqn}/files/{SINK_CHECKPOINT_DIR}/{}/{run}",
-        super::directory::slug(fqn)
+        crate::garden::directory::slug(fqn)
     );
     for (abs, rel) in files {
         let body = std::fs::read(&abs).map_err(|e| format!("read {rel}: {e}"))?;
@@ -761,24 +640,9 @@ fn collect_files(root: &Path, rel_root: &Path, out: &mut Vec<(PathBuf, String)>)
     Ok(())
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-/// What verifying a checkpoint found.
-// Consumed by the restore/replant faces (slice 5); tests exercise it now.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-pub struct VerifyReport {
-    pub files: usize,
-    pub bytes: u64,
-}
-
-/// The newest committed checkpoint of an offering, if any (§3 select).
-/// Replant's slice gives this its consumer (fetch latest -> verify ->
-/// unpack -> place); until then it is exercised by tests only.
 #[cfg(test)]
 pub fn latest_checkpoint(checkpoints_root: &Path, fqn: &str) -> Option<PathBuf> {
-    let dir = checkpoints_root.join(super::directory::slug(fqn));
+    let dir = checkpoints_root.join(crate::garden::directory::slug(fqn));
     let mut runs: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -789,88 +653,13 @@ pub fn latest_checkpoint(checkpoints_root: &Path, fqn: &str) -> Option<PathBuf> 
     runs.pop()
 }
 
-/// Verify a checkpoint against its embedded manifest (§3): the archive's
-/// own hash, then every file's hash. A checkpoint that cannot prove itself
-/// is not a checkpoint — refuse loudly, restore nothing.
-#[allow(dead_code)]
-pub fn verify_checkpoint(checkpoint: &Path) -> Result<VerifyReport, String> {
-    let manifest_path = checkpoint.join("manifest.json");
-    let manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&manifest_path)
-            .map_err(|e| format!("manifest unreadable: {e}"))?,
-    )
-    .map_err(|e| format!("manifest unparsable: {e}"))?;
-
-    let archive_file = manifest["archive"]["file"]
-        .as_str()
-        .unwrap_or("checkpoint.tar.zst")
-        .to_string();
-    let want_archive = manifest["archive"]["sha256"]
-        .as_str()
-        .ok_or("manifest declares no archive hash")?
-        .to_string();
-    let archive_bytes = std::fs::read(checkpoint.join(&archive_file))
-        .map_err(|e| format!("archive unreadable: {e}"))?;
-    // The manifest hashes the TAR (pack hashed it before compressing):
-    // decode first, then prove the decoded bytes.
-    let tar_bytes = zstd::stream::decode_all(&archive_bytes[..])
-        .map_err(|e| format!("archive decompress: {e}"))?;
-    let mut h = Sha256::new();
-    h.update(&tar_bytes);
-    let got = hex(&h.finalize());
-    if got != want_archive {
-        return Err(format!(
-            "archive hash mismatch: manifest says {want_archive}, archive proves {got}"
-        ));
-    }
-
-    // The expected file set, by path -> hash.
-    let mut expected: HashMap<String, String> = HashMap::new();
-    for f in manifest["files"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
-        if let (Some(p), Some(s)) = (f["path"].as_str(), f["sha256"].as_str()) {
-            expected.insert(p.to_string(), s.to_string());
-        }
-    }
-
-    let mut archive = tar::Archive::new(&tar_bytes[..]);
-    let mut files = 0usize;
-    let mut bytes = 0u64;
-    for entry in archive.entries().map_err(|e| format!("archive walk: {e}"))? {
-        let mut entry = entry.map_err(|e| format!("archive walk: {e}"))?;
-        let path = entry
-            .path()
-            .map_err(|e| format!("archive path: {e}"))?
-            .to_string_lossy()
-            .into_owned();
-        let mut h = Sha256::new();
-        let n = std::io::copy(&mut entry, &mut h).map_err(|e| format!("{path}: {e}"))?;
-        bytes += n;
-        let got = hex(&h.finalize());
-        match expected.get(&path) {
-            Some(want) if want == &got => {}
-            Some(want) => {
-                return Err(format!("file hash mismatch for '{path}': manifest says {want}, archive proves {got}"))
-            }
-            None => return Err(format!("archive carries '{path}' which the manifest never declared")),
-        }
-        files += 1;
-    }
-    if files != expected.len() {
-        return Err(format!(
-            "manifest declares {} files but the archive held {files}",
-            expected.len()
-        ));
-    }
-    Ok(VerifyReport { files, bytes })
-}
-
 /// Unpack a verified checkpoint's volumes into a fresh volumes directory
 /// (§3 restore: select -> verify -> unpack; replant composes on top).
 /// Returns the file count. Entry paths are traversal-checked: a
 /// checkpoint that tries to escape is refused, loudly.
 #[allow(dead_code)]
 pub fn unpack_volumes(checkpoint: &Path, volumes_dir: &Path) -> Result<usize, String> {
-    verify_checkpoint(checkpoint)?;
+    checkpoint::verify(checkpoint)?;
     let manifest_path = checkpoint.join("manifest.json");
     let manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).map_err(|e| format!("manifest unreadable: {e}"))?,
@@ -924,8 +713,8 @@ pub const CAPTURE_CADENCE_SECS: u64 = 86_400;
 /// Build the imprint workload for a placed offering (shared by the HTTP
 /// face and the scheduler - one composer, many mouths, B1).
 pub fn workload_for(
-    offering: &super::model::Offering,
-    dirs_root: &super::directory::OfferingsRoot,
+    offering: &crate::garden::model::Offering,
+    dirs_root: &crate::garden::directory::OfferingsRoot,
 ) -> Workload {
     let dir = dirs_root.dir_for(&offering.name).root;
     let volumes = offering
@@ -947,20 +736,16 @@ pub fn workload_for(
     Workload {
         dir,
         volumes,
-        container: super::docker::DockerRuntime::container_name(&offering.name),
-        running: offering.status == super::model::Status::Running,
+        container: crate::garden::docker::DockerRuntime::container_name(&offering.name),
+        running: offering.status == crate::garden::model::Status::Running,
     }
-}
-
-fn terminal(phase: &str) -> bool {
-    phase == "done" || phase == "failed"
 }
 
 /// The capture scheduler (§3's "five daily"): every cadence, every placed
 /// managed offering with a TRUSTED declared will runs it. Untrusted
 /// offerings are never silently tarred; in-flight runs are never doubled.
 pub async fn run_scheduler(
-    service: Arc<super::service::OfferingService>,
+    service: Arc<crate::garden::service::OfferingService>,
     runner: Arc<Runner>,
     cadence: Duration,
     token: tokio_util::sync::CancellationToken,
@@ -973,7 +758,7 @@ pub async fn run_scheduler(
             _ = ticker.tick() => {
                 for (offering, policy) in service.capture_targets() {
                     if let Some(last) = runner.last_run(&offering.name)
-                        && !terminal(&last.phase)
+                        && last.in_flight()
                     {
                         continue; // a will already in flight is not doubled
                     }
@@ -996,7 +781,8 @@ mod tests {
     // R4.1: unwrap/expect sanctioned in tests.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::offerings::capture::CapturePolicy;
+    use super::checkpoint::CHECKPOINT_KEEP;
+    use crate::garden::will::policy::CapturePolicy;
 
     /// A hook runner that records every call (argv[0]) - the double for
     /// the docker exec seam (R2.3).
@@ -1233,7 +1019,7 @@ mod tests {
             .unwrap();
 
         // An honest checkpoint proves itself.
-        let report = verify_checkpoint(&checkpoint).unwrap();
+        let report = checkpoint::verify(&checkpoint).unwrap();
         assert!(report.files >= 2, "signature + imprint: {report:?}");
 
         // A tampered archive is refused: rewrite the manifest to expect a
@@ -1243,7 +1029,7 @@ mod tests {
             serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
         manifest["archive"]["sha256"] = serde_json::json!(format!("{:064x}", 0u128));
         std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-        let err = verify_checkpoint(&checkpoint).unwrap_err();
+        let err = checkpoint::verify(&checkpoint).unwrap_err();
         assert!(err.contains("archive hash mismatch"), "{err}");
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1281,12 +1067,12 @@ mod tests {
     /// will runs it on the cadence; nothing else is silently tarred.
     #[tokio::test]
     async fn the_scheduler_runs_declared_wills() {
-        use crate::offerings::directory::OfferingsRoot;
-        use crate::offerings::manifest::Catalog;
-        use crate::offerings::registry::{MemorySnapshotStore, Registry};
-        use crate::offerings::runtime::{NullRuntime, RuntimeRegistry};
-        use crate::offerings::service::OfferingService;
-        use crate::offerings::{model::Location, model::ManagedData, model::ModeData, model::Offering, model::Status};
+        use crate::garden::directory::OfferingsRoot;
+        use crate::garden::manifest::Catalog;
+        use crate::garden::registry::{MemorySnapshotStore, Registry};
+        use crate::garden::runtime::{NullRuntime, RuntimeRegistry};
+        use crate::garden::service::OfferingService;
+        use crate::garden::{model::Location, model::ManagedData, model::ModeData, model::Offering, model::Status};
 
         let tmp = std::env::temp_dir().join(format!("zg-sched-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&tmp).unwrap();
@@ -1308,9 +1094,9 @@ capture:
             worlds,
             "null".into(),
             Arc::new(catalog),
-            Arc::new(crate::offerings::facts::Factsheet::empty()),
+            Arc::new(crate::garden::facts::Factsheet::empty()),
             OfferingsRoot::new(tmp.join("offerings")),
-            crate::offerings::ports::Pool::default(),
+            crate::garden::ports::Pool::default(),
             None,
         ));
         // A placed managed offering whose stem declares the will.
@@ -1366,7 +1152,7 @@ capture:
         let storage = Arc::new(Storage::new());
         // A mounted bank granted the sink role (ADR-0005 §4) - adopted
         // for real: the ceremony writes the record the declaration amends.
-        let vol = crate::offerings::storage::VolumeFact {
+        let vol = crate::garden::storage::VolumeFact {
             mount_point: tmp.join("sink-bank"),
             device_id: None,
             fqn: None,
@@ -1547,10 +1333,9 @@ capture:
 /// only witness).
 #[tokio::test]
 async fn replant_restores_the_incarnation_from_a_checkpoint() {
-    use crate::offerings::capture_run::Runner;
-    use crate::offerings::directory::{DirectoryStore, OfferingsRoot};
-    use crate::offerings::registry::Registry;
-    use crate::offerings::storage::VolumeFact;
+    use crate::garden::directory::{DirectoryStore, OfferingsRoot};
+    use crate::garden::registry::Registry;
+    use crate::garden::storage::VolumeFact;
 
     let tmp = std::env::temp_dir().join(format!("zg-replant-{}", uuid::Uuid::now_v7()));
     std::fs::create_dir_all(&tmp).unwrap();
@@ -1590,26 +1375,26 @@ async fn replant_restores_the_incarnation_from_a_checkpoint() {
     let dir = root.dir_for("db::default");
     std::fs::create_dir_all(dir.volumes().join("data")).unwrap();
     std::fs::write(dir.volumes().join("data").join("data.bin"), b"precious").unwrap();
-    let record = crate::offerings::record::OfferingRecord {
-        identity: crate::offerings::record::Identity {
+    let record = crate::garden::record::OfferingRecord {
+        identity: crate::garden::record::Identity {
             offering_id: "01a0dead-0000-7000-8000-0000000000ef".into(),
             name: "db::default".into(),
             stem: "db".into(),
             category: "data".into(),
         },
-        state: crate::offerings::record::State {
-            status: crate::offerings::model::Status::Running,
+        state: crate::garden::record::State {
+            status: crate::garden::model::Status::Running,
         },
         sub_capabilities: Default::default(),
-        location: crate::offerings::model::Location {
+        location: crate::garden::model::Location {
             host: "localhost".into(),
             port: 7300,
             protocol: "http".into(),
         },
-        mode_data: crate::offerings::model::ModeData::Managed(
-            crate::offerings::model::ManagedData {
+        mode_data: crate::garden::model::ModeData::Managed(
+            crate::garden::model::ManagedData {
                 runtime_kind: "oci".into(),
-                spec: crate::offerings::model::WorkloadSpec {
+                spec: crate::garden::model::WorkloadSpec {
                     image: "db:7".into(),
                     ..Default::default()
                 },
@@ -1668,14 +1453,14 @@ async fn replant_restores_the_incarnation_from_a_checkpoint() {
     // The restored record parses and is handed to the service: placement
     // itself is the runtime adapter's craft (W7 watches it live with docker).
     let bytes = std::fs::read(dir.record_json()).unwrap();
-    let restored: crate::offerings::record::OfferingRecord =
+    let restored: crate::garden::record::OfferingRecord =
         serde_json::from_slice(&bytes).unwrap();
     assert_eq!(restored.identity.offering_id, record.identity.offering_id, "same identity");
     assert!(
-        matches!(restored.mode_data, crate::offerings::model::ModeData::Managed(_)),
+        matches!(restored.mode_data, crate::garden::model::ModeData::Managed(_)),
         "the restored will is managed"
     );
-    if let crate::offerings::model::ModeData::Managed(m) = &restored.mode_data {
+    if let crate::garden::model::ModeData::Managed(m) = &restored.mode_data {
         assert_eq!(m.spec.image, "db:7", "the stored spec is complete");
     }
     let _ = (final_hash, count);

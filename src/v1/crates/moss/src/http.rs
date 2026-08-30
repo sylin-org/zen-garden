@@ -8,7 +8,7 @@
 //! is built from it, so an unadvertised emission is structurally
 //! impossible and an unrouted claim fails the manifest gates (L9, R4.7).
 
-use crate::offerings::service::{CommandError, OfferingService};
+use crate::garden::service::{CommandError, OfferingService};
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -30,9 +30,9 @@ pub struct AppState {
     /// The offering application service (domain + worlds coordinated).
     pub garden: Arc<OfferingService>,
     /// This stone's banks (ADR-0005 §8) — the storage MVP's state.
-    pub storage: Arc<crate::offerings::storage::Storage>,
+    pub storage: Arc<crate::garden::storage::Storage>,
     /// The living will's runner (ADR-0005 §2).
-    pub capture: Arc<crate::offerings::capture_run::Runner>,
+    pub capture: Arc<crate::garden::will::Runner>,
     /// The async operation tracker (the data plane's async contract).
     pub jobs: crate::jobs::JobTracker,
     /// The pulse bus (ADR-0013): typed, seq'd news for stream readers.
@@ -251,9 +251,9 @@ async fn catalog(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> 
 /// Local storage (L22): this stone's banks and the volumes ready for
 /// adoption.
 async fn storage_list(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let volumes = crate::offerings::storage::scan_volumes();
+    let volumes = crate::garden::storage::scan_volumes();
     let adoptable: Vec<serde_json::Value> =
-        crate::offerings::storage::Storage::adoptable(&volumes)
+        crate::garden::storage::Storage::adoptable(&volumes)
             .into_iter()
             .map(|v| {
                 serde_json::json!({
@@ -284,9 +284,9 @@ async fn storage_adopt(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AdoptRequest>,
 ) -> ApiResult {
-    use crate::offerings::storage::AdoptError;
+    use crate::garden::storage::AdoptError;
     let wanted = std::path::PathBuf::from(&req.device);
-    let volumes = crate::offerings::storage::scan_volumes();
+    let volumes = crate::garden::storage::scan_volumes();
     let vol = volumes
         .iter()
         .find(|v| dirs_equal(&v.mount_point, &wanted))
@@ -298,7 +298,7 @@ async fn storage_adopt(
     let bank = state.storage.adopt(vol, &req.name, &stone_id).map_err(|e| match e {
         AdoptError::AlreadyAdopted(_) => CommandError::Conflict(e.to_string()),
         AdoptError::BadName(_) => CommandError::Conflict(e.to_string()),
-        AdoptError::Io(_) => CommandError::Runtime(crate::offerings::runtime::RuntimeError::Failed(
+        AdoptError::Io(_) => CommandError::Runtime(crate::garden::runtime::RuntimeError::Failed(
             e.to_string(),
         )),
     })?;
@@ -319,7 +319,7 @@ async fn storage_eject(
     State(state): State<Arc<AppState>>,
     Path(fqn): Path<String>,
 ) -> ApiResult {
-    use crate::offerings::storage::EjectError;
+    use crate::garden::storage::EjectError;
     let bank = state.storage.eject(&fqn).map_err(|e| match e {
         EjectError::UnknownBank(_) => CommandError::NotFound(e.to_string()),
         EjectError::AlreadyEjected(_) => CommandError::Conflict(e.to_string()),
@@ -360,8 +360,8 @@ async fn capture_offer(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> ApiResult {
-    use crate::offerings::capture::{readiness, Readiness};
-    use crate::offerings::capture_run::RunInfo;
+    use crate::garden::will::{readiness, Readiness};
+    use crate::garden::will::RunInfo;
 
     let fqn = garden_glossary::fqn::canonicalize(&name)
         .map_err(|e| CommandError::Conflict(e.to_string()))?;
@@ -397,7 +397,7 @@ async fn capture_offer(
     };
 
     let workload =
-        crate::offerings::capture_run::workload_for(&offering, &state.garden.dirs_root);
+        crate::garden::will::workload_for(&offering, &state.garden.dirs_root);
 
     let runner = Arc::clone(&state.capture);
     let policy = policy.clone();
@@ -602,8 +602,8 @@ async fn storage_roles(
 
 /// The one mapping from the storage domain's file refusals onto the
 /// command taxonomy (each refuses as it truly is — R3.3).
-fn files_err(e: crate::offerings::storage::FilesError) -> CommandError {
-    use crate::offerings::storage::FilesError;
+fn files_err(e: crate::garden::storage::FilesError) -> CommandError {
+    use crate::garden::storage::FilesError;
     match &e {
         FilesError::UnknownBank(_) | FilesError::Missing(_) => {
             CommandError::NotFound(e.to_string())
@@ -613,7 +613,7 @@ fn files_err(e: crate::offerings::storage::FilesError) -> CommandError {
         }
         FilesError::BadPath(_) => CommandError::BadRequest(e.to_string()),
         FilesError::Io(_) => CommandError::Runtime(
-            crate::offerings::runtime::RuntimeError::Failed(e.to_string()),
+            crate::garden::runtime::RuntimeError::Failed(e.to_string()),
         ),
     }
 }
@@ -627,9 +627,9 @@ fn files_err(e: crate::offerings::storage::FilesError) -> CommandError {
 fn gate_bank(
     state: &AppState,
     fqn: &str,
-) -> Result<(crate::offerings::storage::Bank, std::path::PathBuf), Box<axum::response::Response>>
+) -> Result<(crate::garden::storage::Bank, std::path::PathBuf), Box<axum::response::Response>>
 {
-    use crate::offerings::storage::FilesError;
+    use crate::garden::storage::FilesError;
     match state.storage.bank_root(fqn) {
         Ok(pair) => Ok(pair),
         Err(FilesError::UnknownBank(_)) => Err(Box::new(bank_not_here(state, fqn))),
@@ -701,7 +701,7 @@ async fn storage_files_list(
     Path(fqn): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<axum::response::Response, ApiError> {
-    use crate::offerings::storage::{list_tree, safe_join};
+    use crate::garden::storage::{list_tree, safe_join};
     let rel = params.get("path").map(String::as_str).unwrap_or("");
     let depth = params
         .get("depth")
@@ -791,7 +791,7 @@ async fn storage_file_get(
     Path((fqn, rel)): Path<(String, String)>,
     headers: axum::http::HeaderMap,
 ) -> Result<axum::response::Response, ApiError> {
-    use crate::offerings::storage::{file_size, read_file, read_file_range, safe_join};
+    use crate::garden::storage::{file_size, read_file, read_file_range, safe_join};
     let (_, root) = match gate_bank(&state, &fqn) {
         Ok(pair) => pair,
         Err(answer) => return Ok(*answer),
@@ -845,7 +845,7 @@ async fn storage_file_put(
     Path((fqn, rel)): Path<(String, String)>,
     body: axum::body::Bytes,
 ) -> Result<axum::response::Response, ApiError> {
-    use crate::offerings::storage::{safe_join, write_file};
+    use crate::garden::storage::{safe_join, write_file};
     let (bank, root) = match gate_bank(&state, &fqn) {
         Ok(pair) => pair,
         Err(answer) => return Ok(*answer),
@@ -864,7 +864,7 @@ async fn storage_file_delete(
     State(state): State<Arc<AppState>>,
     Path((fqn, rel)): Path<(String, String)>,
 ) -> Result<axum::response::Response, ApiError> {
-    use crate::offerings::storage::{delete_file, safe_join};
+    use crate::garden::storage::{delete_file, safe_join};
     let (bank, root) = match gate_bank(&state, &fqn) {
         Ok(pair) => pair,
         Err(answer) => return Ok(*answer),
@@ -892,7 +892,7 @@ async fn storage_file_move(
     Path((fqn, rel)): Path<(String, String)>,
     Json(req): Json<MoveRequest>,
 ) -> Result<axum::response::Response, ApiError> {
-    use crate::offerings::storage::{move_file, safe_join};
+    use crate::garden::storage::{move_file, safe_join};
     let (bank, root) = match gate_bank(&state, &fqn) {
         Ok(pair) => pair,
         Err(answer) => return Ok(*answer),
@@ -973,7 +973,7 @@ async fn replant_offer(
     // same connection strings as the predecessor.
     let bytes = std::fs::read(dir.record_json())
         .map_err(|e| CommandError::Conflict(format!("restored record unreadable: {e}")))?;
-    let record: crate::offerings::record::OfferingRecord =
+    let record: crate::garden::record::OfferingRecord =
         serde_json::from_slice(&bytes).map_err(|e| {
             CommandError::Conflict(format!("restored record unparsable: {e}"))
         })?;
@@ -1283,8 +1283,8 @@ async fn plant_offering(
 
 /// Offerings render the sectioned record — disk and HTTP speak one shape
 /// (R3.9, B1; S5.5).
-fn record_view(offering: &crate::offerings::model::Offering) -> serde_json::Value {
-    serde_json::to_value(crate::offerings::record::OfferingRecord::from_domain(offering))
+fn record_view(offering: &crate::garden::model::Offering) -> serde_json::Value {
+    serde_json::to_value(crate::garden::record::OfferingRecord::from_domain(offering))
         .unwrap_or_default()
 }
 
@@ -1301,7 +1301,7 @@ async fn offering_capabilities(
     let fqn = garden_glossary::fqn::canonicalize(&name)
         .map_err(|e| CommandError::Conflict(e.to_string()))?;
     let offering = state.garden.placed(&fqn).ok_or(CommandError::NotFound(fqn.clone()))?;
-    match crate::offerings::capabilities::discover(&state.garden, &offering).await {
+    match crate::garden::capabilities::discover(&state.garden, &offering).await {
         Ok(map) => {
             if map != offering.sub_capabilities {
                 let mut fresh = offering.clone();
@@ -1313,7 +1313,7 @@ async fn offering_capabilities(
                 "data": { "offering": fqn, "capabilities": map },
             })))
         }
-        Err(crate::offerings::capabilities::DiscoverError::Unsupported(m)) => {
+        Err(crate::garden::capabilities::DiscoverError::Unsupported(m)) => {
             Err(ApiError(CommandError::Conflict(m)))
         }
         Err(e) => Err(ApiError(CommandError::Conflict(e.to_string()))),
@@ -1339,7 +1339,7 @@ async fn capability_add(
     let item = body["item"].as_str().ok_or_else(|| {
         ApiError(CommandError::BadRequest("body needs a \"type\" and an \"item\"".into()))
     })?;
-    let job_id = crate::offerings::capabilities::grow(
+    let job_id = crate::garden::capabilities::grow(
         Arc::clone(&state.garden),
         state.jobs.clone(),
         &name,
@@ -1358,7 +1358,7 @@ async fn capability_remove(
     State(state): State<Arc<AppState>>,
     Path((name, kind, item)): Path<(String, String, String)>,
 ) -> ApiResult {
-    let job_id = crate::offerings::capabilities::prune(
+    let job_id = crate::garden::capabilities::prune(
         Arc::clone(&state.garden),
         state.jobs.clone(),
         &name,
@@ -1410,7 +1410,7 @@ async fn rehearse_offer(
 
     let world = state.garden.world_for(&offering)?;
     let spec = managed.spec.clone();
-    let deps = crate::offerings::rehearse::RehearsalDeps {
+    let deps = crate::garden::rehearse::RehearsalDeps {
         world,
         select_checkpoint: {
             let runner = Arc::clone(&state.capture);
@@ -1423,7 +1423,7 @@ async fn rehearse_offer(
         },
     };
     let scratch_root = state.capture.workspace_root().join("rehearsals");
-    let report = crate::offerings::rehearse::rehearse(
+    let report = crate::garden::rehearse::rehearse(
         &fqn, &spec, deps, &scratch_root, REHEARSE_WAIT_SECS,
     ).await;
     Ok(Json(serde_json::json!({ "data": { "rehearsal": report } })))
@@ -1467,7 +1467,7 @@ async fn update_face(
 /// without a will are UNTRUSTED and say so.
 fn capture_view(
     state: &AppState,
-    offering: &crate::offerings::model::Offering,
+    offering: &crate::garden::model::Offering,
 ) -> serde_json::Value {
     let manifest = state.garden.catalog.get(&offering.offering);
     let declared = manifest.and_then(|m| m.capture.as_ref());
@@ -1479,7 +1479,7 @@ fn capture_view(
     let mut v = serde_json::json!({ "readiness": readiness });
     if let Some(policy) = declared {
         v["mode"] = serde_json::json!(policy.mode.as_str());
-        if policy.mode == crate::offerings::capture::CaptureMode::LockAndCopy {
+        if policy.mode == crate::garden::will::CaptureMode::LockAndCopy {
             v["max_locked_s"] = serde_json::json!(policy.max_locked_s);
         }
     }
@@ -1529,8 +1529,8 @@ pub(crate) mod tests {
     // R4.1: unwrap/expect sanctioned in tests.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::offerings::registry::{MemorySnapshotStore, Registry};
-    use crate::offerings::runtime::{NullRuntime, RuntimeRegistry};
+    use crate::garden::registry::{MemorySnapshotStore, Registry};
+    use crate::garden::runtime::{NullRuntime, RuntimeRegistry};
     use crate::source::{DynamicChirpSource, Voice};
     use axum::http::StatusCode;
     use garden_contract::chirp::ChirpFrame;
@@ -1540,17 +1540,17 @@ pub(crate) mod tests {
     pub(crate) fn test_state() -> Arc<AppState> {
         let registry = Arc::new(Registry::new(Arc::new(MemorySnapshotStore::default())));
         let worlds = Arc::new(RuntimeRegistry::build(vec![Arc::new(NullRuntime)]));
-        let factsheet = Arc::new(crate::offerings::facts::Factsheet::empty());
+        let factsheet = Arc::new(crate::garden::facts::Factsheet::empty());
         let service = Arc::new(OfferingService::new(
             registry.clone(),
             worlds,
             "null".into(),
-            Arc::new(crate::offerings::manifest::Catalog::default()),
+            Arc::new(crate::garden::manifest::Catalog::default()),
             factsheet,
-            crate::offerings::directory::OfferingsRoot::new(
+            crate::garden::directory::OfferingsRoot::new(
                 std::env::temp_dir().join(format!("moss-test-offer-{}", Uuid::now_v7())),
             ),
-            crate::offerings::ports::Pool::default(),
+            crate::garden::ports::Pool::default(),
             None,
         ));
         let chirp_source = DynamicChirpSource::new(
@@ -1562,14 +1562,14 @@ pub(crate) mod tests {
             },
             "boot-test".into(),
             registry,
-            Arc::new(crate::offerings::storage::Storage::new()),
+            Arc::new(crate::garden::storage::Storage::new()),
         );
         Arc::new(AppState {
             garden: service,
-            storage: Arc::new(crate::offerings::storage::Storage::new()),
-            capture: Arc::new(crate::offerings::capture_run::Runner::new(
-                Arc::new(crate::offerings::storage::Storage::new()),
-                Arc::new(crate::offerings::capture_run::NullHooks),
+            storage: Arc::new(crate::garden::storage::Storage::new()),
+            capture: Arc::new(crate::garden::will::Runner::new(
+                Arc::new(crate::garden::storage::Storage::new()),
+                Arc::new(crate::garden::will::NullHooks),
             )),
             jobs: crate::jobs::JobTracker::new(),
             pulse: Arc::new(crate::pulse::Bus::new()),
@@ -1817,7 +1817,7 @@ pub(crate) mod tests {
         state
             .storage
             .adopt(
-                &crate::offerings::storage::VolumeFact {
+                &crate::garden::storage::VolumeFact {
                     roles: Vec::new(),
                     mount_point: {
                         let d = std::env::temp_dir()
@@ -1858,7 +1858,7 @@ pub(crate) mod tests {
         state
             .storage
             .adopt(
-                &crate::offerings::storage::VolumeFact {
+                &crate::garden::storage::VolumeFact {
                     roles: Vec::new(),
                     mount_point: {
                         let d = std::env::temp_dir()
@@ -1900,7 +1900,7 @@ pub(crate) mod tests {
         state
             .storage
             .adopt(
-                &crate::offerings::storage::VolumeFact {
+                &crate::garden::storage::VolumeFact {
                     roles: Vec::new(),
                     mount_point: tmp.clone(),
                     device_id: None,
@@ -2148,7 +2148,7 @@ pub(crate) mod tests {
         state
             .storage
             .adopt(
-                &crate::offerings::storage::VolumeFact {
+                &crate::garden::storage::VolumeFact {
                     roles: Vec::new(),
                     mount_point: tmp.clone(),
                     device_id: None,

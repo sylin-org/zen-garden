@@ -177,7 +177,7 @@ pub async fn handle(
 /// The channels law in code: every tool delegates to the exact
 /// application-service calls the HTTP faces use.
 async fn run_tool(state: &Arc<AppState>, name: &str, args: &Value) -> Result<Value, String> {
-    use crate::offerings::capabilities;
+    use crate::garden::capabilities;
     match name {
         "observe" => Ok(crate::pulse::snapshot(
             &state.garden,

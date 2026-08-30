@@ -9,7 +9,7 @@
 //! adapters consume it.
 
 use garden_glossary::offering as vocab;
-use crate::offerings::ports::Tier;
+use crate::garden::ports::Tier;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

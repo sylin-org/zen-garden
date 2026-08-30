@@ -5,9 +5,9 @@
 //! offering record (`sub_capabilities`) and ride every chirp, so the
 //! room can answer wishes (`ollama[model:llama3]`).
 
-use crate::offerings::manifest::{CapabilityDecl, HttpList};
-use crate::offerings::model::Offering;
-use crate::offerings::service::OfferingService;
+use crate::garden::manifest::{CapabilityDecl, HttpList};
+use crate::garden::model::Offering;
+use crate::garden::service::OfferingService;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
@@ -108,7 +108,7 @@ fn container_name_of(offering: &Offering) -> String {
     if let Some(adopted) = offering.adopted() {
         return adopted.container_name.clone();
     }
-    crate::offerings::docker::DockerRuntime::container_name(&offering.name)
+    crate::garden::docker::DockerRuntime::container_name(&offering.name)
 }
 
 /// The dot path reader: items live at `item_path`; each element is
@@ -242,7 +242,7 @@ impl std::fmt::Display for GrowRefusal {
     }
 }
 
-fn declared_types_of(manifest: &crate::offerings::manifest::Manifest) -> Vec<String> {
+fn declared_types_of(manifest: &crate::garden::manifest::Manifest) -> Vec<String> {
     manifest.capabilities.iter().map(|c| c.r#type.clone()).collect()
 }
 
@@ -425,12 +425,12 @@ fn extract_percent(line: &str) -> Option<u8> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use crate::offerings::directory::OfferingsRoot;
-    use crate::offerings::facts::Factsheet;
-    use crate::offerings::manifest::Catalog;
-    use crate::offerings::model::{Location, ModeData, Offering, Status};
-    use crate::offerings::ports::Pool;
-    use crate::offerings::registry::{MemorySnapshotStore, Registry};
+    use crate::garden::directory::OfferingsRoot;
+    use crate::garden::facts::Factsheet;
+    use crate::garden::manifest::Catalog;
+    use crate::garden::model::{Location, ModeData, Offering, Status};
+    use crate::garden::ports::Pool;
+    use crate::garden::registry::{MemorySnapshotStore, Registry};
     use std::sync::Arc;
 
     const OLLAMA: &str = "kind: software
@@ -462,7 +462,7 @@ capabilities:
     }
 
     #[async_trait::async_trait]
-    impl crate::offerings::capture_run::HookRunner for ScriptedHooks {
+    impl crate::garden::will::saga::HookRunner for ScriptedHooks {
         async fn exec(
             &self,
             _container: &str,
@@ -478,7 +478,7 @@ success".into())
             &self,
             _container: &str,
             argv: &[String],
-        ) -> Result<crate::offerings::capture_run::ExecLines, String> {
+        ) -> Result<crate::garden::will::saga::ExecLines, String> {
             self.calls.lock().push(argv.to_vec());
             let item = argv.last().cloned().unwrap_or_default();
             let lines: Vec<String> = vec![
@@ -518,7 +518,7 @@ success".into())
         let calls = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let service = Arc::new(OfferingService::new(
             registry,
-            Arc::new(crate::offerings::runtime::RuntimeRegistry::build(vec![])),
+            Arc::new(crate::garden::runtime::RuntimeRegistry::build(vec![])),
             "null".into(),
             Arc::new(catalog),
             Arc::new(Factsheet::empty()),
@@ -530,7 +530,7 @@ success".into())
     }
 
     fn managed() -> ModeData {
-        ModeData::Managed(crate::offerings::model::ManagedData {
+        ModeData::Managed(crate::garden::model::ManagedData {
             runtime_kind: "oci".into(),
             spec: Default::default(),
             port_map: Default::default(),
@@ -542,7 +542,7 @@ success".into())
     #[tokio::test]
     async fn adopted_work_is_never_operated() {
         let (service, tracker, _calls) = rig(
-            ModeData::Adopted(crate::offerings::model::AdoptedData {
+            ModeData::Adopted(crate::garden::model::AdoptedData {
                 control_level: "monitor".into(),
                 start_command: None,
                 stop_command: None,

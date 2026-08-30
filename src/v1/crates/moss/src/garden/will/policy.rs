@@ -28,7 +28,7 @@
 // ADR-0005 §1-§6 land slice by slice).
 #![allow(dead_code)]
 
-use super::manifest::Manifest;
+use crate::garden::manifest::Manifest;
 use serde::Deserialize;
 
 /// Default hook budget (§1 examples).
@@ -211,7 +211,7 @@ mod tests {
     // R4.1: unwrap/expect sanctioned in tests.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::{CaptureMode, DEFAULT_HOOK_TIMEOUT_S, Readiness};
-    use crate::offerings::manifest::Catalog;
+    use crate::garden::manifest::Catalog;
 
     const BASE: &str = r#"
 kind: software

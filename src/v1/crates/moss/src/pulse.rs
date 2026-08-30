@@ -50,10 +50,10 @@ impl Bus {
 /// The sources the adapters listen to — everything the room already
 /// says, gathered once (R1.4: declared dependencies, then spawn).
 pub struct Sources {
-    pub garden: Arc<crate::offerings::service::OfferingService>,
+    pub garden: Arc<crate::garden::service::OfferingService>,
     pub topology: Arc<garden_kernel::topology::Topology>,
     pub jobs: crate::jobs::JobTracker,
-    pub storage: Arc<crate::offerings::storage::Storage>,
+    pub storage: Arc<crate::garden::storage::Storage>,
     pub dispatcher: garden_kernel::dispatch::Dispatcher,
     pub ingest: Arc<garden_kernel::ingress::IngestCounters>,
 }
@@ -282,7 +282,7 @@ fn sample_load() -> Option<Load> {
 /// opener. `self_row` is the caller's self view — the SAME shape the
 /// GardenStones face speaks (B1: one shape, wire to wall).
 pub fn snapshot(
-    garden: &crate::offerings::service::OfferingService,
+    garden: &crate::garden::service::OfferingService,
     topology: &garden_kernel::topology::Topology,
     jobs: &crate::jobs::JobTracker,
     self_row: serde_json::Value,

@@ -64,7 +64,7 @@ pub struct OfferingService {
     pool: Pool,
     /// The exec seam for read-only in-container reads (the capability
     /// sweep's list channel). None where no world can run hooks.
-    hooks: Option<Arc<dyn super::capture_run::HookRunner>>,
+    hooks: Option<Arc<dyn super::will::saga::HookRunner>>,
     /// Per-offering convergence failure counters (converge.rs drives them).
     failures: Arc<parking_lot::Mutex<HashMap<String, u32>>>,
 }
@@ -79,7 +79,7 @@ impl OfferingService {
         facts: Arc<Factsheet>,
         dirs_root: OfferingsRoot,
         pool: Pool,
-        hooks: Option<Arc<dyn super::capture_run::HookRunner>>,
+        hooks: Option<Arc<dyn super::will::saga::HookRunner>>,
     ) -> Self {
         Self {
             registry,
@@ -96,7 +96,7 @@ impl OfferingService {
 
     /// The exec seam, when this stone has a world that can run in-
     /// container reads.
-    pub fn hooks(&self) -> Option<Arc<dyn super::capture_run::HookRunner>> {
+    pub fn hooks(&self) -> Option<Arc<dyn super::will::saga::HookRunner>> {
         self.hooks.clone()
     }
 
@@ -232,7 +232,7 @@ impl OfferingService {
     /// Placed managed offerings with a TRUSTED declared will (ADR-0005):
     /// the scheduler's capture set. Untrusted offerings are surfaced
     /// honestly on their faces, never silently tarred here.
-    pub fn capture_targets(&self) -> Vec<(Offering, super::capture::CapturePolicy)> {
+    pub fn capture_targets(&self) -> Vec<(Offering, super::will::policy::CapturePolicy)> {
         let mut out = Vec::new();
         for o in self.registry.snapshot() {
             if o.managed().is_none() {
@@ -710,7 +710,7 @@ mod tests {
     // R4.1: unwrap/expect sanctioned in tests.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::offerings::manifest::Catalog;
+    use crate::garden::manifest::Catalog;
 
     #[test]
     fn tail_segment_reads_both_path_dialects() {
@@ -719,8 +719,8 @@ mod tests {
         assert_eq!(tail_segment("ntfy-cache"), Some("ntfy-cache"));
         assert_eq!(tail_segment(""), None);
     }
-    use crate::offerings::registry::MemorySnapshotStore;
-    use crate::offerings::runtime::{NullRuntime, Observed, Placement, PlacedRef, Runtime, RuntimeError, RuntimeRegistry};
+    use crate::garden::registry::MemorySnapshotStore;
+    use crate::garden::runtime::{NullRuntime, Observed, Placement, PlacedRef, Runtime, RuntimeError, RuntimeRegistry};
 
     const REDIS: &str = "\
 kind: software

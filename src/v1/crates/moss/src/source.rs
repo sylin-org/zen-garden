@@ -47,12 +47,12 @@ pub struct Voice {
 pub struct DynamicChirpSource {
     voice: Voice,
     boot_id: String,
-    registry: Arc<crate::offerings::registry::Registry>,
+    registry: Arc<crate::garden::registry::Registry>,
     rev: AtomicU64,
     /// The bank revision (ADR-0005 §8.1): rides beside svc_rev, bumped on
     /// storage news — mount/eject/rename/visibility, never measurements.
     bank_rev: AtomicU64,
-    storage: Arc<crate::offerings::storage::Storage>,
+    storage: Arc<crate::garden::storage::Storage>,
     version_tx: tokio::sync::watch::Sender<u64>,
 }
 
@@ -62,8 +62,8 @@ impl DynamicChirpSource {
     pub fn new(
         voice: Voice,
         boot_id: String,
-        registry: Arc<crate::offerings::registry::Registry>,
-        storage: Arc<crate::offerings::storage::Storage>,
+        registry: Arc<crate::garden::registry::Registry>,
+        storage: Arc<crate::garden::storage::Storage>,
     ) -> Arc<Self> {
         let initial = (registry.snapshot().len() as u64).max(1);
         let (version_tx, _) = tokio::sync::watch::channel(0);
@@ -219,7 +219,7 @@ impl ChirpSource for DynamicChirpSource {
 /// Call once at startup.
 pub fn follow_storage_changes(
     source: &Arc<DynamicChirpSource>,
-    storage: &Arc<crate::offerings::storage::Storage>,
+    storage: &Arc<crate::garden::storage::Storage>,
     token: tokio_util::sync::CancellationToken,
 ) {
     let source = Arc::clone(source);
@@ -243,7 +243,7 @@ pub fn follow_storage_changes(
 /// body() recomposes the whole set anyway. Call once at startup.
 pub fn follow_offering_changes(
     source: &Arc<DynamicChirpSource>,
-    registry: &Arc<crate::offerings::registry::Registry>,
+    registry: &Arc<crate::garden::registry::Registry>,
     token: tokio_util::sync::CancellationToken,
 ) {
     let mut events = registry.events();
@@ -276,8 +276,8 @@ pub fn follow_offering_changes(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::offerings::registry::MemorySnapshotStore;
-    use crate::offerings::model::{
+    use crate::garden::registry::MemorySnapshotStore;
+    use crate::garden::model::{
         Location, ManagedData, ModeData, Offering, Status,
     };
     use std::collections::HashMap;
@@ -291,12 +291,12 @@ mod tests {
         }
     }
 
-    fn source_with(registry: Arc<crate::offerings::registry::Registry>) -> Arc<DynamicChirpSource> {
+    fn source_with(registry: Arc<crate::garden::registry::Registry>) -> Arc<DynamicChirpSource> {
         DynamicChirpSource::new(
             voice(),
             "boot-1".into(),
             registry,
-            Arc::new(crate::offerings::storage::Storage::new()),
+            Arc::new(crate::garden::storage::Storage::new()),
         )
     }
 
@@ -325,8 +325,8 @@ mod tests {
         }
     }
 
-    fn registry_with(items: Vec<Offering>) -> Arc<crate::offerings::registry::Registry> {
-        let registry = Arc::new(crate::offerings::registry::Registry::new(Arc::new(
+    fn registry_with(items: Vec<Offering>) -> Arc<crate::garden::registry::Registry> {
+        let registry = Arc::new(crate::garden::registry::Registry::new(Arc::new(
             MemorySnapshotStore::default(),
         )));
         for o in items {
@@ -426,7 +426,7 @@ mod tests {
     #[tokio::test]
     async fn storage_news_bumps_bank_rev_and_sings_the_banks() {
         let registry = registry_with(vec![]);
-        let storage = Arc::new(crate::offerings::storage::Storage::new());
+        let storage = Arc::new(crate::garden::storage::Storage::new());
         let source = DynamicChirpSource::new(
             voice(),
             "boot-1".into(),
@@ -444,7 +444,7 @@ mod tests {
 
         storage
             .adopt(
-                &crate::offerings::storage::VolumeFact {
+                &crate::garden::storage::VolumeFact {
                     roles: Vec::new(),
                     mount_point: {
                         let d = std::env::temp_dir()

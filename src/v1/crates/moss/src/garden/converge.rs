@@ -9,8 +9,8 @@
 //!   failures accumulate        → degraded after MAX_ATTEMPTS, then quiet
 //!   observed running           → heals a degraded marking (external rescue)
 
-use crate::offerings::model::Status;
-use crate::offerings::service::OfferingService;
+use crate::garden::model::Status;
+use crate::garden::service::OfferingService;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -75,7 +75,7 @@ pub async fn converge_once(service: &OfferingService) -> Vec<(String, Outcome)> 
     results
 }
 
-fn restarting(o: &crate::offerings::runtime::Observed) -> bool {
+fn restarting(o: &crate::garden::runtime::Observed) -> bool {
     // Observed carries only running; a restarting container reports
     // running=false in most states we care about here — counted as failure
     // signal via repeated non-running sweeps rather than special-cased.
@@ -87,7 +87,7 @@ fn fail(
     service: &OfferingService,
     id: &str,
     name: &str,
-    e: crate::offerings::runtime::RuntimeError,
+    e: crate::garden::runtime::RuntimeError,
     out: &mut Vec<(String, Outcome)>,
 ) {
     let count = service.bump_failure(id);
@@ -102,14 +102,14 @@ fn fail(
 
 fn refresh_ports(
     service: &OfferingService,
-    offering: &crate::offerings::model::Offering,
+    offering: &crate::garden::model::Offering,
     named: HashMap<String, u16>,
 ) {
     if named.is_empty() {
         return;
     }
     if let Some(mut o) = service.registry().get(&offering.offering_id)
-        && let crate::offerings::model::ModeData::Managed(m) = &mut o.mode_data
+        && let crate::garden::model::ModeData::Managed(m) = &mut o.mode_data
         && m.port_map != named
     {
         m.port_map = named;

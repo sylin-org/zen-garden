@@ -483,11 +483,11 @@ impl SnapshotStore for DirectoryStore {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::offerings::model::{Location, ManagedData, ModeData, Status};
+    use crate::garden::model::{Location, ManagedData, ModeData, Status};
 
-    fn sample(name: &str) -> crate::offerings::model::Offering {
+    fn sample(name: &str) -> crate::garden::model::Offering {
         let now = chrono::Utc::now();
-        crate::offerings::model::Offering {
+        crate::garden::model::Offering {
             offering_id: uuid::Uuid::now_v7().to_string(),
             name: name.to_string(),
             offering: "redis".into(),
@@ -556,7 +556,7 @@ mod tests {
     /// rewritten to FQN spelling; a second load is stable and idempotent.
     #[test]
     fn flat_layouts_migrate_and_names_gain_the_namespace() {
-        use crate::offerings::registry::Snapshot as Snap2;
+        use crate::garden::registry::Snapshot as Snap2;
 
         let tmp = std::env::temp_dir().join(format!("zg-dir-flat-{}", uuid::Uuid::now_v7()));
         let flat = tmp.join("mongodb");
@@ -605,8 +605,8 @@ mod tests {
         // Stage v2: flat record (Offering's legacy serde) + v2 plan, both
         // embedded and as sidecar.
         let mut v2 = sample("redis::default");
-        v2.mode_data = crate::offerings::model::ModeData::Managed(
-            crate::offerings::model::ManagedData {
+        v2.mode_data = crate::garden::model::ModeData::Managed(
+            crate::garden::model::ManagedData {
                 runtime_kind: "oci".into(),
                 spec: Default::default(),
                 port_map: Default::default(),
@@ -641,7 +641,7 @@ mod tests {
         assert!(plan.get("plan_hash").is_none(), "no flat scalars remain");
 
         // The sectioned truth is on disk; the v2 evidence is aside, intact.
-        let record: crate::offerings::record::OfferingRecord =
+        let record: crate::garden::record::OfferingRecord =
             serde_json::from_slice(&std::fs::read(leaf.join("record.json")).unwrap()).unwrap();
         assert_eq!(record.identity.name, "redis::default");
         assert_eq!(record.state.status, Status::Running);

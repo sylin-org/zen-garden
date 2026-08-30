@@ -162,8 +162,8 @@ impl Registry {
     /// already carrying allocations are untouched. After this pass the
     /// ledger is complete and adapters bind explicitly on every create.
     pub fn derive_missing_allocations(&self) {
-        use crate::offerings::model::PortAllocation;
-        use crate::offerings::ports::Tier;
+        use crate::garden::model::PortAllocation;
+        use crate::garden::ports::Tier;
 
         let mut changed = Vec::new();
         {

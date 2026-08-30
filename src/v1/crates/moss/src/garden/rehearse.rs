@@ -35,14 +35,14 @@ pub type RestoreFn = Box<dyn Fn(&Path, &Path) -> Result<(usize, String), String>
 
 pub struct RehearsalDeps {
     /// The placed offering's world (docker rehearses; null refuses).
-    pub world: Arc<dyn crate::offerings::runtime::Runtime>,
+    pub world: Arc<dyn crate::garden::runtime::Runtime>,
     pub select_checkpoint: SelectFn,
     pub restore_into: RestoreFn,
 }
 
 pub async fn rehearse(
     name: &str,
-    spec: &crate::offerings::model::WorkloadSpec,
+    spec: &crate::garden::model::WorkloadSpec,
     deps: RehearsalDeps,
     scratch_root: &Path,
     wait_secs: u64,

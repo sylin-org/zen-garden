@@ -290,6 +290,17 @@ impl Runtime for DockerRuntime {
             )
             .await
             .map_err(|e| RuntimeError::Failed(e.to_string()))
+            // A missing container is already gone: uprooting a husk whose
+            // placement never landed (a degraded incarnation) must not
+            // fail on the world's 404 - the workload IS removed.
+            .or_else(|e| {
+                let text = e.to_string();
+                if text.contains("404") || text.to_lowercase().contains("no such container") {
+                    Ok(())
+                } else {
+                    Err(RuntimeError::Failed(text))
+                }
+            })
     }
 
     async fn observe(&self, name: &str) -> Option<Observed> {

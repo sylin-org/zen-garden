@@ -464,3 +464,134 @@ D5's channels law (ADR-0014): MCP, CLI, API are mouths, not brains.
   the exact application-service calls the HTTP faces use — no second
   brain to drift (the founding disease of the PoC, structurally
   impossible here). Refusals surface the pipeline's own errors.
+
+## W15 — the full integration exercise (2026-08-29, two stones + bystander, fix-forward run)
+
+The W15 runbook (docs/v1/epics/integration-exercise.md), executed live
+across the workstation (entry-glass, 192.168.1.137, native Windows moss
++ Docker Desktop) and stone-tranquil-pass (192.168.1.195, USB seed bank
+mounted), with translucent-clearing (.82) chirping as bystander. Two
+stones meet, work is planted, files cross the network, a living will
+ferries across stones, a stone is murdered, its work is replanted from
+the seed bank, a goodbye is witnessed live.
+
+- **P0 ground truth — PASS.** Docker Desktop 29.7.2; .195 answers
+  `rake observe` and MCP tools/list; seed-vault mounted at
+  /mnt/gposingway-seed (238.5 GiB, roles: sink).
+- **P1 the room meets — PASS, with a find.** Both stones thriving in
+  each other's view within ~15 s, no heartbeat waited. FIND: rake's
+  attachment cascade has a soft "tending" memory — the first unpinned
+  command attached to the first answerer (.195) and pinned it; from a
+  multi-stone workstation, pin explicit intent (`RAKE_STONE`) for
+  stone-local work or commands land on the wrong stone.
+- **P2 life on the young stone — PASS, with a find.** `rake offer ntfy`
+  plants on entry-glass, ledgered :7300; visible from .195 through the
+  garden's only true redirect (404 + `knows_at` → entry-glass's
+  full-voice inventory sings ntfy::default, running, port 7300). FIND:
+  Windows Firewall held explicit Inbound-Block rules for the temp
+  build path; the moss now runs from the repo release path whose
+  allow-rules exist (equivalent to the runbook's firewall fix, no
+  elevation needed).
+- **P3 capabilities and the wish — PASS.** `rake offer ollama` plants;
+  `rake ensure 'ollama[model:all-minilm]'` answers *"grown, not
+  planted: ollama://192.168.1.195:7300"*; `rake capabilities ollama`
+  lists all-minilm:latest. (240 s rake budget < grow time on first
+  ask; re-ask found it done — the job kept running, as promised.)
+- **P4 the cross-stone file write — PASS.** PUT of
+  zg-integration/hello.txt through the WORKSTATION face answers
+  not-here (`knows_at` → .195); the re-bound write commits 17 bytes on
+  the drive; read-back through the same redirect is byte-identical;
+  PATCH move + re-read + DELETE all bind at their authority. A machine
+  that does not hold the drive wrote to it, honestly.
+- **P5 the living will, cross-stone — PASS after fixes (see Seams 1–3).**
+  `rake capture ntfy` on entry-glass: imprint (copy-freely, imprint_ms=0)
+  → pack (tar.zst + SHA-256) → **ferried across stones to seed-vault on
+  .195** → committed. On .195 the bank holds
+  `checkpoints/ntfy__default/<run>/` (archive + manifest intact);
+  `rake capture ntfy --last` FROM .195 follows the redirect home and
+  reports `done — ferried to seed-vault::default`.
+- **P6 the murder — PASS.** `taskkill /F` + container removal: no
+  goodbye. Past the threshold, .195's room no longer lists entry-glass
+  — expiry removes the row and publishes `Expired` to the feed
+  (observed state, not a haunting). Offerings vanish with the stone.
+- **P7 the replant — PASS after fixes (see Seams 2, 4).** One command
+  on .195: select → verify (archive + per-file SHA-256) → restore →
+  place FROM THE STORED SPEC. Same FQN `ntfy::default`, SAME
+  `offering_id 01a04fb4…` as the dead stone's record — the incarnation,
+  not a copy. Address re-arbitrated honestly: :7300 is ollama's on this
+  stone, the flexible tier redraws to :7302 (decision trail recorded).
+  The audit chain carries the whole life: `Placed` (entry-glass 22:47)
+  → `Replanted` (tranquil-pass 00:17).
+- **P8 the room re-serves the dead stone's work — PASS.** From the
+  workstation `rake ensure ntfy` answers *"ntfy grows on
+  stone-tranquil-pass — ntfy://192.168.1.195:7302"*; MCP observe on
+  .195 shows ntfy::default running, port_map {default: 7302}. Wishes
+  and MCP agree with reality.
+- **P9 the goodbye — PASS.** SIGINT on .195 with the wall's firehose
+  HELD OPEN: shutdown signal received → **goodbye spoken in 0.36 s** →
+  process exits. W12's hang (a held stream stalling the drain forever)
+  is fixed: stream faces end on the shutdown token. Witnessed on the
+  wall as feed-loss (`connection lost` / `feed unreachable`); the wall
+  does not yet render the goodbye datagram as a wire event — rake-wall
+  nuance, recorded as debt.
+- **P10 return, cleanup, record — PASS.** Moss restarted and seen
+  thriving; ntfy + ollama uprooted, images removed, journals cleared,
+  bank checkpoints and husk directories purged (busybox for the
+  residue); workstation moss stopped, ntfy record/image/checkpoint
+  removed, tending cleared. Fleet as found.
+
+### The seams (what the exercise actually found)
+
+Five failures, one shape: **each is a seam where two laws met and
+neither owned the case** — the modules are faithful to their ADRs; the
+seams were never named.
+
+1. **D15 half-landed.** The catalog validator knew hookless
+   lock-and-copy is an honest copy-freely will; the capture executor
+   still demanded quiesce/resume hooks. Fixed: the executor honors the
+   validated policy; a lone quiesce is now a load error (it strands the
+   lock); elasticsearch/opensearch manifests carried quiesce-without-
+   resume and were rewritten as copy-freely.
+2. **The replication lane was single-stone.** `ferry()` walked local
+   banks only — the runbook's headline (checkpoint lands on the OTHER
+   stone's drive) had never been implemented. Fixed: the room's heard
+   banks (chirp §8) with sink role + mounted state are reached through
+   their holder's storage-file face; manifest.json lands last (the
+   commit marker, hand-carried).
+3. **The redirect law was per-face, not a mechanism.** `capture_last`
+   answered a plain 404 for foreign offerings, and rake followed
+   `knows_at` for files and logs only. Fixed: the moss face answers the
+   not-here redirect; rake's living-will verbs (capture, capture-last,
+   replant) follow the way once; the capture-last renderer's run-field
+   nesting fixed. DEBT: routing-following is still three copies in rake
+   (files, logs, living-will) — one router wanted.
+4. **ADR-0005 §6 never said what a checkpoint means on a foreign
+   stone.** The stored spec replayed the dead stone's host paths
+   (Windows backslashes → Docker "invalid mode") and its ledgered port
+   (7300 — already owned by ollama here). Fixed: replant re-roots host
+   paths into the local restored directory (separator-dialect-free tail
+   segment) and re-arbitrates stored intents against THIS stone's
+   ledger — free homes kept, flexible homes redrawn, strict disputes
+   refuse. DEBT: uproot originally refused a husk whose container never
+   existed (now idempotent); the failed-placement-leaves-a-degraded-
+   record hole is a recovery flow worth a named law.
+5. **The farewell was sequenced, not owned.** The goodbye was the last
+   line after drain-completion; the pulse's own firehose held the drain
+   open forever. Fixed: stream faces end on the stone's shutdown token;
+   SIGINT → goodbye in 0.36 s with the wall watching. The wall rendering
+   the goodbye as a wire event is rake-wall debt.
+
+Also witnessed, unfixed, named: the capture scheduler's immediate first
+tick runs every declared will at MOSS BOOT (three times tonight) — a
+boot should not be a calendar; and a freshly booted stone whose rich
+discovery answers are lost on multicast stays inventory-blind until a
+peer next sings (the room should re-assert full voice periodically).
+
+### State left behind
+
+None. .195: `witness-db::garden` running (redis:7-alpine), seed-vault
+mounted, journals/checkpoints/debris cleared, the fixed 0.1.0 build
+deployed (fix-forward is part of this epic). Workstation: moss STOPPED,
+ntfy record/image/checkpoint/tending removed. Test containers, images,
+records: none survive. The code fixes ride in this epic's commits; the
+seams above seed the realignment (ADR-0015).

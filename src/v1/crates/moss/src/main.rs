@@ -11,6 +11,7 @@
 mod http;
 mod identity;
 mod jobs;
+mod journal;
 mod mcp;
 mod pulse;
 mod offerings;

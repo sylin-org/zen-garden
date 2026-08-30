@@ -645,3 +645,22 @@ did not move, and the whole story re-ran green on the fleet.
 realigned build deployed (hash-verified); workstation moss STOPPED,
 all test records and images removed. Workspace: 124 moss tests, 35
 rake tests, the full workspace suite green.
+
+### W16, continued — the worklist emptied (2026-08-30)
+
+- The wire plane is `garden-room`; moss holds the room facade and the
+  stone's voice. rake's discovery speaks `garden_room::probe`.
+- **The wish is room-level**: `ensure` now walks every answering
+  stone's own view before planting — a bystander (or a stale cache)
+  can no longer silence it.
+- **The law of names**: `replant` refuses an FQN still sung by a
+  living peer — best-effort over the room cache, loudly stated.
+- **The wall never haunts**: with the feed down, the garden strip
+  renders `last known`, dimmed.
+- **Settled**: jobs.rs stays as the Job aggregate's durable store;
+  the per-offering events.jsonl stays as the aggregate's chain that
+  rides the checkpoint. The stone-level fact stream (`journal.rs`)
+  serves coordination and replay. Two durability shapes, zero
+  duplicates.
+- Deployed to .195 (observe + list verified); suite green: 206 tests
+  across the workspace.

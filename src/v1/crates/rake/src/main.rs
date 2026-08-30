@@ -1336,6 +1336,57 @@ async fn cmd_ensure(cli: &Cli, name: &str, timeout: u64) -> Result<Answer, Strin
         }
     }
 
+    // 1b. The wish is ROOM-level (ADR-0015): the attached moss's view
+    // may be a bystander's — stale, silent, or an older build. Walk the
+    // room stone by stone and ask each one directly before planting.
+    {
+        let (early, late) = cli.targets().await?;
+        for cand in early.into_iter().chain(late) {
+            let Ok(view) =
+                moss_http::get_json(cand.ip, cand.http_port, "/api/v1/garden/stones", HTTP_TIMEOUT)
+                    .await
+            else {
+                continue; // a silent stone is skipped, not fatal
+            };
+            let Ok(view) = envelope_plain(&view) else { continue };
+            for s in view["stones"].as_array().into_iter().flatten() {
+                let ip = s["stone"]["network"]["address"]["ip"].as_str().unwrap_or("?").to_string();
+                for svc in s["inventory"]["services"]["items"].as_array().into_iter().flatten() {
+                    let svc_name = svc["name"].as_str().unwrap_or("");
+                    if !service_matches(&fqn, &stem, wished_instance, svc_name) {
+                        continue;
+                    }
+                    let port = svc["ports"]
+                        .as_object()
+                        .and_then(|m| m.values().next())
+                        .and_then(|p| p.as_u64());
+                    let status = svc["state"]["status"].as_str().unwrap_or("unknown").to_string();
+                    let uri = connection_uri(svc["stem"].as_str().unwrap_or("?"), &ip, port);
+                    let value = serde_json::json!({
+                        "data": {
+                            "ensured": true,
+                            "how": "found",
+                            "name": svc_name,
+                            "stone": s["stone"]["name"].as_str().unwrap_or("?"),
+                            "uri": uri,
+                            "status": status,
+                            "offering": svc,
+                        }
+                    });
+                    return Ok(Answer::new(value).human(|v| {
+                        println!(
+                            "{} grows on {} — {}",
+                            display_name(v["data"]["name"].as_str().unwrap_or("?")),
+                            v["data"]["stone"].as_str().unwrap_or("?"),
+                            v["data"]["uri"].as_str().unwrap_or("(no published port)")
+                        );
+                        Ok(())
+                    }));
+                }
+            }
+        }
+    }
+
     // 2. Plant it here (catalog name wins; the pull rides the plant
     // budget). 409 means it is already planted HERE — stale cache or a
     // race; good, use it.

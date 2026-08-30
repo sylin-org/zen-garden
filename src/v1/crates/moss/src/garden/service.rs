@@ -144,11 +144,22 @@ impl OfferingService {
         &self,
         mut offering: Offering,
         final_hash: &str,
+        room: &[garden_room::topology::StoneView],
     ) -> Result<Offering, CommandError> {
         let fqn = offering.name.clone();
         if self.placed(&fqn).is_some() {
             return Err(CommandError::Conflict(format!(
                 "'{fqn}' is already incarnate here - replant restores the dead, not the doubled"
+            )));
+        }
+        // The law of names (ADR-0015): one FQN, one incarnation at a
+        // time. A name still sung by a LIVING peer is not dead yet —
+        // replant would double it. Best-effort over the room's cache:
+        // gossip is eventually-consistent, so silence is not proof, but
+        // a heard name is proof enough to refuse.
+        if let Some(holder) = name_holder_in(room, &fqn) {
+            return Err(CommandError::Conflict(format!(
+                "'{fqn}' still grows at {holder} - replant restores the dead; let the death be proven first"
             )));
         }
         // The Incarnation law, on the entity (ADR-0015): paths and
@@ -665,18 +676,89 @@ impl OfferingService {
     }
 }
 
+/// Who (still) sings this offering's name, as the room's cache hears
+/// it. Self never appears: the caller checked its own registry first.
+fn name_holder_in(
+    room: &[garden_room::topology::StoneView],
+    fqn: &str,
+) -> Option<String> {
+    for peer in room {
+        let Some(services) = &peer.body.inventory.services else { continue };
+        if services.items.iter().any(|s| s.name == fqn) {
+            return Some(peer.body.stone.name.clone());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     // R4.1: unwrap/expect sanctioned in tests.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::garden::manifest::Catalog;
-
-
     use crate::garden::registry::MemorySnapshotStore;
-    use crate::garden::runtime::{NullRuntime, Observed, Placement, PlacedRef, Runtime, RuntimeError, RuntimeRegistry};
+    use crate::garden::runtime::{
+        NullRuntime, Observed, Placement, PlacedRef, Runtime, RuntimeError, RuntimeRegistry,
+    };
 
-    const REDIS: &str = "\
+    #[test]
+    fn a_name_still_sung_by_a_living_peer_refuses_the_replant() {
+        use crate::room::topology::StoneView;
+        use garden_contract::chirp::{
+            Inventory, InventoryMap, Moss, Network, PeerAddress, Presence, Reception, ServiceEntry,
+            ServiceState, Stone,
+        };
+        let now = chrono::Utc::now();
+        let peer = StoneView {
+            body: garden_contract::chirp::ChirpFrame {
+                stone: Stone {
+                    id: "id-1".into(),
+                    name: "stone-peer".into(),
+                    moss: Moss { version: "0.1.0".into() },
+                    network: Network {
+                        address: PeerAddress {
+                            ip: "192.168.1.50".parse().unwrap(),
+                            port: 7285,
+                            tls_port: None,
+                        },
+                        mac: None,
+                    },
+                },
+                presence: Presence {
+                    health: garden_glossary::health::THRIVING.into(),
+                    status: garden_glossary::presence::ONLINE.into(),
+                },
+                inventory: InventoryMap {
+                    services: Some(Inventory {
+                        rev: Some(1),
+                        total: None,
+                        items: vec![ServiceEntry {
+                            offering_id: "oid".into(),
+                            name: "ntfy::default".into(),
+                            stem: "ntfy".into(),
+                            category: "communication".into(),
+                            state: ServiceState { status: "running".into(), role: None, mode: None },
+                            ports: Default::default(),
+                            capabilities: Default::default(),
+                        }],
+                    }),
+                    ..Default::default()
+                },
+                meta: Default::default(),
+                received: Reception { discovered_at: now, last_seen: now },
+            },
+            last_seen: now,
+            chirps: 1,
+        };
+        assert_eq!(
+            name_holder_in(&[peer], "ntfy::default").as_deref(),
+            Some("stone-peer")
+        );
+        assert_eq!(name_holder_in(&[], "ntfy::default"), None);
+    }
+
+const REDIS: &str = "\
 kind: software
 name: redis
 category: data

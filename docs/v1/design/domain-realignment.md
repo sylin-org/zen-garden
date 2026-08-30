@@ -56,11 +56,24 @@ directly anymore.
 6. **journal spine** (partially): journal.rs exists (typed, persisted,
    replay) and the offering chains now carry run fates; absorbing
    RunInfo map / JobTracker / pulse bus into it remains.
-7. **room/** absorption of kernel + source.rs remains (farewell is
-   already atomic; streams end on the token).
-8. **Named, open**: ensure is a room-level wish (W16: it can halt at a
-   bystander); cross-stone FQN uniqueness is unwritten law; the wall
-   should render the goodbye datagram.
+7. **DONE — the room context is named and owned**: the wire plane is
+   the `garden-room` crate (ingress, dispatch, announce, topology,
+   responder, probe, pipeline, config); moss holds the room facade and
+   the stone's voice (room/voice.rs). Farewell atomic; streams end on
+   the token.
+8. **DONE — the wish is room-level**: ensure walks every answering
+   stone's own view before planting; a bystander can no longer silence
+   the wish.
+9. **DONE — the law of names**: replant refuses a name still sung by a
+   living peer (best-effort over the room cache — gossip is eventual;
+   a heard name is proof enough to refuse).
+10. **DONE — the wall never haunts**: feed loss renders the strip as
+    "last known", dimmed.
+11. **Settled by decision**: jobs.rs IS the Job aggregate's durable
+    store (per-job documents, boot reconciliation) — complementary to
+    the stone's fact stream, not a duplicate; the per-offering
+    events.jsonl is the aggregate's own chain and rides the checkpoint.
+    Both stay. Optional, low-value: merging glossary into contract.
 
 ## Named debts riding along
 

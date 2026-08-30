@@ -979,7 +979,7 @@ async fn replant_offer(
         })?;
     let offering = state
         .garden
-        .replant(record.into_domain(), &final_hash)
+        .replant(record.into_domain(), &final_hash, &state.topology.snapshot())
         .await?;
     tracing::info!(offering = %fqn, from = %checkpoint.display(), files = count, "replanted");
     Ok(Json(

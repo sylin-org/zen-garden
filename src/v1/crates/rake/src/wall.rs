@@ -542,9 +542,13 @@ pub fn render_frame(state: &WallState, r: &Regions, now: Instant, style: Style) 
         }
     }
 
-    // The garden strip: one line per stone, expired dimmed.
+    // The garden strip: one line per stone, expired dimmed. When the
+    // feed is down, the strip is a LAST KNOWN view — say so on every
+    // row, so a departed stone never haunts the wall as thriving (W15).
     if r.garden > 0 && r.height > out.len() + r.footer {
-        out.push(fit(&separator(Some("the garden"), w, style), w));
+        let feed_down = state.connection != Connection::Connected;
+        let title = if feed_down { "the garden · last known" } else { "the garden" };
+        out.push(fit(&separator(Some(title), w, style), w));
         let garden_rows = r
             .garden
             .min(r.height - out.len() - r.footer)
@@ -553,8 +557,12 @@ pub fn render_frame(state: &WallState, r: &Regions, now: Instant, style: Style) 
             let name = stone["stone"]["name"].as_str().unwrap_or("?");
             let health = stone["presence"]["health"].as_str().unwrap_or("?");
             let expired = stone.get("expired").and_then(|e| e.as_bool()).unwrap_or(false);
-            let line = format!("{name:<22} {health}");
-            out.push(if expired {
+            let line = if feed_down {
+                format!("{name:<22} last known {health}")
+            } else {
+                format!("{name:<22} {health}")
+            };
+            out.push(if expired || feed_down {
                 fit(&paint_color(style.color, DIM, &line), w)
             } else {
                 fit(&line, w)

@@ -108,10 +108,15 @@ impl CapturePolicy {
                 // Hooks are optional: flat-file services have no
                 // application lock to take (D15's corpus taught this) -
                 // copy-freely is an honest will. But a release without a
-                // lock is fiction, so resume demands quiesce.
+                // lock is fiction, so the pair stands or falls together.
                 if self.quiesce.is_none() && self.resume.is_some() {
                     return Err(fail(
                         "resume without quiesce releases a lock that was never taken",
+                    ));
+                }
+                if self.quiesce.is_some() && self.resume.is_none() {
+                    return Err(fail(
+                        "quiesce without resume strands the lock — declare both hooks or neither",
                     ));
                 }
                 if self.export.is_some() {
@@ -254,6 +259,17 @@ capture:
         ))
         .unwrap_err();
         assert!(err.contains("never taken"), "{err}");
+
+        // quiesce without resume: a lock taken and never released.
+        let err = Catalog::parse("witnessdb", &format!(
+            "{BASE}
+capture:
+  mode: lock-and-copy
+  quiesce: {{exec: [\"db\", \"lock\"]}}
+"
+        ))
+        .unwrap_err();
+        assert!(err.contains("strands the lock"), "{err}");
 
         // Copy-freely (no hooks) is an HONEST lock-and-copy will - the
         // flat-file corpus taught this (D15).

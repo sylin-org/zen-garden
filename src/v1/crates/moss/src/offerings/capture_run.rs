@@ -97,7 +97,8 @@ pub struct RunInfo {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<String>,
-    /// Where the checkpoint landed (local ledger always; sinks when mounted).
+    /// Where the checkpoint landed (local ledger always; sinks — local
+    /// mounted banks, then the room's heard sinks through their holder).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ferried_to: Option<Vec<String>>,
 }
@@ -123,6 +124,10 @@ pub struct Runner {
     checkpoints_root: PathBuf,
     storage: Arc<Storage>,
     hooks: Arc<dyn HookRunner>,
+    /// The room's ears: lets the ferry reach sink banks this stone does
+    /// not hold (ADR-0005 §4's tier-1 sink, wherever the operator plugged
+    /// it). None where only the local lane is exercised.
+    topology: Option<Arc<garden_kernel::topology::Topology>>,
     runs: parking_lot::Mutex<HashMap<String, RunInfo>>,
 }
 
@@ -133,8 +138,16 @@ impl Runner {
             checkpoints_root: checkpoints_root(),
             storage,
             hooks,
+            topology: None,
             runs: parking_lot::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Give the ferry the room: remote sink banks, heard through the
+    /// chirp, are reached through their holder's file face.
+    pub fn with_topology(mut self, topology: Arc<garden_kernel::topology::Topology>) -> Self {
+        self.topology = Some(topology);
+        self
     }
 
     /// Explicit roots — deployment overrides (tests, until the scheduler
@@ -365,7 +378,7 @@ impl Runner {
         let checkpoint = self.pack(fqn, workload, workspace, run_id)?;
         info.phase = "ferry".into();
         self.record(info.clone());
-        let ferried = self.ferry(fqn, &checkpoint);
+        let ferried = self.ferry(fqn, &checkpoint).await;
         info.ferried_to = Some(ferried);
         self.rotate(&self.checkpoints_root.join(super::directory::slug(fqn)));
         Ok(checkpoint)
@@ -384,11 +397,20 @@ impl Runner {
         match policy.mode {
             CaptureMode::Stateless => Ok(()), // signature only; Phase B carries it
             CaptureMode::LockAndCopy => {
-                let (Some(quiesce), Some(resume)) = (&policy.quiesce, &policy.resume) else {
-                    return Err("lock-and-copy requires quiesce and resume hooks".into());
-                };
                 let container = &workload.container;
-                if workload.running {
+                // The lock is optional by validated policy: flat-file
+                // services have no application lock to take (D15) — a
+                // hookless will copies freely, still inside the budget.
+                let lock = match (&policy.quiesce, &policy.resume) {
+                    (Some(q), Some(r)) => Some((q, r)),
+                    (None, None) => None,
+                    _ => {
+                        return Err(
+                            "lock-and-copy requires quiesce and resume hooks together".into()
+                        )
+                    }
+                };
+                if let (Some((quiesce, _)), true) = (lock.as_ref(), workload.running) {
                     self.hooks
                         .exec(container, &quiesce.exec, Duration::from_secs(quiesce.timeout_s))
                         .await
@@ -408,7 +430,7 @@ impl Runner {
                 let budget = Duration::from_secs(policy.max_locked_s);
                 let imprint = tokio::time::timeout(budget, imprint).await;
                 // Resume is finally-style: executed whenever the lock was taken.
-                if workload.running {
+                if let (Some((_, resume)), true) = (lock.as_ref(), workload.running) {
                     self.hooks
                         .exec(container, &resume.exec, Duration::from_secs(resume.timeout_s))
                         .await
@@ -416,12 +438,12 @@ impl Runner {
                 }
                 match imprint {
                     Ok(Ok(())) => {
-                        tracing::info!(offering = run_id, locked_ms = started.elapsed().as_millis() as u64, "imprint complete inside the lock budget");
+                        tracing::info!(offering = run_id, imprint_ms = started.elapsed().as_millis() as u64, "imprint complete inside the budget");
                         Ok(())
                     }
                     Ok(Err(e)) => Err(e),
                     Err(_) => Err(format!(
-                        "imprint exceeded max_locked_s ({}s): aborted loudly, resume executed, nothing committed",
+                        "imprint exceeded max_locked_s ({}s): aborted loudly, nothing committed",
                         policy.max_locked_s
                     )),
                 }
@@ -545,7 +567,7 @@ impl Runner {
     /// Copy the committed checkpoint to every mounted sink bank (§4):
     /// best-effort per sink — a sink that fails is loud, not fatal; the
     /// local ledger already holds the truth.
-    fn ferry(&self, fqn: &str, checkpoint: &Path) -> Vec<String> {
+    async fn ferry(&self, fqn: &str, checkpoint: &Path) -> Vec<String> {
         let mut reached = Vec::new();
         for bank in self.storage.banks() {
             if !bank.roles.iter().any(|r| r == garden_glossary::bank::role::SINK) {
@@ -561,6 +583,20 @@ impl Runner {
                 reached.push(bank.fqn.clone());
             } else {
                 tracing::warn!(sink = %bank.fqn, "ferry failed; sink stays loud in posture");
+            }
+        }
+        // The room's sinks: heard through the chirp (ADR-0005 §8), reached
+        // through the holder's file face — a write that binds at the sink's
+        // authority. The checkpoint survives this stone because it lives
+        // on another one.
+        if let Some(topology) = &self.topology {
+            for (bank_fqn, base) in remote_sinks(&topology.snapshot(), &reached) {
+                match ferry_via_http(fqn, checkpoint, &base, &bank_fqn).await {
+                    Ok(()) => reached.push(bank_fqn),
+                    Err(e) => {
+                        tracing::warn!(sink = %bank_fqn, error = %e, "ferry failed; sink stays loud in posture")
+                    }
+                }
             }
         }
         reached
@@ -606,6 +642,99 @@ pub fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(dst.parent().unwrap_or(Path::new(".")))?;
         std::fs::copy(src, dst)?;
     }
+    Ok(())
+}
+
+/// A per-PUT budget, generous but real (§2's Phase B is unbounded as a
+/// whole; the wire is not).
+const FERRY_HTTP_TIMEOUT_SECS: u64 = 300;
+
+/// Sinks the room hears about but `skip` (the locally reached) does not:
+/// (bank fqn, holder's http base). Only mounted sink banks count — a
+/// plugged-but-unclaimed drive is nobody's backup (ADR-0005 §4, §8).
+fn remote_sinks(snapshot: &[garden_kernel::topology::StoneView], skip: &[String]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for peer in snapshot {
+        let Some(banks) = &peer.body.inventory.banks else {
+            continue; // the stone says nothing about banks
+        };
+        for bank in &banks.items {
+            if !bank.roles.iter().any(|r| r == garden_glossary::bank::role::SINK) {
+                continue;
+            }
+            if bank.state != garden_glossary::bank::MOUNTED {
+                continue;
+            }
+            if skip.iter().any(|s| s == &bank.fqn) {
+                continue;
+            }
+            let address = &peer.body.stone.network.address;
+            out.push((bank.fqn.clone(), format!("http://{}:{}", address.ip, address.port)));
+        }
+    }
+    out
+}
+
+/// Copy one committed checkpoint dir onto a remote sink through the
+/// holder's storage-file face (PUT creates parent directories — the
+/// face that makes a sink a real storage destination). The archive
+/// lands first, `manifest.json` LAST: on dumb storage the manifest is
+/// the commit marker — §3's atomic rename, hand-carried across the wire.
+async fn ferry_via_http(fqn: &str, checkpoint: &Path, base: &str, bank_fqn: &str) -> Result<(), String> {
+    let run = checkpoint
+        .file_name()
+        .ok_or_else(|| "checkpoint dir has no name".to_string())?
+        .to_string_lossy()
+        .into_owned();
+    let mut files = Vec::new();
+    collect_files(checkpoint, checkpoint, &mut files)?;
+    if files.is_empty() {
+        return Err("checkpoint dir is empty; nothing to ferry".into());
+    }
+    // manifest.json last — everything else first.
+    files.sort_by_key(|(_, rel)| (rel == "manifest.json", rel.clone()));
+    let prefix = format!(
+        "{base}/api/v1/storage/{bank_fqn}/files/{SINK_CHECKPOINT_DIR}/{}/{run}",
+        super::directory::slug(fqn)
+    );
+    for (abs, rel) in files {
+        let body = std::fs::read(&abs).map_err(|e| format!("read {rel}: {e}"))?;
+        let uri = format!("{prefix}/{rel}");
+        http_put_bytes(&uri, body.into())
+            .await
+            .map_err(|e| format!("{rel}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// PUT raw bytes at one URL. The same wire law as the room's own faces:
+/// the sink answers or the ferry says so — silence is never success.
+async fn http_put_bytes(uri: &str, body: bytes::Bytes) -> Result<(), String> {
+    use hyper_util::client::legacy::connect::HttpConnector;
+    use hyper_util::client::legacy::Client;
+    use hyper_util::rt::TokioExecutor;
+    let client: Client<HttpConnector, http_body_util::Full<bytes::Bytes>> =
+        Client::builder(TokioExecutor::new()).build_http();
+    let uri: hyper::Uri = uri.parse().map_err(|e| format!("bad sink uri: {e}"))?;
+    let request = hyper::Request::builder()
+        .method(hyper::Method::PUT)
+        .uri(uri)
+        .header("content-type", "application/octet-stream")
+        .body(http_body_util::Full::new(body))
+        .map_err(|e| format!("build request: {e}"))?;
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(FERRY_HTTP_TIMEOUT_SECS),
+        client.request(request),
+    )
+    .await
+    .map_err(|_| format!("exceeded its {FERRY_HTTP_TIMEOUT_SECS}s budget"))?
+    .map_err(|e| format!("{e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("sink answered http {}", response.status().as_u16()));
+    }
+    http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .map_err(|e| format!("read sink answer: {e}"))?;
     Ok(())
 }
 
@@ -1274,6 +1403,140 @@ capture:
             .join("db__default")
             .join(checkpoint.file_name().unwrap());
         assert!(ferried.join("manifest.json").is_file(), "the sink holds the will");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The room's heard banks: only a MOUNTED sink held elsewhere is a
+    /// remote ferry target; local hits and silent stones never double up.
+    #[test]
+    fn remote_sinks_picks_mounted_sink_banks_the_room_hears() {
+        use garden_contract::chirp::{
+            BankEntry, ChirpFrame, Inventory, Moss, Network, PeerAddress, Presence, Reception,
+            Stone,
+        };
+        use garden_kernel::topology::StoneView;
+
+        fn peer(id: &str, ip: [u8; 4], banks: Option<Inventory<BankEntry>>) -> StoneView {
+            let now = chrono::Utc::now();
+            StoneView {
+                body: ChirpFrame {
+                    stone: Stone {
+                        id: id.into(),
+                        name: format!("stone-{id}"),
+                        moss: Moss { version: "0.1.0".into() },
+                        network: Network {
+                            address: PeerAddress {
+                                ip: std::net::IpAddr::V4(std::net::Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3])),
+                                port: 7285,
+                                tls_port: None,
+                            },
+                            mac: None,
+                        },
+                    },
+                    presence: Presence {
+                        health: garden_glossary::health::THRIVING.into(),
+                        status: garden_glossary::presence::ONLINE.into(),
+                    },
+                    inventory: garden_contract::chirp::InventoryMap { banks, ..Default::default() },
+                    meta: Default::default(),
+                    received: Reception { discovered_at: now, last_seen: now },
+                },
+                last_seen: now,
+                chirps: 1,
+            }
+        }
+
+        fn bank(fqn: &str, state: &str, roles: &[&str]) -> BankEntry {
+            BankEntry {
+                fqn: fqn.into(),
+                device_id: "dev-1".into(),
+                state: state.into(),
+                roles: roles.iter().map(|s| s.to_string()).collect(),
+                capacity_bytes: Some(1),
+                used_bytes: Some(0),
+            }
+        }
+
+        let snapshot = vec![
+            peer("195", [192, 168, 1, 195], Some(Inventory {
+                rev: Some(1),
+                total: None,
+                items: vec![
+                    bank("seed-vault::default", garden_glossary::bank::MOUNTED, &["sink"]),
+                    bank("cold-storage::nas", garden_glossary::bank::MOUNTED, &[]),
+                    bank("unplugged::usb", "ejected", &["sink"]),
+                ],
+            })),
+            peer("82", [192, 168, 1, 82], None),
+        ];
+
+        let targets = remote_sinks(&snapshot, &[]);
+        assert_eq!(targets.len(), 1, "only the mounted sink counts: {targets:?}");
+        assert_eq!(targets[0].0, "seed-vault::default");
+        assert_eq!(targets[0].1, "http://192.168.1.195:7285");
+
+        let again = remote_sinks(&snapshot, &["seed-vault::default".into()]);
+        assert!(again.is_empty(), "a bank reached locally is not ferried twice");
+    }
+
+    /// The remote lane writes through the holder's file face: the
+    /// archive lands, and manifest.json lands LAST — on dumb storage
+    /// the manifest is the commit marker.
+    #[tokio::test]
+    async fn ferry_rides_the_holders_file_face() {
+        use std::sync::Mutex;
+
+        #[derive(Clone)]
+        struct Sink(Arc<Mutex<Vec<(String, Vec<u8>)>>>);
+        async fn put_file(
+            axum::extract::Path((fqn, path)): axum::extract::Path<(String, String)>,
+            axum::extract::State(sink): axum::extract::State<Sink>,
+            body: axum::body::Bytes,
+        ) -> axum::http::StatusCode {
+            sink.0.lock().unwrap().push((format!("/api/v1/storage/{fqn}/files/{path}"), body.to_vec()));
+            axum::http::StatusCode::OK
+        }
+
+        let received: Arc<Mutex<Vec<(String, Vec<u8>)>>> = Arc::default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new()
+            .route("/api/v1/storage/{fqn}/files/{*path}", axum::routing::put(put_file))
+            .with_state(Sink(Arc::clone(&received)));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        // A committed checkpoint: archive + manifest.
+        let tmp = std::env::temp_dir().join(format!("zg-ferry-{}", uuid::Uuid::now_v7()));
+        let run_dir = tmp.join("ntfy__default").join("run-1");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(run_dir.join("checkpoint.tar.zst"), b"archive-bytes").unwrap();
+        std::fs::write(run_dir.join("manifest.json"), b"{}").unwrap();
+
+        ferry_via_http(
+            "ntfy::default",
+            &run_dir,
+            &format!("http://{addr}"),
+            "seed-vault::default",
+        )
+        .await
+        .unwrap();
+
+        let took = received.lock().unwrap();
+        assert_eq!(took.len(), 2, "both files crossed: {took:?}");
+        for (path, body) in took.iter() {
+            assert!(
+                path.starts_with("/api/v1/storage/seed-vault::default/files/zen-garden/checkpoints/ntfy__default/run-1/"),
+                "the checkpoint rides the sink dir: {path}"
+            );
+            if path.ends_with("checkpoint.tar.zst") {
+                assert_eq!(body, b"archive-bytes", "bytes intact");
+            }
+        }
+        assert!(
+            took.last().unwrap().0.ends_with("manifest.json"),
+            "the manifest commits LAST: {:?}",
+            took.iter().map(|(p, _)| p).collect::<Vec<_>>()
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

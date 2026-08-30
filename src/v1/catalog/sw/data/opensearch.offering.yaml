@@ -51,10 +51,9 @@ compatibility:
     because: "OpenSearch performs best with 4GB+ RAM (2GB heap + filesystem cache)"
     suggest: "Consider increasing RAM for production workloads"
 
-# living will: flush before the imprint window; the flushed state
-# is consistent under no-writes.
+# living will: flat-file-under-the-hood Lucene state, no application
+# lock to take — the imprint copies freely within its window (a flush
+# is advisory hygiene, not a lock, so it declares no hooks).
 capture:
   mode: lock-and-copy
-  quiesce:
-    exec: [curl, -fsS, -XPOST, http://localhost:9200/_flush]
   max_locked_s: 120

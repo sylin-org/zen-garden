@@ -105,3 +105,19 @@ directly anymore.
 - Wall renders feed-loss, not the goodbye datagram (rake-wall).
 - Gossip: a booting stone whose rich answers are lost stays inventory-
   blind until a peer sings (law 6 fixes by re-assertion).
+
+## Postscript — the tidy (same day)
+
+- `rake/main.rs` (3,089 lines) split: `paths.rs` (the URL vocabulary),
+  `render.rs` (pure answer renderers), main keeps the CLI, cascade,
+  and verbs.
+- `moss/http.rs` (2,437 lines) split by context: `http/room.rs`,
+  `http/storage.rs`, `http/offerings.rs`; mod.rs keeps the AppState,
+  the Face table wiring, and shared projections.
+- Hygiene: the audit chain's kind vocabulary named once
+  (`events::audit_kind`); the job-kind vocabulary named once
+  (`jobs::kind`); the journal stream file named in `journal.rs`
+  (`DIR_NAME`/`STONE_FILE`); the default category named in the
+  catalog (`manifest::DEFAULT_CATEGORY`); rake's raw URL literals
+  deleted in favor of `paths`.
+- Nothing moves on the wire; the whole suite stays green (207 tests).

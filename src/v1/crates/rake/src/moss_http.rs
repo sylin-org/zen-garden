@@ -79,7 +79,7 @@ pub async fn request_json(
 
 /// Status + body bytes → JSON answer or honest `AttachError`. The one
 /// interpretation shared by the JSON and raw transports.
-fn json_from_parts(status: u16, body: &[u8]) -> Result<serde_json::Value, AttachError> {
+pub(crate) fn json_from_parts(status: u16, body: &[u8]) -> Result<serde_json::Value, AttachError> {
     if status != 200 {
         return Err(AttachError::ResponseError(
             status,

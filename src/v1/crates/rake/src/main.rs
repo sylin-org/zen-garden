@@ -695,6 +695,47 @@ impl Cli {
         }
         Ok((cand, status, bytes))
     }
+
+    /// The living-will verbs' front door: an offering grows on ONE stone.
+    /// When the attached moss answers not-here (the garden's only true
+    /// redirect), this follows the `knows_at` way ONCE and re-binds there
+    /// (1:1 with [`Cli::bank_bytes`]). The home stone's answer is final:
+    /// a redirect loop is refused, never chased.
+    async fn offering_op(
+        &self,
+        method: &'static str,
+        path: String,
+        body: Option<&serde_json::Value>,
+    ) -> Result<(Candidate, serde_json::Value), String> {
+        let payload = body
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(|e| format!("request body would not serialize: {e}"))?;
+        let (cand, status, bytes) = self
+            .stone_bytes(method, path.clone(), "application/json", payload.clone())
+            .await?;
+        let (status, bytes) = match not_here_home(status, &bytes) {
+            Some(home) => {
+                eprintln!("rake: the offering grows elsewhere - asking {home}");
+                let (status, bytes) =
+                    reissue_at_home(method, &home, &path, "application/json", payload.as_deref())
+                        .await?;
+                if status != 200 {
+                    LAST_REFUSAL.store(status, std::sync::atomic::Ordering::Relaxed);
+                }
+                (status, bytes)
+            }
+            None => {
+                if status != 200 {
+                    LAST_REFUSAL.store(status, std::sync::atomic::Ordering::Relaxed);
+                }
+                (status, bytes)
+            }
+        };
+        let value =
+            moss_http::json_from_parts(status, &bytes).map_err(|e| e.to_string())?;
+        Ok((cand, value))
+    }
 }
 
 /// The garden's only true redirect, recognized: a 404 whose body says
@@ -2135,9 +2176,11 @@ async fn cmd_stone_op(cli: &Cli) -> Result<Answer, String> {
         Command::Capture { name, last } => {
             let name = name.clone();
             if *last {
-                let (_, v) = cli.stone_op("GET", paths::capture_last(&name), None).await?;
+                let (_, v) = cli.offering_op("GET", paths::capture_last(&name), None).await?;
                 return Ok(Answer::new(v).human(move |v| {
-                    let run = envelope_plain(v)?;
+                    // The face answers {data:{run:{...}}} — one envelope
+                    // peeled here, the run object below it.
+                    let run = envelope_plain(v)?["run"].clone();
                     println!(
                         "{} — last capture: {} ({}){}",
                         display_name(&name),
@@ -2160,7 +2203,7 @@ async fn cmd_stone_op(cli: &Cli) -> Result<Answer, String> {
                     Ok(())
                 }))
             }
-            let (_, v) = cli.stone_op("POST", paths::capture(&name), None).await?;
+            let (_, v) = cli.offering_op("POST", paths::capture(&name), None).await?;
             Ok(Answer::new(v).human(move |v| {
                 let run = envelope(v, "run")?;
                 println!(
@@ -2178,7 +2221,7 @@ async fn cmd_stone_op(cli: &Cli) -> Result<Answer, String> {
                 body.insert("run".into(), serde_json::json!(r));
             }
             let (_, v) = cli
-                .stone_op(
+                .offering_op(
                     "POST",
                     paths::replant(name),
                     Some(&serde_json::Value::Object(body)),

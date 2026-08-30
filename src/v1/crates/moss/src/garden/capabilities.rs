@@ -462,7 +462,7 @@ capabilities:
     }
 
     #[async_trait::async_trait]
-    impl crate::garden::will::saga::HookRunner for ScriptedHooks {
+    impl crate::garden::runtime::HookRunner for ScriptedHooks {
         async fn exec(
             &self,
             _container: &str,
@@ -478,7 +478,7 @@ success".into())
             &self,
             _container: &str,
             argv: &[String],
-        ) -> Result<crate::garden::will::saga::ExecLines, String> {
+        ) -> Result<crate::garden::runtime::ExecLines, String> {
             self.calls.lock().push(argv.to_vec());
             let item = argv.last().cloned().unwrap_or_default();
             let lines: Vec<String> = vec![

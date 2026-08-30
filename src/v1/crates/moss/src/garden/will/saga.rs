@@ -7,8 +7,8 @@
 use super::checkpoint;
 use super::checkpoint::SINK_CHECKPOINT_DIR;
 use super::policy::{CaptureMode, CapturePolicy};
-pub use crate::garden::runtime::{ExecLines, HookRunner, NullHooks};
 use super::run::{Phase, Run, RunInfo};
+use crate::garden::runtime::{ExecLines, HookRunner, NullHooks};
 use crate::garden::storage::Storage;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

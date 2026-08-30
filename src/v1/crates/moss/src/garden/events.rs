@@ -190,3 +190,41 @@ impl EventLog {
         journal.append(fact);
     }
 }
+
+#[cfg(test)]
+mod bridge_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::journal::{Journal, Kind};
+
+    #[test]
+    fn chain_kinds_translate_into_typed_facts() {
+        let journal = Journal::memory();
+        let mut rx = journal.subscribe();
+        let log = EventLog { file: std::env::temp_dir().join("unused-events.jsonl") };
+
+        log.tail_kind_of(
+            "Placed",
+            "ntfy::default",
+            &serde_json::json!({ "world": "docker" }),
+            &journal,
+        );
+        log.tail_kind_of(
+            "Replanted",
+            "ntfy::default",
+            &serde_json::json!({ "predecessor_offering_id": "oid-1" }),
+            &journal,
+        );
+        // Chain-local history (no journal fact) is skipped silently.
+        log.tail_kind_of("Resurrected", "ntfy::default", &serde_json::json!({}), &journal);
+
+        let a = rx.try_recv().unwrap();
+        let b = rx.try_recv().unwrap();
+        assert_eq!(a.kind, Kind::OfferingPlanted { fqn: "ntfy::default".into() });
+        assert_eq!(
+            b.kind,
+            Kind::OfferingReplanted { fqn: "ntfy::default".into(), predecessor: "oid-1".into() }
+        );
+        assert!(rx.try_recv().is_err(), "chain-local kinds stay off the stream");
+    }
+}

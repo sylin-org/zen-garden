@@ -64,7 +64,7 @@ pub struct OfferingService {
     pub(crate) pool: Pool,
     /// The exec seam for read-only in-container reads (the capability
     /// sweep's list channel). None where no world can run hooks.
-    hooks: Option<Arc<dyn super::will::saga::HookRunner>>,
+    hooks: Option<Arc<dyn super::runtime::HookRunner>>,
     /// Per-offering convergence failure counters (converge.rs drives them).
     failures: Arc<parking_lot::Mutex<HashMap<String, u32>>>,
     /// The stone's fact stream: every lifecycle audit lands here typed,
@@ -82,7 +82,7 @@ impl OfferingService {
         facts: Arc<Factsheet>,
         dirs_root: OfferingsRoot,
         pool: Pool,
-        hooks: Option<Arc<dyn super::will::saga::HookRunner>>,
+        hooks: Option<Arc<dyn super::runtime::HookRunner>>,
     ) -> Self {
         Self {
             registry,
@@ -100,7 +100,7 @@ impl OfferingService {
 
     /// The exec seam, when this stone has a world that can run in-
     /// container reads.
-    pub fn hooks(&self) -> Option<Arc<dyn super::will::saga::HookRunner>> {
+    pub fn hooks(&self) -> Option<Arc<dyn super::runtime::HookRunner>> {
         self.hooks.clone()
     }
 
@@ -342,11 +342,7 @@ impl OfferingService {
         self.registry.get_by_name(&fqn)
     }
 
-    /// Follow an offering's logs through its bound world. `None` when
-    /// the offering is not placed here or its world cannot stream logs
-    /// (the null world opts out at its own seam).
-    /// The nourish check (J3): refresh the offering's image reference and
-    /// say whether the container would now run something different.
+    /// The nourish check (J3): would the tag now run something different?
     pub async fn update_check(
         &self,
         name: &str,
@@ -354,66 +350,41 @@ impl OfferingService {
         let offering = self.placed(name).ok_or_else(|| {
             CommandError::NotFound(format!("no offering '{name}' is planted here"))
         })?;
-        let managed = offering
-            .managed()
-            .ok_or_else(|| CommandError::Conflict(format!("'{}' is not managed - updates are for garden-placed work", offering.name)))?;
-        let world = self.world_for(&offering)?;
-        match world.refresh_image(&managed.spec.image).await {
-            Some(Ok(r)) => Ok(r),
-            Some(Err(e)) => Err(CommandError::Runtime(e)),
-            None => Err(CommandError::WorldUnavailable(format!(
+        let rt = self.world_for(&offering)?;
+        match offering.nourish_check(rt.as_ref()).await {
+            Ok(Some(refresh)) => Ok(refresh),
+            Ok(None) => Err(CommandError::WorldUnavailable(format!(
                 "'{}' grows in a world that cannot check updates",
                 offering.name
             ))),
+            Err(e) => Err(CommandError::Conflict(e)),
         }
     }
 
-    /// The nourish apply (J3): pull the newer image, rebuild the
-    /// container from the stored spec (volumes persist — data never
-    /// moves), and if the new container will not run, revert to the
-    /// pre-pull image ID. Never the watchtower story: nothing applies
-    /// unless this face is asked.
+    /// The nourish apply (J3): pull the newer image, rebuild from the
+    /// stored spec, revert if the new container will not run.
     pub async fn update_offering(
         &self,
         name: &str,
     ) -> Result<super::runtime::ImageRefresh, CommandError> {
-        let offering = self.placed(name).ok_or_else(|| {
+        let mut offering = self.placed(name).ok_or_else(|| {
             CommandError::NotFound(format!("no offering '{name}' is planted here"))
         })?;
-        let managed = offering
-            .managed()
-            .ok_or_else(|| CommandError::Conflict(format!("'{}' is not managed - updates are for garden-placed work", offering.name)))?;
-        let world = self.world_for(&offering)?;
-        let Some(Ok(refresh)) = world.refresh_image(&managed.spec.image).await else {
-            return Err(CommandError::WorldUnavailable(format!(
-                "'{}' grows in a world that cannot check updates",
-                offering.name
-            )));
-        };
-        if !refresh.changed {
-            return Ok(refresh); // already the newest: nothing to do
-        }
-        // Rebuild from the stored spec: remove the container (the image
-        // tag now resolves to the NEW id), place again, demand running.
-        world
-            .remove(name)
+        let rt = self.world_for(&offering)?;
+        let outcome = offering
+            .nourish_apply(rt.as_ref())
             .await
-            .map_err(CommandError::Runtime)?;
-        match world.place(name, &managed.spec).await {
-            Ok(_) => Ok(refresh),
-            Err(_) => {
-                // The new image will not run: revert to the pre-pull ID.
-                let mut reverted = managed.spec.clone();
-                reverted.image = refresh.id.clone();
-                world
-                    .place(name, &reverted)
-                    .await
-                    .map_err(CommandError::Runtime)?;
-                Err(CommandError::Runtime(RuntimeError::Failed(format!(
-                    "update placed but failed to run; reverted to the pre-pull image ({})",
-                    refresh.id
-                ))))
+            .map_err(CommandError::Conflict)?;
+        match outcome {
+            Ok(refresh) => {
+                if refresh.changed {
+                    self.audit(&offering.name, "Nourished", serde_json::json!({
+                        "image": refresh.id,
+                    }));
+                }
+                Ok(refresh)
             }
+            Err(msg) => Err(CommandError::Runtime(super::runtime::RuntimeError::Failed(msg))),
         }
     }
 

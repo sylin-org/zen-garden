@@ -408,7 +408,66 @@ impl Offering {
             .map_err(|e| format!("uproot: {e}"))
     }
 
-    /// The verb gate: rest/wake/uproot apply to managed work only.
+    /// NOURISH CHECK (J3): would the tag now run something different?
+    /// `None` when this world cannot ask the registry anything.
+    pub async fn nourish_check(
+        &self,
+        rt: &dyn super::runtime::Runtime,
+    ) -> Result<Option<super::runtime::ImageRefresh>, String> {
+        let managed = self.require_managed("nourish")?;
+        match rt.refresh_image(&managed.spec.image).await {
+            Some(Ok(r)) => Ok(Some(r)),
+            Some(Err(e)) => Err(format!("registry check failed: {e}")),
+            None => Ok(None),
+        }
+    }
+
+    /// NOURISH APPLY (J3): pull the newer image, rebuild the container
+    /// from the stored spec (volumes persist — data never moves), and if
+    /// the new container will not run, revert to the pre-pull image.
+    /// Never the watchtower story: nothing applies unless asked.
+    /// The outer result is the orchestration; the inner one says whether
+    /// the update landed (an Err names the revert that saved the stone).
+    pub async fn nourish_apply(
+        &mut self,
+        rt: &dyn super::runtime::Runtime,
+    ) -> Result<Result<super::runtime::ImageRefresh, String>, String> {
+        let spec = {
+            let managed = self.require_managed("nourish")?;
+            if self.status != Status::Running {
+                return Err("nourish applies to running offerings".into());
+            }
+            managed.spec.clone()
+        };
+        let Some(Ok(refresh)) = rt.refresh_image(&spec.image).await else {
+            return Err("this world cannot check the registry for updates".into());
+        };
+        if !refresh.changed {
+            return Ok(Ok(refresh)); // already the newest: nothing to do
+        }
+        rt.remove(&self.name)
+            .await
+            .map_err(|e| format!("nourish remove: {e}"))?;
+        match rt.place(&self.name, &spec).await {
+            Ok(_) => Ok(Ok(refresh)),
+            Err(_) => {
+                // The new image will not run: revert to the pre-pull ID.
+                let mut reverted = spec.clone();
+                reverted.image = refresh.id.clone();
+                match rt.place(&self.name, &reverted).await {
+                    Ok(_) => Err(format!(
+                        "update placed but failed to run; reverted to the pre-pull image ({})",
+                        refresh.id
+                    )),
+                    Err(e) => Err(format!(
+                        "update failed AND the revert failed ({e}) — the stone needs a hand"
+                    )),
+                }
+            }
+        }
+    }
+
+    /// The verb gate: rest/wake/uproot/nourish apply to managed work only.
     fn require_managed(&self, verb: &str) -> Result<&ManagedData, String> {
         self.managed()
             .ok_or_else(|| format!("'{}' is not managed - {verb} applies to managed work", self.name))

@@ -17,6 +17,7 @@ pub mod saga;
 
 pub use policy::{readiness, CaptureMode, CapturePolicy, Readiness};
 pub use run::{Phase, Run, RunInfo};
-pub use saga::{run_scheduler, workload_for, HookRunner, NullHooks, Runner, Workload, CAPTURE_CADENCE_SECS};
+pub use crate::garden::runtime::{ExecLines, HookRunner, NullHooks};
+pub use saga::{run_scheduler, workload_for, Runner, Workload, CAPTURE_CADENCE_SECS};
 pub use checkpoint::VerifyReport;
 pub use checkpoint::{checkpoints_root, Checkpoint};

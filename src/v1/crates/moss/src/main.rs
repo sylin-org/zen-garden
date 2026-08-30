@@ -267,7 +267,7 @@ async fn main() {
 
     // The living will's runner (ADR-0005 §2): hooks via docker when it
     // answers; loud refusal where no world can run them (companion).
-    let hook_runner: Arc<dyn garden::will::HookRunner> =
+    let hook_runner: Arc<dyn garden::runtime::HookRunner> =
         match garden::docker::DockerRuntime::connect() {
             Ok(d) => Arc::new(d),
             Err(_) => Arc::new(garden::will::NullHooks),

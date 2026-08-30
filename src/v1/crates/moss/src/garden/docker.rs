@@ -602,7 +602,7 @@ impl Runtime for DockerRuntime {
 }
 
 #[async_trait::async_trait]
-impl super::will::saga::HookRunner for DockerRuntime {
+impl super::runtime::HookRunner for DockerRuntime {
     async fn exec(
         &self,
         container: &str,
@@ -659,7 +659,7 @@ impl super::will::saga::HookRunner for DockerRuntime {
         &self,
         container: &str,
         argv: &[String],
-    ) -> Result<super::will::saga::ExecLines, String> {
+    ) -> Result<super::runtime::ExecLines, String> {
         use bollard::exec::{CreateExecOptions, StartExecResults};
         let exec = self
             .docker

@@ -208,7 +208,7 @@ impl OfferingService {
         self.registry.register(offering.clone());
         self.audit(
             &fqn,
-            "Replanted",
+            super::events::audit_kind::REPLANTED,
             serde_json::json!({
                 "predecessor_offering_id": offering.offering_id,
                 "final_hash": final_hash,
@@ -378,7 +378,7 @@ impl OfferingService {
         match outcome {
             Ok(refresh) => {
                 if refresh.changed {
-                    self.audit(&offering.name, "Nourished", serde_json::json!({
+                    self.audit(&offering.name, super::events::audit_kind::NOURISHED, serde_json::json!({
                         "image": refresh.id,
                     }));
                 }
@@ -408,7 +408,7 @@ impl OfferingService {
         let rt = self.world_for(&offering)?;
         offering.rest(rt.as_ref()).await.map_err(CommandError::Conflict)?;
         self.registry.mark_status(&offering.offering_id, Status::Stopped);
-        self.audit(&offering.name, "Stopped", serde_json::json!({ "reason": "rest" }));
+        self.audit(&offering.name, super::events::audit_kind::STOPPED, serde_json::json!({ "reason": "rest" }));
         self.registry
             .get_by_name(&offering.name)
             .ok_or(CommandError::NotFound(offering.name))
@@ -422,8 +422,8 @@ impl OfferingService {
         let fqn = offering.name.clone();
         let outcome = offering.wake(rt.as_ref()).await.map_err(CommandError::Conflict)?;
         match outcome {
-            WakeOutcome::Resurrected => self.audit(&fqn, "Resurrected", serde_json::json!({})),
-            _ => self.audit(&fqn, "Started", serde_json::json!({})),
+            WakeOutcome::Resurrected => self.audit(&fqn, super::events::audit_kind::RESURRECTED, serde_json::json!({})),
+            _ => self.audit(&fqn, super::events::audit_kind::STARTED, serde_json::json!({})),
         }
         self.registry.mark_status(&offering.offering_id, Status::Running);
 
@@ -450,7 +450,7 @@ impl OfferingService {
         let rt = self.world_for(&offering)?;
         offering.uproot(rt.as_ref()).await.map_err(CommandError::Conflict)?;
         self.registry.remove(&offering.offering_id);
-        self.audit(&offering.name, "Uprooted", serde_json::json!({}));
+        self.audit(&offering.name, super::events::audit_kind::UPROOTED, serde_json::json!({}));
 
         // Forgetting the offering means forgetting its directory too.
         // Workloads write uid-0 files into their volumes; when the moss's

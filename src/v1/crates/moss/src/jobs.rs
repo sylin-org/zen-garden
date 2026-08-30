@@ -20,6 +20,16 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// The job-kind vocabulary: what a job is, spoken the same way by every
+/// surface that starts one.
+pub mod kind {
+    pub const CAPTURE: &str = "capture";
+    pub const INSTALL: &str = "install";
+    pub const REPLANT: &str = "replant";
+    pub const CAPABILITY_INSTALL: &str = "capability-install";
+    pub const NOURISH: &str = "nourish";
+}
+
 /// How far along a job is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

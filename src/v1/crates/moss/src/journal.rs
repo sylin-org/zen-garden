@@ -14,6 +14,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
+
+/// Where the stone's stream lives: a `journal/` directory beside the
+/// offerings, one `stone.jsonl` inside it.
+pub const DIR_NAME: &str = "journal";
+pub const STONE_FILE: &str = "stone.jsonl";
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;

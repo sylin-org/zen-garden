@@ -355,8 +355,8 @@ async fn main() {
     let stone_journal = {
         let p = dirs_root
             .parent()
-            .map(|p| p.join("journal").join("stone.jsonl"))
-            .unwrap_or_else(|| dirs_root.join("stone.jsonl"));
+            .map(|p| p.join(crate::journal::DIR_NAME).join(crate::journal::STONE_FILE))
+            .unwrap_or_else(|| dirs_root.join(crate::journal::STONE_FILE));
         match journal::Journal::open(p) {
             Ok(j) => Some(Arc::new(j)),
             Err(e) => {

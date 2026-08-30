@@ -170,7 +170,7 @@ impl<'a> Provenance<'a> {
         inputs: &BTreeMap<String, String>,
         jobs: Option<&JobTracker>,
     ) -> Result<(Offering, Option<String>), CommandError> {
-        let job = jobs.map(|j| j.start("install", name));
+        let job = jobs.map(|j| j.start(crate::jobs::kind::INSTALL, name));
         let say = |jobs: Option<&JobTracker>, job: &Option<String>, line: String| {
             if let (Some(j), Some(id)) = (jobs, job) {
                 j.progress(id, line);
@@ -331,7 +331,7 @@ impl OfferingService {
         self.registry.register(offering.clone());
         self.audit(
             &offering.name,
-            "Placed",
+            super::events::audit_kind::PLACED,
             serde_json::json!({ "world": world_kind, "catalog": self.catalog.get(&offering.offering).is_some() }),
         );
     }

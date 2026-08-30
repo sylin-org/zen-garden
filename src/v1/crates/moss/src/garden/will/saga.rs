@@ -355,7 +355,7 @@ impl Runner {
         // checkpoint and replays at boot (a run is never amnesia).
         let audit = super::super::events::EventLog::for_root(&workload.dir);
         let _ = audit.append(
-            "RunStarted",
+            crate::garden::events::audit_kind::RUN_STARTED,
             serde_json::json!({ "run": run_id, "mode": policy.mode.as_str() }),
         );
         if let Some(j) = &self.journal {
@@ -376,7 +376,7 @@ impl Runner {
                 run.finish(checkpoint);
                 let ferried = run.info().ferried_to.clone().unwrap_or_default();
                 let _ = audit.append(
-                    "CheckpointCommitted",
+                    crate::garden::events::audit_kind::CHECKPOINT_COMMITTED,
                     serde_json::json!({
                         "run": run_id,
                         "checkpoint": checkpoint.display().to_string(),
@@ -400,7 +400,7 @@ impl Runner {
             Err(e) => {
                 run.fail(e);
                 let _ = audit.append(
-                    "RunFailed",
+                    crate::garden::events::audit_kind::RUN_FAILED,
                     serde_json::json!({ "run": run_id, "error": e.clone() }),
                 );
                 if let Some(j) = &self.journal {

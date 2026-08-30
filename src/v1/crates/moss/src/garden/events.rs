@@ -18,6 +18,22 @@ pub struct AuditEvent {
     pub prev_hash: String,
 }
 
+/// The audit chain's kind vocabulary (OFFERINGS.md rehydration
+/// contract): every lifecycle fact the chain records, named once. These
+/// strings are PERSISTED — they never change, only grow.
+pub mod audit_kind {
+    pub const PLACED: &str = "Placed";
+    pub const STARTED: &str = "Started";
+    pub const STOPPED: &str = "Stopped";
+    pub const UPROOTED: &str = "Uprooted";
+    pub const RESURRECTED: &str = "Resurrected";
+    pub const REPLANTED: &str = "Replanted";
+    pub const NOURISHED: &str = "Nourished";
+    pub const RUN_STARTED: &str = "RunStarted";
+    pub const CHECKPOINT_COMMITTED: &str = "CheckpointCommitted";
+    pub const RUN_FAILED: &str = "RunFailed";
+}
+
 /// Stable hash (FNV-1a 64) — cross-process, cross-version persistence.
 fn fnv64(input: &str) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;

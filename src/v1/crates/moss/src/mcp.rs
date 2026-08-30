@@ -183,7 +183,7 @@ async fn run_tool(state: &Arc<AppState>, name: &str, args: &Value) -> Result<Val
             &state.garden,
             &state.topology,
             &state.jobs,
-            crate::http::self_view(state),
+            crate::http::room::self_view(state),
         )),
         "offerings" => {
             let rows: Vec<Value> = state

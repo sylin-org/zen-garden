@@ -101,6 +101,9 @@ pub struct Runner {
     /// not hold (ADR-0005 §4's tier-1 sink, wherever the operator plugged
     /// it). None where only the local lane is exercised.
     topology: Option<Arc<crate::room::topology::Topology>>,
+    /// The stone's fact stream: each run's fate lands here too, so the
+    /// journal tells the whole story without reading offering chains.
+    journal: Option<Arc<crate::journal::Journal>>,
     runs: parking_lot::Mutex<HashMap<String, Run>>,
 }
 
@@ -112,6 +115,7 @@ impl Runner {
             storage,
             hooks,
             topology: None,
+            journal: None,
             runs: parking_lot::Mutex::new(HashMap::new()),
         }
     }
@@ -120,6 +124,12 @@ impl Runner {
     /// chirp, are reached through their holder's file face.
     pub fn with_topology(mut self, topology: Arc<crate::room::topology::Topology>) -> Self {
         self.topology = Some(topology);
+        self
+    }
+
+    /// Give the run fates to the stone's fact stream.
+    pub fn with_journal(mut self, journal: Arc<crate::journal::Journal>) -> Self {
+        self.journal = Some(journal);
         self
     }
 
@@ -367,6 +377,12 @@ impl Runner {
             "RunStarted",
             serde_json::json!({ "run": run_id, "mode": policy.mode.as_str() }),
         );
+        if let Some(j) = &self.journal {
+            j.append(crate::journal::Kind::RunStarted {
+                fqn: fqn.to_string(),
+                run: run_id.to_string(),
+            });
+        }
         let workspace = self
             .workspace_root
             .join(crate::garden::directory::slug(fqn))
@@ -377,14 +393,28 @@ impl Runner {
         match &result {
             Ok(checkpoint) => {
                 run.finish(checkpoint);
+                let ferried = run.info().ferried_to.clone().unwrap_or_default();
                 let _ = audit.append(
                     "CheckpointCommitted",
                     serde_json::json!({
                         "run": run_id,
                         "checkpoint": checkpoint.display().to_string(),
-                        "ferried": run.info().ferried_to.clone().unwrap_or_default(),
+                        "ferried": ferried,
                     }),
                 );
+                if let Some(j) = &self.journal {
+                    j.append(crate::journal::Kind::CheckpointCommitted {
+                        fqn: fqn.to_string(),
+                        run: run_id.to_string(),
+                    });
+                    for sink in &ferried {
+                        j.append(crate::journal::Kind::CheckpointDelivered {
+                            fqn: fqn.to_string(),
+                            run: run_id.to_string(),
+                            sink: sink.clone(),
+                        });
+                    }
+                }
             }
             Err(e) => {
                 run.fail(e);
@@ -392,6 +422,13 @@ impl Runner {
                     "RunFailed",
                     serde_json::json!({ "run": run_id, "error": e.clone() }),
                 );
+                if let Some(j) = &self.journal {
+                    j.append(crate::journal::Kind::RunAborted {
+                        fqn: fqn.to_string(),
+                        run: run_id.to_string(),
+                        reason: e.clone(),
+                    });
+                }
             }
         }
         // Reclaim the workspace either way (§2 Phase B's last step; a

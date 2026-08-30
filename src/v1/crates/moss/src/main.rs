@@ -272,10 +272,9 @@ async fn main() {
             Ok(d) => Arc::new(d),
             Err(_) => Arc::new(garden::will::NullHooks),
         };
-    let capture_runner = Arc::new(
+    let capture_runner =
         garden::will::Runner::new(Arc::clone(&storage), Arc::clone(&hook_runner))
-            .with_topology(Arc::clone(&topology)),
-    );
+            .with_topology(Arc::clone(&topology));
 
     let announce_socket = ingress.socket();
     tokio::spawn(announce::run(
@@ -351,6 +350,19 @@ async fn main() {
         .parent()
         .map(|p| p.join("journal").join("jobs"));
 
+    // The stone's fact stream (ADR-0015): one typed, persisted record of
+    // everything the stone states about itself and its room.
+    let stone_journal = {
+        let p = dirs_root.join("journal").join("stone.jsonl");
+        match journal::Journal::open(p) {
+            Ok(j) => Some(Arc::new(j)),
+            Err(e) => {
+                tracing::warn!(error = %e, "stone journal could not open; facts stay unrecorded");
+                None
+            }
+        }
+    };
+
     // The offering application service: registry + worlds + catalog + facts,
     // coordinated (OFFERINGS.md §5/§4). The service pool resolves here so a
     // malformed MOSS_SERVICE_PORT_POOL aborts loudly at startup (L17).
@@ -362,7 +374,7 @@ async fn main() {
         }
     })
     .await;
-    let garden = Arc::new(garden::service::OfferingService::new(
+    let mut garden_service = garden::service::OfferingService::new(
         Arc::clone(&offerings),
         runtime_registry,
         default_runtime.clone(),
@@ -371,11 +383,19 @@ async fn main() {
         OfferingsRoot::new(dirs_root),
         pool,
         Some(Arc::clone(&hook_runner)),
-    ));
+    );
+    if let Some(j) = &stone_journal {
+        garden_service.set_journal(Arc::clone(j));
+    }
+    let garden = Arc::new(garden_service);
     // Runs converge at boot (ADR-0015 law 3): the last run of every
     // offering rebuilds from its own audit chain; runs left in flight by
     // a restart are marked interrupted, never forgotten.
     capture_runner.replay_runs(&OfferingsRoot::new(garden.dirs_root.base.clone()));
+    let capture_runner = capture_runner.with_journal(stone_journal
+        .clone()
+        .unwrap_or_else(|| Arc::new(journal::Journal::memory())));
+    let capture_runner = Arc::new(capture_runner);
 
     // The Converger: reality chases the stored plans until cancelled.
     tokio::spawn(garden::converge::run(Arc::clone(&garden), token.clone()));
@@ -492,11 +512,39 @@ async fn main() {
         .await
         .unwrap_or_else(|e| eprintln!("http server error: {e}"));
 
+    // The room's news lands in the fact stream (ADR-0015): peers seen
+    // and expired are the stone's facts about its room.
+    {
+        let j = stone_journal.clone();
+        let mut room_events = topology.events();
+        let room_token = token.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = room_token.cancelled() => return,
+                    ev = room_events.recv() => match ev {
+                        Ok(crate::room::topology::TopologyEvent::Seen(view)) => j.as_ref().map(|j| {
+                            j.append(crate::journal::Kind::PeerSeen { stone: view.body.stone.name.clone() })
+                        }),
+                        Ok(crate::room::topology::TopologyEvent::Expired { stone_name, .. }) |
+                        Ok(crate::room::topology::TopologyEvent::Goodbye { stone_name, .. }) => j.as_ref().map(|j| {
+                            j.append(crate::journal::Kind::PeerExpired { stone: stone_name })
+                        }),
+                        Err(_) => None,
+                    },
+                };
+            }
+        });
+    }
+
     // ---- farewell ----------------------------------------------------------
     // Let cancelled tasks wind down, then speak goodbye so peers drop us
     // without waiting out the threshold (PoC parity: 3 copies, debounce-free).
     tokio::time::sleep(Duration::from_millis(SHUTDOWN_GRACE_MS)).await;
     let final_body = chirp_source.body();
+    if let Some(j) = &stone_journal {
+        j.append(crate::journal::Kind::GoodbyeSpoken { stone: identity.stone_name.clone() });
+    }
     if let Err(e) =
         announce::send_goodbye(&announce_socket, discovery.group, discovery.port, final_body).await
     {

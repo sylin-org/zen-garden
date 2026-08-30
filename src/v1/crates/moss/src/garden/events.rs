@@ -160,3 +160,33 @@ mod tests {
         assert!(err.contains("hash mismatch") || err.contains("line 1"), "{err}");
     }
 }
+
+impl EventLog {
+    /// Translate a chain kind into the stone journal's typed fact and
+    /// append it. Unknown kinds are chain-local history and stay there.
+    pub(crate) fn tail_kind_of(
+        &self,
+        kind: &str,
+        name: &str,
+        details: &serde_json::Value,
+        journal: &crate::journal::Journal,
+    ) {
+        use crate::journal::Kind;
+        let fact = match kind {
+            "Placed" => Kind::OfferingPlanted { fqn: name.to_string() },
+            "Stopped" => Kind::OfferingRested { fqn: name.to_string() },
+            "Started" => Kind::OfferingWoke { fqn: name.to_string() },
+            "Uprooted" => Kind::OfferingUprooted { fqn: name.to_string() },
+            "Replanted" => Kind::OfferingReplanted {
+                fqn: name.to_string(),
+                predecessor: details["predecessor_offering_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            },
+            _ => return, // chain-local history (Resurrected, Healed, ...)
+
+        };
+        journal.append(fact);
+    }
+}

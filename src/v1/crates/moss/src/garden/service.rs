@@ -67,6 +67,9 @@ pub struct OfferingService {
     hooks: Option<Arc<dyn super::will::saga::HookRunner>>,
     /// Per-offering convergence failure counters (converge.rs drives them).
     failures: Arc<parking_lot::Mutex<HashMap<String, u32>>>,
+    /// The stone's fact stream: every lifecycle audit lands here typed,
+    /// beside the offering's own chain (which rides the checkpoint).
+    journal: Option<Arc<crate::journal::Journal>>,
 }
 
 impl OfferingService {
@@ -91,6 +94,7 @@ impl OfferingService {
             pool,
             hooks,
             failures: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            journal: None,
         }
     }
 
@@ -104,6 +108,11 @@ impl OfferingService {
     /// from its allocations — or, transitionally before directory migration,
     /// from whatever residence it last recorded. Rest counts; offline is
     /// not free.
+    /// Set the stone's fact stream (boot-time, before sharing).
+    pub fn set_journal(&mut self, journal: Arc<crate::journal::Journal>) {
+        self.journal = Some(journal);
+    }
+
     pub(crate) fn ledger(&self) -> Vec<Claim> {
         self.registry
             .snapshot()
@@ -230,8 +239,13 @@ impl OfferingService {
 
     fn audit(&self, name: &str, kind: &str, details: serde_json::Value) {
         let log = EventLog::for_dir(&self.dirs_root.base, name);
-        if let Err(e) = log.append(kind, details) {
+        if let Err(e) = log.append(kind, details.clone()) {
             tracing::warn!(offering = %name, error = %e, "audit append failed");
+        }
+        // The stone's fact stream hears the same news, typed (ADR-0015):
+        // the offering's chain rides the checkpoint; the journal stays.
+        if let Some(j) = &self.journal {
+            log.tail_kind_of(kind, name, &details, j);
         }
     }
 

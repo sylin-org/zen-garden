@@ -271,10 +271,10 @@ async fn main() {
             Ok(d) => Arc::new(d),
             Err(_) => Arc::new(offerings::capture_run::NullHooks),
         };
-    let capture_runner = Arc::new(offerings::capture_run::Runner::new(
-        Arc::clone(&storage),
-        Arc::clone(&hook_runner),
-    ));
+    let capture_runner = Arc::new(
+        offerings::capture_run::Runner::new(Arc::clone(&storage), Arc::clone(&hook_runner))
+            .with_topology(Arc::clone(&topology)),
+    );
 
     let announce_socket = ingress.socket();
     tokio::spawn(announce::run(
@@ -436,6 +436,7 @@ async fn main() {
         stone_name: identity.stone_name.clone(),
         boot_id,
         started_at: chrono::Utc::now(),
+        shutdown: token.clone(),
     });
     // The pulse adapters (ADR-0013): translate existing sources into
     // the bus until cancelled. The same Arcs the faces see.

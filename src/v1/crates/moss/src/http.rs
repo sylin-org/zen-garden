@@ -46,6 +46,9 @@ pub struct AppState {
     pub stone_name: String,
     pub boot_id: Uuid,
     pub started_at: chrono::DateTime<chrono::Utc>,
+    /// The stone's shutdown token: stream faces (SSE) end on cancel so
+    /// the graceful drain can finish and the farewell can be spoken.
+    pub shutdown: tokio_util::sync::CancellationToken,
 }
 
 use garden_kernel::dispatch::Dispatcher;
@@ -536,7 +539,9 @@ async fn offering_logs_stream(
         };
         Ok::<_, std::convert::Infallible>(event)
     });
-    axum::response::Sse::new(events)
+    // The stream ends on shutdown: the drain must finish for the farewell.
+    let stop = state.shutdown.clone().cancelled_owned();
+    axum::response::Sse::new(futures::StreamExt::take_until(events, stop))
         .keep_alive(axum::response::sse::KeepAlive::default())
         .into_response()
 }
@@ -545,16 +550,22 @@ async fn offering_logs_stream(
 async fn capture_last(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
-) -> ApiResult {
-    let fqn = garden_glossary::fqn::canonicalize(&name)
-        .map_err(|e| CommandError::Conflict(e.to_string()))?;
+) -> axum::response::Response {
+    let fqn = garden_glossary::fqn::canonicalize(&name).unwrap_or_else(|_| name.clone());
+    // A foreign offering has no "no runs" answer to give — it answers the
+    // garden's redirect like every other offering face (reads delegate).
+    if state.garden.placed(&fqn).is_none() {
+        return offering_not_here(&state, &fqn);
+    }
     match state.capture.last_run(&fqn) {
-        Some(run) => Ok(Json(serde_json::json!({ "data": { "run": run } }))),
-        None => Err(CommandError::NotFound(format!(
-            "'{}' has run no capture on this stone",
-            fqn
-        ))
-        .into()),
+        Some(run) => Json(serde_json::json!({ "data": { "run": run } })).into_response(),
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": { "message": format!("'{fqn}' has run no capture on this stone") }
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -1162,8 +1173,11 @@ async fn pulse_stream(
         },
     );
 
+    // The stream ends on shutdown: an open SSE connection must not hold
+    // the graceful drain hostage — the farewell waits on nothing.
+    let stop = state.shutdown.clone().cancelled_owned();
     axum::response::IntoResponse::into_response(
-        axum::response::Sse::new(stream)
+        axum::response::Sse::new(futures::StreamExt::take_until(stream, stop))
             .keep_alive(axum::response::sse::KeepAlive::default()),
     )
 }
@@ -1566,6 +1580,7 @@ pub(crate) mod tests {
             stone_name: "stone-test".into(),
             boot_id: Uuid::now_v7(),
             started_at: chrono::Utc::now(),
+            shutdown: tokio_util::sync::CancellationToken::new(),
         })
     }
 

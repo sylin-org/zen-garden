@@ -37,28 +37,30 @@ directly anymore.
 
 ## Worklist (strangle order; delete in the same commit)
 
-1. **journal** — new module: typed events, append, subscribe, replay.
-   Migrate writers one at a time; delete EventLog/RunInfo/JobTracker/
-   pulse-bus-as-source-of-truth as each moves. Pulse becomes a
-   projection; jobs become Job aggregates over run/step events.
-2. **will** — dissolve capture_run.rs (1.5k lines, four jobs) into:
-   `Run` state machine (start → imprint → committed → delivered{},
-   abort with compensation), `Checkpoint` entity (open = Committed |
-   Partial; deliver_to(sink) → ack), the imprint mechanics adapter,
-   and `Provenance` (plan_install / install). Scheduler becomes a
-   due-date trigger on the journal. Absorb tonight's cross-stone
-   ferry as the delivery adapter (delete the inline HTTP client).
-3. **garden** — Offering gains behavior: `rest/wake/uproot/
-   reincarnate_on(&dirs, &ledger)`; placement pipeline (compile +
-   arbiter + path re-rooting) is THE only compiler of projections;
-   replant = restore + recompile (deletes W15's special cases).
-   service.rs shrinks to coordinators.
-4. **room** — absorb kernel + source.rs; `Stone::depart()` speaks the
-   goodbye at the instant of decision (done at P9, keep); songs re-
-   assert full voice periodically (named debt); expiry stays.
-5. **channels** — rake's three redirect followers collapse into one
-   router; moss faces share the typed not-here reply; the wall stays a
-   renderer (goodbye-as-wire-event debt lands here).
+1. **DONE — will/** extracted: `policy` / `run` (the Run aggregate,
+   forward-only) / `checkpoint` (entity: open refuses partials,
+   tar-walking verify, `.partial` rotation match fixed) / `saga`
+   (executor; pack is a thin call to checkpoint::commit). Cross-stone
+   ferry lives here as the delivery leg.
+2. **DONE — the Incarnation law is executable**:
+   `Offering::reincarnate_on(dir, claims, pool)`; service.replant is
+   a coordinator.
+3. **DONE — runs persist**: each run's fate rides the offering's own
+   audit chain; `replay_runs` rebuilds at boot; in-flight-by-restart
+   runs are marked interrupted (law 3).
+4. **DONE — debts closed**: scheduler consumes interval's immediate
+   tick; announcer re-asserts full voice every 10th heartbeat
+   (law 6) — witnessed live in W16.
+5. **DONE — rake has one router**: stone_op follows not-here once;
+   offering_op deleted.
+6. **journal spine** (partially): journal.rs exists (typed, persisted,
+   replay) and the offering chains now carry run fates; absorbing
+   RunInfo map / JobTracker / pulse bus into it remains.
+7. **room/** absorption of kernel + source.rs remains (farewell is
+   already atomic; streams end on the token).
+8. **Named, open**: ensure is a room-level wish (W16: it can halt at a
+   bystander); cross-stone FQN uniqueness is unwritten law; the wall
+   should render the goodbye datagram.
 
 ## Named debts riding along
 

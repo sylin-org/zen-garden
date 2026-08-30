@@ -595,3 +595,53 @@ deployed (fix-forward is part of this epic). Workstation: moss STOPPED,
 ntfy record/image/checkpoint/tending removed. Test containers, images,
 records: none survive. The code fixes ride in this epic's commits; the
 seams above seed the realignment (ADR-0015).
+
+## W16 — the domain realignment (2026-08-30, ADR-0015 executed)
+
+The break-and-rebuild. Moss's internals now match the laws the W15
+seams demanded; the wire, faces, MCP, catalog, and checkpoint formats
+did not move, and the whole story re-ran green on the fleet.
+
+- **The contexts take physical shape**: `offerings/` is `garden/`;
+  the will is its own context — `policy` (the declared will, parsed
+  into plans an executor cannot disagree with), `run` (the Run
+  aggregate: forward-only phases, terminal history — no more mutable
+  phase strings), `checkpoint` (the entity: manifest-as-commit-
+  marker, `open()` refuses staging dirs, tar-walking verify, rotation
+  with the `.partial` match finally correct), `saga` (the executor;
+  `pack` is now a thin call to `checkpoint::commit`).
+- **The Incarnation law is executable**: `Offering::reincarnate_on(
+  dir, claims, pool)` re-roots the foreign projection (both path
+  dialects) and re-arbitrates addresses; `service.replant` slims to a
+  coordinator. W15's hand-pasted special cases are deleted.
+- **Runs are never amnesia (law 3)**: each run's fate is appended to
+  the offering's own audit chain — it rides the checkpoint — and
+  `replay_runs` rebuilds the last run at boot; a run left in flight by
+  a restart is marked *interrupted*, honestly.
+- **Debts closed**: the capture scheduler consumes interval's
+  immediate first tick (a boot is not a calendar); the announcer sings
+  full voice every 10th heartbeat — witnessed LIVE when a fresh
+  workstation heard seed-vault only after a change-driven song, then
+  would have converged anyway at the periodic re-assertion.
+- **rake has ONE router**: `stone_op` follows the garden's not-here
+  redirect once at the channel's front door; the second router
+  (`offering_op`) is deleted. Routing is no longer a per-verb concern.
+- **The story re-ran green on the realigned build** (both binaries
+  hash-verified on .195): room meets → offer ntfy → capture
+  (copy-freely imprint, done) → ferried to seed-vault on .195 (after
+  the re-assertion song re-taught the fresh stone — law 6 proven
+  live) → cross-stone replant through `reincarnate_on` (kept the free
+  home :7300; identity carried) → ensure routes the wish to the
+  replant → SIGINT goodbye in 0.35 s with the wall holding the
+  firehose → boot convergence revived the replanted work.
+- **Findings, recorded**: ensure attaches to the first answerer, so
+  from a dead home stone the wish can halt at a bystander that cannot
+  serve it — the wish belongs to the room context, not to one moss
+  (named work, ADR-0015's room phase); a doubled offering (replant
+  without a death) is allowed and honestly reported — cross-stone FQN
+  uniqueness is a room-level law still to be written.
+
+**State left behind**: none. .195: `witness-db::garden` only, the
+realigned build deployed (hash-verified); workstation moss STOPPED,
+all test records and images removed. Workspace: 124 moss tests, 35
+rake tests, the full workspace suite green.

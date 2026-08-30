@@ -717,3 +717,41 @@ Deployed to .195; the journal grows as the room speaks. Remaining:
 nothing structural — rake's 3k-line main.rs could split into verb
 modules (tidying), glossary-into-contract stays optional, D16 stays
 functional debt.
+
+## W17 — the acceptance re-run on the finished codebase (2026-08-30)
+
+ADR-0015's acceptance is "the W15 story runs green, unchanged." It
+did — on the fully realigned, tidied build (journal spine, entity
+verbs, Provenance, room-level wish, one router, named vocabularies),
+both binaries hash-fresh.
+
+- **P0–P1**: ground truth; the room meets — both stones thriving in
+  each other's view, no heartbeat waited.
+- **P2**: ntfy planted on entry-glass; .195 hears the full-voice
+  inventory through the garden's redirect.
+- **P3**: ollama planted; `ensure 'ollama[model:all-minilm]'` —
+  *grown, not planted: ollama://192.168.1.195:7300*.
+- **P4**: the cross-stone file write through the workstation's face —
+  redirect, byte-identical read-back, move, delete. (One find, ours:
+  the harness mixed Git-Bash and Windows temp paths; the garden was
+  innocent.)
+- **P5**: capture → done → **ferried to seed-vault on the first try** —
+  the room's re-assertion (law 6) meant the fresh stone knew the sink
+  without any manual nudge this time.
+- **P6**: the murder — entry-glass gone past the threshold, honestly,
+  no haunting.
+- **P7**: replant — the incarnation (same offering_id) running at
+  :7302; the address law kept the story honest (7300 is ollama's
+  here).
+- **P8**: the unpinned wish — workstation moss dead, tending flushed,
+  discovery finding a bystander first — and the room walk answered
+  *ntfy grows on stone-tranquil-pass — ntfy://192.168.1.195:7302*.
+  The law written after W16's finding worked in the wild.
+- **P9**: SIGINT with the wall's firehose held — goodbye in 0.36 s,
+  clean exit, the wall shows the loss.
+- **P10**: fleet as found — witness-db alone on .195, every image,
+  record, checkpoint, and husk cleared on both stones.
+
+**State left behind**: none. **Debts carried**: none new. The
+realignment is not just architecture — it runs the garden's whole
+story, start to finish, on the shape the laws demanded.

@@ -1,25 +1,11 @@
-//! `rake` — the gardener's CLI. Humans and agents walk the garden with it.
-//!
-//! Rake is a thin client (L21): it finds and validates a moss to attach
-//! to, routes commands onto that moss's methods, and expects standard
-//! return formats. It never computes garden truth.
-//!
-//! Attachment cascade (harvested from PoC rake, resolution.rs):
-//!   1. `--stone` flag — explicit intent, never re-resolved (hard)
-//!   2. `RAKE_STONE` env twin — operator intent, never re-resolved (hard)
-//!   3. tending file — last successful attachment, optimistic, flushed on
-//!      matching connection failure (soft)
-//!   4. ask/tell discovery — whoever answers first (soft)
-//!
-//! Stone ops (`offer`, `explain`, `rest`, `wake`, `uproot`) ride the same
-//! cascade through one front door ([`Cli::stone_op`]). A mutation HALTS
-//! the walk at the first moss that ANSWERS — refusals are real answers
-//! about THAT stone, never reasons to quietly try somewhere else (L17).
-//! Reads stay tolerant: observation walks past a sick answerer.
-
 mod moss_http;
+mod paths;
+mod render;
 mod wall;
 mod tending;
+
+use paths::*;
+use render::*;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use garden_contract::chirp::ChirpFrame;
@@ -1143,26 +1129,6 @@ async fn run(cli: &Cli) -> Result<(), String> {
 
 /// The `uri` projection over the garden envelope: one URI per service
 /// across every stone still in the view.
-fn uris_from_garden(v: &serde_json::Value) -> Result<serde_json::Value, String> {
-    let mut uris = Vec::new();
-    for s in envelope_plain(v)?["stones"].as_array().into_iter().flatten() {
-        let ip = s["stone"]["network"]["address"]["ip"].as_str().unwrap_or("?");
-        for svc in s["inventory"]["services"]["items"].as_array().into_iter().flatten() {
-            let stem = svc["stem"].as_str().unwrap_or("?");
-            uris.push(match svc["ports"].as_object().and_then(|m| m.values().next()) {
-                Some(p) => format!("{stem}://{ip}:{p}"),
-                None => format!("{stem}://{ip}"),
-            });
-        }
-    }
-    Ok(serde_json::json!(uris))
-}
-
-/// The storage faces. Every verb here is the 1:1 client of one API face:
-/// list -> GET /api/v1/storage; adopt -> POST /api/v1/storage/adopt.
-/// `rake watch <offering> logs`: cascade to the first moss that will
-/// speak, follow the garden's redirect if the offering grows elsewhere,
-/// print lines until the stream ends or `--until` matches (exit 0).
 async fn cmd_watch(cli: &Cli, name: &str, cmd: Option<&WatchCmd>) -> Result<Answer, String> {
     let Some(WatchCmd::Logs { timestamps, tail, until }) = cmd else {
         return Err("watch what? try: rake watch <offering> logs".into());
@@ -1648,44 +1614,6 @@ async fn cmd_ensure_wish(
 /// A held item satisfies a wish when it names the same thing: exact, or
 /// the tag-default spelling (`all-minilm` == `all-minilm:latest`) — the
 /// registry's own convention, not a heuristic about content.
-fn capability_satisfied(held: &str, wanted: &str) -> bool {
-    held == wanted || held.strip_suffix(":latest") == Some(wanted)
-}
-
-/// The wish's selectors, as the operator typed them conceptually.
-fn want_string(wish: &garden_contract::wish::Wish) -> String {
-    wish.selectors
-        .iter()
-        .map(|s| format!("{}:{}", s.kind, s.item))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn service_matches(
-    wish_fqn: &str,
-    wish_stem: &str,
-    wish_named_instance: bool,
-    service_name: &str,
-) -> bool {
-    if service_name == wish_fqn {
-        return true;
-    }
-    // A bare-stem wish accepts any instance of the capability; a named
-    // instance wants exactly itself.
-    !wish_named_instance && service_name.split("::").next() == Some(wish_stem)
-}
-
-/// The connection promise (J1) for one capability.
-fn connection_uri(stem: &str, ip: &str, port: Option<u64>) -> String {
-    match port {
-        Some(p) => format!("{stem}://{ip}:{p}"),
-        None => format!("{stem}://{ip}"),
-    }
-}
-
-/// The gardener's update ritual (J3): check or apply. The room's mosses
-/// do the checking and applying (their worlds know their images); rake is
-/// the conductor — canary ordering, health between stones, halt on red.
 async fn cmd_nourish(cli: &Cli, apply: bool, stone_filter: Option<&str>) -> Result<Answer, String> {
     let room = cli.garden_envelope().await?;
     let mut stone_rows: Vec<serde_json::Value> = envelope_plain(&room)?["stones"]
@@ -1995,27 +1923,6 @@ async fn cmd_storage(cli: &Cli, cmd: Option<&StorageCmd>) -> Result<Answer, Stri
     }
 }
 
-fn render_bank_files(v: &serde_json::Value) -> Result<(), String> {
-    let rows = v["files"].as_array();
-    match rows {
-        Some(r) if !r.is_empty() => {
-            println!("{:<40} {:<5} {:>10}  MODIFIED", "NAME", "KIND", "SIZE");
-            for e in r {
-                println!(
-                    "{:<40} {:<5} {:>10}  {}",
-                    e["name"].as_str().unwrap_or("?"),
-                    e["kind"].as_str().unwrap_or("?"),
-                    e["size_bytes"].as_u64().map(human_bytes).unwrap_or_else(|| "-".into()),
-                    e["modified_at"].as_str().unwrap_or("-"),
-                );
-            }
-        }
-        _ => println!("The bank holds no files here."),
-    }
-    Ok(())
-}
-
-/// Read the `--file` side of `storage put`: a local path, or `-` for stdin.
 fn read_local(source: &str) -> Result<Vec<u8>, String> {
     if source == "-" {
         let mut buf = Vec::new();
@@ -2041,147 +1948,6 @@ fn raw_refusal(status: u16, body: &[u8]) -> String {
 }
 
 /// The rehearsal verdict: the proof loop's green/red, spoken plainly.
-fn render_rehearsal(v: &serde_json::Value) -> Result<(), String> {
-    let r = &v["rehearsal"];
-    let name = display_name(r["name"].as_str().unwrap_or("?"));
-    let green = r["green"] == serde_json::json!(true);
-    if green {
-        println!("{name} rehearsal GREEN — the checkpoint boots");
-    } else {
-        println!(
-            "{name} rehearsal RED — {}",
-            r["error"].as_str().unwrap_or("the proof failed")
-        );
-    }
-    println!("  checkpoint  {}", r["checkpoint"].as_str().unwrap_or("-"));
-    let h = r["hash"].as_str().unwrap_or("-");
-    println!(
-        "  restored    {} files, {} bytes, sha {}...",
-        r["files"],
-        r["bytes"],
-        h.get(..8).unwrap_or(h)
-    );
-    println!(
-        "  container   {} ({}s)",
-        r["container_state"].as_str().unwrap_or("-"),
-        r["container_ran_secs"]
-    );
-    if !green {
-        return Err(format!(
-            "{name} failed its restore rehearsal — the safety net is not safe"
-        ));
-    }
-    Ok(())
-}
-
-/// Bytes for human eyes.
-fn human_bytes(n: u64) -> String {
-    let units = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut value = n as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < units.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{n} {}", units[0])
-    } else {
-        format!("{value:.1} {}", units[unit])
-    }
-}
-
-/// The room's banks: one row per (stone, bank), self marked.
-fn render_garden_storage(v: &serde_json::Value) -> Result<(), String> {
-    let rows = v["banks"].as_array();
-    match rows {
-        Some(r) if !r.is_empty() => {
-            println!("{:<22} {:<26} {:<10} CAPACITY", "STONE", "BANK", "STATE");
-            for row in r {
-                let marker = if row["self"] == true { " (me)" } else { "" };
-                println!(
-                    "{:<22} {:<26} {:<10} {}",
-                    format!("{}{}", row["stone"].as_str().unwrap_or("?"), marker),
-                    display_name(row["bank"]["fqn"].as_str().unwrap_or("?")),
-                    row["bank"]["state"].as_str().unwrap_or("?"),
-                    row["bank"]["capacity_bytes"]
-                        .as_u64()
-                        .map(human_bytes)
-                        .unwrap_or_else(|| "-".into()),
-                );
-            }
-        }
-        _ => println!("The garden holds no banks yet."),
-    }
-    Ok(())
-}
-
-/// `rake list`: what the attached stone hosts, each with its URI —
-/// `stem://host:home`. The connection promise as output (J1).
-fn render_list(v: &serde_json::Value) -> Result<(), String> {
-    let rows = v["offerings"].as_array();
-    match rows {
-        Some(r) if !r.is_empty() => {
-            println!("{:<26} {:<10} {:<12} URI", "OFFERING", "STATUS", "HOME");
-            for o in r {
-                let stem = o["identity"]["stem"].as_str().unwrap_or("?");
-                let home = o["mode"]["port_map"]
-                    .as_object()
-                    .and_then(|m| m.values().next())
-                    .and_then(|p| p.as_u64())
-                    .map(|p| p.to_string())
-                    .unwrap_or_else(|| "-".into());
-                println!(
-                    "{:<26} {:<10} {:<12} {}://{}",
-                    display_name(o["identity"]["name"].as_str().unwrap_or("?")),
-                    o["state"]["status"].as_str().unwrap_or("?"),
-                    home,
-                    stem,
-                    home,
-                );
-            }
-        }
-        _ => println!("Nothing planted on this stone yet. Try: rake offer <name>"),
-    }
-    Ok(())
-}
-
-/// The banks table: what this stone holds, and what it could adopt.
-fn render_storage(v: &serde_json::Value) -> Result<(), String> {
-    let banks = v["banks"].as_array();
-    match banks {
-        Some(b) if !b.is_empty() => {
-            println!("{:<26} {:<10} {:<22} CAPACITY", "BANK", "STATE", "DEVICE");
-            for bank in b {
-                let cap = bank["capacity_bytes"]
-                    .as_u64()
-                    .map(human_bytes)
-                    .unwrap_or_else(|| "-".into());
-                println!(
-                    "{:<26} {:<10} {:<22} {}",
-                    display_name(bank["fqn"].as_str().unwrap_or("?")),
-                    bank["state"].as_str().unwrap_or("?"),
-                    bank["mount_point"].as_str().unwrap_or("?"),
-                    cap,
-                );
-            }
-        }
-        _ => println!("No banks adopted yet on this stone."),
-    }
-    if let Some(adoptable) = v["adoptable"].as_array() {
-        for vol in adoptable {
-            println!(
-                "ready to adopt: {} ({}) — rake storage adopt <device> --name <bank>",
-                vol["device"].as_str().unwrap_or("?"),
-                vol["capacity_bytes"]
-                    .as_u64()
-                    .map(human_bytes)
-                    .unwrap_or_else(|| "unknown size".into()),
-            );
-        }
-    }
-    Ok(())
-}
-
 async fn cmd_stone_op(cli: &Cli) -> Result<Answer, String> {
     match &cli.command {
         Command::Offer { name, image, ports, inputs, runtime, category, plan } => {
@@ -2343,212 +2109,6 @@ async fn cmd_stone_op(cli: &Cli) -> Result<Answer, String> {
 }
 
 /// Request paths with their commands (R2.2): built where used, kept nowhere.
-mod paths {
-    pub const OFFERINGS: &str = "/api/v1/offerings";
-
-    /// Local storage (L22): banks and adoptable volumes.
-    pub const STORAGE: &str = "/api/v1/storage";
-    /// The adopt ceremony's face.
-    pub const STORAGE_ADOPT: &str = "/api/v1/storage/adopt";
-    /// The room's banks (grid law, ADR-0004 §4).
-    pub const STORAGE_GARDEN: &str = "/api/v1/garden/storage";
-    /// The eject verb's face.
-    pub fn storage_eject(bank: &str) -> String {
-        format!("{STORAGE}/{}/eject", encode_segment(bank))
-    }
-
-    /// The roles declaration's face.
-    pub fn storage_roles(bank: &str) -> String {
-        format!("{STORAGE}/{}/roles", encode_segment(bank))
-    }
-
-    /// The restore-rehearsal face (J2's proof loop).
-    pub fn rehearse(name: &str) -> String {
-        format!("{OFFERINGS}/{}/rehearse", encode_segment(name))
-    }
-
-    /// The capabilities face (W1): what an offering holds.
-    pub fn capabilities(name: &str) -> String {
-        format!("{OFFERINGS}/{}/capabilities", encode_segment(name))
-    }
-
-    /// The offering-logs stream face. `tail` and `timestamps` ride as
-    /// query pairs.
-    pub fn logs_stream(name: &str, tail: Option<u64>, timestamps: bool) -> String {
-        let mut params = Vec::new();
-        if let Some(n) = tail {
-            params.push(format!("tail={n}"));
-        }
-        if timestamps {
-            params.push("timestamps=true".into());
-        }
-        let query = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
-        format!("{OFFERINGS}/{}/logs/stream{query}", encode_segment(name))
-    }
-
-    /// The bank-files list face. `path` and `depth` ride as query pairs.
-    pub fn storage_files(bank: &str, path: Option<&str>, depth: Option<&str>) -> String {
-        let mut target = format!("{STORAGE}/{}/files", encode_segment(bank));
-        let mut params = Vec::new();
-        if let Some(dir) = path {
-            params.push(format!("path={}", encode_segment(dir)));
-        }
-        if let Some(d) = depth {
-            params.push(format!("depth={}", encode_segment(d)));
-        }
-        if !params.is_empty() {
-            target.push('?');
-            target.push_str(&params.join("&"));
-        }
-        target
-    }
-
-    /// One file's face on a bank. The path is wire-encoded whole — `/`
-    /// inside a name nests on the bank, everything unsafe escapes.
-    pub fn storage_file(bank: &str, path: &str) -> String {
-        format!(
-            "{STORAGE}/{}/files/{}",
-            encode_segment(bank),
-            encode_segment(path)
-        )
-    }
-
-    /// Percent-encode one wire path segment: everything outside the
-    /// unreserved set escapes, so names with spaces, `#` or `/` ride
-    /// correctly. Zero deps (P5) — one table of safe bytes.
-    pub fn encode_segment(s: &str) -> String {
-        const HEX: &[u8; 16] = b"0123456789ABCDEF";
-        let mut out = String::with_capacity(s.len());
-        for b in s.bytes() {
-            match b {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                    out.push(b as char)
-                }
-                other => {
-                    out.push('%');
-                    out.push(HEX[usize::from(other >> 4)] as char);
-                    out.push(HEX[usize::from(other & 15)] as char);
-                }
-            }
-        }
-        out
-    }
-
-    /// The living will's faces (ADR-0005 §2).
-    pub fn capture(name: &str) -> String {
-        format!("{OFFERINGS}/{name}/capture")
-    }
-
-    /// The last-run report face.
-    pub fn capture_last(name: &str) -> String {
-        format!("{OFFERINGS}/{name}/capture")
-    }
-
-    /// The replant face.
-    pub fn replant(name: &str) -> String {
-        format!("{OFFERINGS}/{name}/replant")
-    }
-
-    pub fn record(name: &str) -> String {
-        format!("{OFFERINGS}/{name}")
-    }
-
-    pub fn rest(name: &str) -> String {
-        format!("{OFFERINGS}/{name}/rest")
-    }
-
-    pub fn wake(name: &str) -> String {
-        format!("{OFFERINGS}/{name}/wake")
-    }
-}
-
-// --- small shared machinery -------------------------------------------------
-
-/// Standard envelope lives at `data` (L21); all stone ops answer inside it.
-fn envelope_plain(v: &serde_json::Value) -> Result<serde_json::Value, String> {
-    v.get("data")
-        .cloned()
-        .ok_or_else(|| "response lacked the standard 'data' envelope".to_string())
-}
-
-fn envelope(v: &serde_json::Value, key: &str) -> Result<serde_json::Value, String> {
-    envelope_plain(v)?
-        .get(key)
-        .cloned()
-        .ok_or_else(|| format!("response lacked data.{key}"))
-}
-
-/// Extract one value via dot notation with array indexing.
-/// `"services[0].connection.uris[0]"` walks objects and arrays.
-/// Returns the value as a string (objects/arrays serialize as JSON).
-fn extract_json_field(value: &serde_json::Value, path: &str) -> Option<String> {
-    let mut current = value;
-    for segment in path.split('.') {
-        if let Some(bracket_pos) = segment.find('[') {
-            let field_name = &segment[..bracket_pos];
-            let rest = &segment[bracket_pos..];
-            if !field_name.is_empty() {
-                current = current.get(field_name)?;
-            }
-            let mut chars = rest.chars().peekable();
-            while chars.peek() == Some(&'[') {
-                chars.next();
-                let mut index_str = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c == ']' {
-                        chars.next();
-                        break;
-                    }
-                    index_str.push(c);
-                    chars.next();
-                }
-                let index: usize = index_str.parse().ok()?;
-                current = current.get(index)?;
-            }
-        } else {
-            current = current.get(segment)?;
-        }
-    }
-    match current {
-        serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::Bool(b) => Some(b.to_string()),
-        other => Some(other.to_string()),
-    }
-}
-
-/// Parse repeated NAME=NUMBER flags into an ordered map.
-fn parse_u16_pairs(raw: &[String]) -> Result<HashMap<String, u16>, String> {
-    raw.iter()
-        .map(|s| match s.split_once('=') {
-            Some((k, v)) => v.parse::<u16>().map(|n| (k.to_string(), n)).map_err(|_| {
-                format!("--port '{s}' must look like NAME=NUMBER (e.g. --port default=6379)")
-            }),
-            None => Err(format!(
-                "--port '{s}' must look like NAME=PORT (e.g. --port default=6379)"
-            )),
-        })
-        .collect()
-}
-
-/// Parse repeated KEY=VALUE flags; values may contain '=' themselves.
-fn parse_input_map(raw: &[String]) -> Result<std::collections::BTreeMap<String, String>, String> {
-    raw.iter()
-        .map(|s| match s.split_once('=') {
-            Some((k, v)) => Ok((k.trim().to_string(), v.to_string())),
-            None => Err(format!(
-                "--input '{s}' must look like KEY=VALUE (e.g. --input password=hunter2)"
-            )),
-        })
-        .collect()
-}
-
-/// Delight of continuity: on success, tend toward this moss (unless the
-/// attachment was explicitly pinned — those are already remembered).
 fn remember_attachment(cand: &Candidate, stones: &[GardenStone]) {
     if !cand.origin.is_soft() {
         return;
@@ -2564,12 +2124,6 @@ fn remember_attachment(cand: &Candidate, stones: &[GardenStone]) {
     }
 }
 
-fn parse_garden(v: &serde_json::Value) -> Result<Vec<GardenStone>, String> {
-    let stones = envelope_plain(v)?.get("stones").cloned().ok_or_else(|| "garden view lacked data.stones".to_string())?;
-    serde_json::from_value::<Vec<GardenStone>>(stones)
-        .map_err(|e| format!("garden view did not match standard format: {e}"))
-}
-
 impl Candidate {
     fn origin_label(&self) -> &'static str {
         match self.origin {
@@ -2582,22 +2136,6 @@ impl Candidate {
 }
 
 /// Render `"key": number` pairs in map order for human eyes.
-fn named_pairs(map: &serde_json::Value, sep: &str) -> String {
-    map.as_object()
-        .map(|pairs| {
-            pairs
-                .iter()
-                .filter_map(|(k, v)| v.as_u64().map(|n| format!("{k} → {n}")))
-                .collect::<Vec<_>>()
-                .join(sep)
-        })
-        .unwrap_or_default()
-}
-
-// --- human renderings for stone ops -----------------------------------------
-
-/// Surfaces suppress `::default` (infrastructure noise); foreign instances
-/// stay in full (`ollama::adopted` is honest on the wire AND to humans).
 fn display_name(fqn: &str) -> String {
     garden_glossary::fqn::moniker(fqn)
 }
@@ -2623,23 +2161,6 @@ fn render_offered(target: &Candidate, offering: serde_json::Value) -> Result<(),
 }
 
 /// Container intention meets host reality, briefly.
-fn describe_ports(container: &serde_json::Value, host: &serde_json::Value) -> String {
-    let mut parts = Vec::new();
-    if let Some(names) = container.as_object() {
-        for (role, n) in names {
-            match host.get(role).and_then(|h| h.as_u64()) {
-                Some(host_port) => parts.push(format!("{role}: {n} → :{host_port}")),
-                None => parts.push(format!("{role}: {n}")),
-            }
-        }
-    }
-    if parts.is_empty() {
-        parts.push(named_pairs(host, ", "));
-    }
-    parts.join(", ")
-}
-
-/// §5.3's placed record rendered by hand — the delightful reference.
 fn render_explain(
     target: &Candidate,
     offering: serde_json::Value,
@@ -2727,13 +2248,6 @@ fn render_explain(
 }
 
 /// rest/wake speak in the past tense with the resulting status as truth.
-fn render_status(verb_past: &str, data: &serde_json::Value) -> Result<(), String> {
-    let name = display_name(data["name"].as_str().unwrap_or("(unnamed)"));
-    let status = data["status"].as_str().unwrap_or("?");
-    println!("{name} {verb_past} — {status}");
-    Ok(())
-}
-
 fn print_row(stone: &str, health: &str, address: &str, offerings: &str, version: &str) {
     println!("{:<26} {:<12} {:<21} {:<10} {}", stone, health, address, offerings, version);
 }

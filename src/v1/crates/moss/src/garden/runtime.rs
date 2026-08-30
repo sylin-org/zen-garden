@@ -7,6 +7,7 @@
 //! the domain (model.rs) owns the spec types they consume.
 
 use crate::garden::model::{Status, WorkloadSpec};
+use std::time::Duration;
 use std::collections::HashMap;
 
 /// What placement produced — already translated to port NAMES (PORT-0001).
@@ -273,3 +274,48 @@ impl Runtime for NullRuntime {
         Vec::new()
     }
 }
+
+#[async_trait::async_trait]
+pub trait HookRunner: Send + Sync {
+    /// Run argv inside the container; the collected output returns for
+    /// readers (the capability sweep's list channel). Hooks that only
+    /// care about success ignore it.
+    async fn exec(
+        &self,
+        container: &str,
+        argv: &[String],
+        timeout: Duration,
+    ) -> Result<String, String>;
+
+    /// Run argv inside the container, streaming output lines as they
+    /// come — long operations (model pulls) report progress live. The
+    /// caller enforces its own deadline while consuming.
+    async fn exec_lines(
+        &self,
+        container: &str,
+        argv: &[String],
+    ) -> Result<ExecLines, String>;
+}
+
+/// The no-world hook runner: refuses loudly. A companion modality has no
+/// containers to tell anything to (R2.5: degrade observable, never silent).
+pub struct NullHooks;
+
+#[async_trait::async_trait]
+impl HookRunner for NullHooks {
+    async fn exec(&self, _: &str, _: &[String], _: Duration) -> Result<String, String> {
+        Err("no container runtime on this stone: hooks cannot run".into())
+    }
+
+    async fn exec_lines(
+        &self,
+        _: &str,
+        _: &[String],
+    ) -> Result<ExecLines, String> {
+        Err("no container runtime on this stone: hooks cannot run".into())
+    }
+}
+
+/// A live line stream from an in-container command (the capability
+/// growth's progress source). The caller owns the deadline.
+pub type ExecLines = std::pin::Pin<Box<dyn futures::Stream<Item = String> + Send>>;

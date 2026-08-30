@@ -7,6 +7,7 @@
 use super::checkpoint;
 use super::checkpoint::SINK_CHECKPOINT_DIR;
 use super::policy::{CaptureMode, CapturePolicy};
+pub use crate::garden::runtime::{ExecLines, HookRunner, NullHooks};
 use super::run::{Phase, Run, RunInfo};
 use crate::garden::storage::Storage;
 use std::collections::HashMap;
@@ -28,53 +29,6 @@ pub fn workspace_root() -> PathBuf {
                 .join("workspace")
         })
 }
-
-/// The seam hooks run through: argv inside the offering's container.
-/// Docker implements it with `exec`; tests doubles script the server.
-#[async_trait::async_trait]
-pub trait HookRunner: Send + Sync {
-    /// Run argv inside the container; the collected output returns for
-    /// readers (the capability sweep's list channel). Hooks that only
-    /// care about success ignore it.
-    async fn exec(
-        &self,
-        container: &str,
-        argv: &[String],
-        timeout: Duration,
-    ) -> Result<String, String>;
-
-    /// Run argv inside the container, streaming output lines as they
-    /// come — long operations (model pulls) report progress live. The
-    /// caller enforces its own deadline while consuming.
-    async fn exec_lines(
-        &self,
-        container: &str,
-        argv: &[String],
-    ) -> Result<ExecLines, String>;
-}
-
-/// The no-world hook runner: refuses loudly. A companion modality has no
-/// containers to tell anything to (R2.5: degrade observable, never silent).
-pub struct NullHooks;
-
-#[async_trait::async_trait]
-impl HookRunner for NullHooks {
-    async fn exec(&self, _: &str, _: &[String], _: Duration) -> Result<String, String> {
-        Err("no container runtime on this stone: hooks cannot run".into())
-    }
-
-    async fn exec_lines(
-        &self,
-        _: &str,
-        _: &[String],
-    ) -> Result<ExecLines, String> {
-        Err("no container runtime on this stone: hooks cannot run".into())
-    }
-}
-
-/// A live line stream from an in-container command (the capability
-/// growth's progress source). The caller owns the deadline.
-pub type ExecLines = std::pin::Pin<Box<dyn futures::Stream<Item = String> + Send>>;
 
 /// What Phase A needs to know about the workload being imprinted.
 #[derive(Debug, Clone)]
@@ -267,6 +221,33 @@ impl Runner {
         }
         let _ = report;
         Ok((count, final_hash))
+    }
+
+    /// The replant pipeline, whole (ADR-0005 §6, ADR-0015): select a
+    /// checkpoint (newest or by run), verify it, restore it into the
+    /// offering directory, and hand the incarnation to the garden for
+    /// placement. The face translates one call; the will owns the steps.
+    pub async fn replant_from(
+        &self,
+        fqn: &str,
+        run: Option<&str>,
+        garden: &crate::garden::service::OfferingService,
+        topology: &crate::room::topology::Topology,
+    ) -> Result<(PathBuf, usize, String, crate::garden::model::Offering), String> {
+        let checkpoint = self.select_checkpoint(fqn, run)?;
+        let dir = garden.dirs_root.dir_for(fqn);
+        let (count, final_hash) = self.restore_into(&checkpoint, &dir.root)?;
+        // The restored record IS the identity: same offering_id, same
+        // spec, same connection strings as the predecessor.
+        let bytes = std::fs::read(dir.record_json())
+            .map_err(|e| format!("restored record unreadable: {e}"))?;
+        let record: crate::garden::record::OfferingRecord = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("restored record unparsable: {e}"))?;
+        let offering = garden
+            .replant(record.into_domain(), &final_hash.clone(), &topology.snapshot())
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok((checkpoint, count, final_hash, offering))
     }
 
     /// Run ledger statistics for posture (B3): how many offerings have

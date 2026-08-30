@@ -51,9 +51,9 @@ pub struct Counts {
 
 /// The offering application service. Clone freely.
 pub struct OfferingService {
-    registry: Arc<Registry>,
-    worlds: Arc<RuntimeRegistry>,
-    default_world: String,
+    pub(crate) registry: Arc<Registry>,
+    pub(crate) worlds: Arc<RuntimeRegistry>,
+    pub(crate) default_world: String,
     /// The embedded catalog this stone can place from.
     pub catalog: Arc<Catalog>,
     /// The stone's facts census — compile reads a generation snapshot.
@@ -237,7 +237,7 @@ impl OfferingService {
         out
     }
 
-    fn audit(&self, name: &str, kind: &str, details: serde_json::Value) {
+    pub(crate) fn audit(&self, name: &str, kind: &str, details: serde_json::Value) {
         let log = EventLog::for_dir(&self.dirs_root.base, name);
         if let Err(e) = log.append(kind, details.clone()) {
             tracing::warn!(offering = %name, error = %e, "audit append failed");
@@ -322,148 +322,12 @@ impl OfferingService {
         requested_world: Option<&str>,
         inputs: &std::collections::BTreeMap<String, String>,
     ) -> Result<Offering, CommandError> {
-        let fqn = garden_glossary::fqn::canonicalize(name)
-            .map_err(|e| CommandError::Conflict(e.to_string()))?;
-        if self.registry.get_by_name(&fqn).is_some() {
-            return Err(CommandError::Conflict(format!("'{fqn}' is already planted")));
-        }
-        let kind = requested_world.unwrap_or(&self.default_world).to_string();
-        let rt = self.worlds.by_kind(&kind).map_err(CommandError::WorldUnavailable)?;
-
-        // Catalog path: manifest is truth; compile decides. Every instance
-        // inherits its STEM's manifest; only stems exist in the catalog.
-        let stem = garden_glossary::fqn::stem_of(&fqn);
-        if let Some(m) = self.catalog.get(&stem) {
-            // One machine-truth parse (OFFERINGS.md §5.1): a catalog-named
-            // offering's image comes from its manifest. Explicit overrides
-            // would fork deployed reality from compiled decisions.
-            if image.is_some() {
-                return Err(CommandError::Conflict(format!(
-                    "'{fqn}' is a catalog offering; its manifest defines the image and no explicit image may be supplied"
-                )));
-            }
-            if m.managed.is_none() {
-                return Err(CommandError::Conflict(format!(
-                    "'{fqn}' declares no managed placement"
-                )));
-            }
-            let facts_gen = self.facts.snapshot();
-            let dir = self.dirs_root.dir_for(&fqn);
-            let claims = self.ledger();
-            let plan = compile::compile(m, &facts_gen, inputs, &dir, &claims, self.pool).map_err(|e| match e {
-                super::compile::CompileError::Denied { because, suggest } => {
-                    CommandError::Conflict(format!(
-                        "compatibility denied: {because}{}",
-                        suggest.as_deref().map(|s| format!(" — {s}")).unwrap_or_default()
-                    ))
-                }
-                other => CommandError::Runtime(RuntimeError::Failed(other.to_string())),
-            })?;
-            let placement =
-                rt.place(&fqn, &plan.workload).await.map_err(CommandError::Runtime)?;
-            let now = chrono::Utc::now();
-            let plan_value = serde_json::to_value(&plan)
-                .map_err(|e| CommandError::Conflict(format!("plan encode: {e}")))?;
-            let offering = Offering {
-                offering_id: uuid::Uuid::now_v7().to_string(),
-                // Identity is the FQN; provenance is the stem. Both
-                // `memcached` and `memcached::prod`.offering == "memcached".
-                name: fqn.clone(),
-                offering: m.name.clone(),
-                // Provenance is the manifest's (§5.1 machine-truth): a
-                // client-supplied category must not rewrite catalog identity.
-                category: m.category.clone(),
-                status: Status::Running,
-                location: Location {
-                    host: "localhost".into(),
-                    port: placement.named_host_ports.values().copied().next().unwrap_or(0),
-                    protocol: "http".into(),
-                },
-            sub_capabilities: Default::default(),
-                mode_data: ModeData::Managed(ManagedData {
-                    runtime_kind: kind.clone(),
-                    spec: plan.workload.clone(),
-                    port_map: placement.named_host_ports,
-                    plan: Some(plan_value),
-                }),
-                registered_at: now,
-                updated_at: now,
-            };
-            self.registry.register(offering.clone());
-            self.audit(&fqn, "Placed", serde_json::json!({ "world": kind, "catalog": true }));
-            return Ok(offering);
-        }
-
-
-        // Ad-hoc path: a raw image with no catalog behind it.
-        let Some(image) = image else {
-            return Err(CommandError::NotFound(format!(
-                "no catalog entry for '{stem}' and no image given"
-            )));
-        };
-        // ADR-0002: ad-hoc offerings are citizens too — their roles draw
-        // stable homes from the same ledger the catalog path uses.
-        let mut intents = std::collections::BTreeMap::new();
-        for role in named_ports.keys() {
-            intents.insert(
-                role.clone(),
-                ports::Intent {
-                    tier: ports::Tier::Flexible,
-                    home: None,
-                },
-            );
-        }
-        let claims = self.ledger();
-        let homes = ports::allocate(&intents, &claims, self.pool).map_err(|e| match e {
-            ports::AllocError::ClaimConflict { port, holder } => CommandError::Conflict(format!(
-                "host port {port} is held by garden member '{holder}'"
-            )),
-            other => CommandError::Conflict(format!("address allocation refused: {other}")),
-        })?;
-        let spec = WorkloadSpec {
-            image: image.clone(),
-            named_ports: named_ports.clone(),
-            allocations: homes
-                .iter()
-                .map(|(role, home)| {
-                    (
-                        role.clone(),
-                        PortAllocation {
-                            home: *home,
-                            tier: ports::Tier::Flexible,
-                        },
-                    )
-                })
-                .collect(),
-            ..Default::default()
-        };
-        let placement = rt.place(&fqn, &spec).await.map_err(CommandError::Runtime)?;
-        let now = chrono::Utc::now();
-        let offering = Offering {
-            offering_id: uuid::Uuid::now_v7().to_string(),
-            name: fqn.clone(),
-            // Ad-hoc offerings are their own stem (no catalog behind them).
-            offering: stem,
-            category: category.unwrap_or_else(|| "misc".into()),
-            status: Status::Running,
-            location: Location {
-                host: "localhost".into(),
-                port: placement.named_host_ports.values().copied().next().unwrap_or(0),
-                protocol: "http".into(),
-            },
-            sub_capabilities: Default::default(),
-            mode_data: ModeData::Managed(ManagedData {
-                runtime_kind: kind.clone(),
-                spec,
-                port_map: placement.named_host_ports,
-                plan: None,
-            }),
-            registered_at: now,
-            updated_at: now,
-        };
-        self.registry.register(offering.clone());
-        self.audit(&fqn, "Placed", serde_json::json!({ "world": kind, "catalog": false }));
-        Ok(offering)
+        // The mechanics live in Provenance (plan, then place — the same
+        // decision path the dry twin speaks). The service persists.
+        self.provenance()
+            .install(name, image, named_ports, category, requested_world, inputs, None)
+            .await
+            .map(|(offering, _)| offering)
     }
 
     /// How many catalog offerings this stone could place today.
@@ -823,6 +687,29 @@ managed:
         async fn list(&self) -> Vec<PlacedRef> {
             Vec::new()
         }
+    }
+
+    #[test]
+    fn the_plan_twin_answers_without_placing() {
+        let catalog = Catalog::embedded([("redis", REDIS)]).unwrap();
+        let (service, _root) = service_with(catalog);
+
+        let plan = service
+            .provenance()
+            .plan_install("redis", None, &inputs())
+            .unwrap();
+        assert!(plan.can, "redis compiles here: {:?}", plan.because);
+        assert!(plan.compiled.is_some(), "the plan carries the placement");
+        assert!(
+            service.placed("redis::default").is_none(),
+            "the dry twin places NOTHING"
+        );
+
+        let unknown = service
+            .provenance()
+            .plan_install("who-knows", None, &inputs())
+            .unwrap();
+        assert!(!unknown.can, "no manifest, no image, no coming");
     }
 
     fn service_with(catalog: Catalog) -> (OfferingService, std::path::PathBuf) {

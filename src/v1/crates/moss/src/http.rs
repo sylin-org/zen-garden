@@ -968,29 +968,24 @@ async fn replant_offer(
     let fqn = garden_glossary::fqn::canonicalize(&name)
         .map_err(|e| CommandError::Conflict(e.to_string()))?;
     let run = body.as_ref().and_then(|Json(req)| req.run.clone());
-    let checkpoint = state
-        .capture
-        .select_checkpoint(&fqn, run.as_deref())
-        .map_err(CommandError::NotFound)?;
-
-    let dir = state.garden.dirs_root.dir_for(&fqn);
-    let (count, final_hash) = state
-        .capture
-        .restore_into(&checkpoint, &dir.root)
-        .map_err(CommandError::Conflict)?;
-
-    // The restored record IS the identity: same offering_id, same spec,
-    // same connection strings as the predecessor.
-    let bytes = std::fs::read(dir.record_json())
-        .map_err(|e| CommandError::Conflict(format!("restored record unreadable: {e}")))?;
-    let record: crate::garden::record::OfferingRecord =
-        serde_json::from_slice(&bytes).map_err(|e| {
-            CommandError::Conflict(format!("restored record unparsable: {e}"))
-        })?;
-    let offering = state
-        .garden
-        .replant(record.into_domain(), &final_hash, &state.topology.snapshot())
-        .await?;
+    // The pipeline is the will's; the face translates one call.
+    let job_id = state.jobs.start("replant", &fqn);
+    let replanted = state.capture.replant_from(
+        &fqn,
+        run.as_deref(),
+        &state.garden,
+        &state.topology,
+    ).await;
+    let (checkpoint, count, final_hash, offering) = match replanted {
+        Ok(v) => {
+            state.jobs.complete(&job_id, serde_json::json!({ "fqn": fqn }));
+            v
+        }
+        Err(e) => {
+            state.jobs.fail(&job_id, &e);
+            return Err(CommandError::Conflict(e).into());
+        }
+    };
     tracing::info!(offering = %fqn, from = %checkpoint.display(), files = count, "replanted");
     Ok(Json(
         serde_json::json!({ "data": { "offering": {
@@ -1293,7 +1288,7 @@ async fn plant_offering(
             Some(req.category),
             req.runtime.as_deref(),
             &req.inputs,
-            &state.jobs,
+            Some(&state.jobs),
         )
         .await?;
     Ok(Json(serde_json::json!({

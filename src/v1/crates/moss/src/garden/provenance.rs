@@ -6,16 +6,17 @@
 //! - [`Provenance::plan_install`] — the dry twin: locate the manifest,
 //!   compile the placement decisions against this stone's facts and
 //!   ledger, and answer *can it, and why / why not*. Nothing is placed.
-//! - [`Provenance::install`] — run the same plan as a JOB: the caller
-//!   gets a handle whose steps and progress are visible on the pulse
-//!   for its whole life. The result is the placed offering.
+//! - [`Provenance::install`] — run the SAME plan as a job: resolve,
+//!   place, start — with the steps and their progress visible on the
+//!   pulse for the job's whole life. The result is the placed offering.
 
-use super::compile::{self, Decision};
-use super::model::{Offering, WorkloadSpec};
+use super::compile::{self, Decision, PlacementPlan};
+use super::model::{ManagedData, ModeData, Offering, PortAllocation, Status, WorkloadSpec};
 use super::service::{CommandError, OfferingService};
 use crate::jobs::JobTracker;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// The answer to "can this come here, and what would it look like".
 #[derive(Debug, Clone, Serialize)]
@@ -30,9 +31,7 @@ pub struct InstallPlan {
     /// The image that would run (manifest-defined for catalog offerings).
     pub image: Option<String>,
     /// The compiled placement — present only when `can`.
-    pub workload: Option<WorkloadSpec>,
-    /// The decision trail, raw, for machines.
-    pub decisions: Vec<Decision>,
+    pub compiled: Option<PlacementPlan>,
 }
 
 /// The catalog's mouth: plan and install offerings by name.
@@ -66,8 +65,7 @@ impl<'a> Provenance<'a> {
                 can: false,
                 because: vec![format!("'{fqn}' is already planted here")],
                 image: None,
-                workload: None,
-                decisions: Vec::new(),
+                compiled: None,
             });
         }
 
@@ -81,8 +79,7 @@ impl<'a> Provenance<'a> {
                     format!("no catalog entry for '{stem}' and no image given")
                 }],
                 image,
-                workload: None,
-                decisions: Vec::new(),
+                compiled: None,
                 fqn: fqn.clone(),
                 stem: stem.clone(),
             });
@@ -95,8 +92,7 @@ impl<'a> Provenance<'a> {
                 can: false,
                 because: vec![format!("'{stem}' declares no managed placement")],
                 image: None,
-                workload: None,
-                decisions: Vec::new(),
+                compiled: None,
             });
         }
         if image.is_some() {
@@ -108,8 +104,7 @@ impl<'a> Provenance<'a> {
                     "'{fqn}' is a catalog offering; its manifest defines the image and no explicit image may be supplied"
                 )],
                 image: None,
-                workload: None,
-                decisions: Vec::new(),
+                compiled: None,
             });
         }
 
@@ -121,7 +116,7 @@ impl<'a> Provenance<'a> {
                 let because = plan
                     .decisions
                     .iter()
-                    .map(|d| {
+                    .map(|d: &Decision| {
                         format!(
                             "{}: {} ({})",
                             d.rule,
@@ -131,13 +126,12 @@ impl<'a> Provenance<'a> {
                     })
                     .collect();
                 Ok(InstallPlan {
-                    fqn,
-                    stem,
+                    fqn: fqn.clone(),
+                    stem: stem.clone(),
                     can: true,
                     because,
                     image: Some(plan.workload.image.clone()),
-                    workload: Some(plan.workload),
-                    decisions: plan.decisions,
+                    compiled: Some(plan),
                 })
             }
             Err(super::compile::CompileError::Denied { because, suggest }) => Ok(InstallPlan {
@@ -149,8 +143,7 @@ impl<'a> Provenance<'a> {
                     suggest.as_deref().map(|s| format!(" — {s}")).unwrap_or_default()
                 )],
                 image: None,
-                workload: None,
-                decisions: Vec::new(),
+                compiled: None,
             }),
             Err(other) => Ok(InstallPlan {
                 fqn: fqn.clone(),
@@ -158,56 +151,170 @@ impl<'a> Provenance<'a> {
                 can: false,
                 because: vec![other.to_string()],
                 image: None,
-                workload: None,
-                decisions: Vec::new(),
+                compiled: None,
             }),
         }
     }
 
-    /// Install: plan, then place — as a JOB. The returned id is live on
-    /// the tracker (steps and progress ride the pulse); the returned
-    /// offering is the placed record.
+    /// Install: the plan, EXECUTED. Resolve → decide → place → start,
+    /// as a job whose steps ride the pulse. `jobs = None` runs the same
+    /// pipeline silently (service wrappers, tests).
     #[allow(clippy::too_many_arguments)]
     pub async fn install(
         &self,
         name: &str,
         image: Option<String>,
-        named_ports: BTreeMap<String, u16>,
+        named_ports: std::collections::HashMap<String, u16>,
         category: Option<String>,
         requested_world: Option<&str>,
         inputs: &BTreeMap<String, String>,
-        jobs: &JobTracker,
-    ) -> Result<(Offering, String), CommandError> {
-        let plan = self.plan_install(name, image.clone(), inputs)?;
-        if !plan.can {
-            let why = plan.because.join("; ");
-            return Err(CommandError::Conflict(why));
-        }
-        let job = jobs.start("install", &plan.fqn);
-        jobs.progress(&job, format!("planned — {}", plan.because.join("; ")));
-
+        jobs: Option<&JobTracker>,
+    ) -> Result<(Offering, Option<String>), CommandError> {
+        let job = jobs.map(|j| j.start("install", name));
+        let say = |jobs: Option<&JobTracker>, job: &Option<String>, line: String| {
+            if let (Some(j), Some(id)) = (jobs, job) {
+                j.progress(id, line);
+            }
+        };
         match self
-            .garden
-            .offer(name, image, named_ports.into_iter().collect(), category, requested_world, inputs)
+            .install_inner(
+                name,
+                image,
+                named_ports,
+                category,
+                requested_world,
+                inputs,
+                jobs,
+                &job,
+            )
             .await
         {
             Ok(offering) => {
-                let uri_port = offering.location.port;
-                jobs.complete(
-                    &job,
-                    serde_json::json!({
-                        "fqn": offering.name,
-                        "port": uri_port,
-                    }),
-                );
-                jobs.progress(&job, format!("running at :{uri_port}"));
+                if let (Some(j), Some(id)) = (jobs, &job) {
+                    j.complete(id, serde_json::json!({ "fqn": offering.name }));
+                }
                 Ok((offering, job))
             }
             Err(e) => {
-                jobs.fail(&job, &e.to_string());
+                if let (Some(j), Some(id)) = (jobs, &job) {
+                    j.fail(id, &e.to_string());
+                }
                 Err(e)
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn install_inner(
+        &self,
+        name: &str,
+        image: Option<String>,
+        named_ports: std::collections::HashMap<String, u16>,
+        category: Option<String>,
+        requested_world: Option<&str>,
+        inputs: &BTreeMap<String, String>,
+        jobs: Option<&JobTracker>,
+        job: &Option<String>,
+    ) -> Result<Offering, CommandError> {
+        let plan = self.plan_install(name, image.clone(), inputs)?;
+        if !plan.can {
+            return Err(CommandError::Conflict(plan.because.join("; ")));
+        }
+        if let (Some(j), Some(id)) = (jobs, job) {
+            j.progress(id, "decided — placing".to_string());
+        }
+
+        let kind = requested_world.unwrap_or(&self.garden.default_world).to_string();
+        let rt = self.garden.runtime_for_kind(&kind)?;
+
+        // Catalog offerings are placed FROM THE COMPILED PLAN; ad-hoc
+        // ones draw flexible homes from the same ledger first.
+        let (workload, plan_value, stem, category) = if let Some(compiled) = &plan.compiled {
+            let plan_value = serde_json::to_value(compiled)
+                .map_err(|e| CommandError::Conflict(format!("plan encode: {e}")))?;
+            let category = self
+                .garden
+                .catalog
+                .get(&plan.stem)
+                .map(|m| m.category.clone())
+                .unwrap_or_else(|| "misc".into());
+            (
+                compiled.workload.clone(),
+                Some(plan_value),
+                plan.stem.clone(),
+                category,
+            )
+        } else {
+            let Some(image) = &image else {
+                return Err(CommandError::NotFound(format!(
+                    "no catalog entry for '{}' and no image given",
+                    plan.stem
+                )));
+            };
+            let mut intents = BTreeMap::new();
+            for role in named_ports.keys() {
+                intents.insert(
+                    role.clone(),
+                    super::ports::Intent { tier: super::ports::Tier::Flexible, home: None },
+                );
+            }
+            let claims = self.garden.ledger();
+            let homes = super::ports::allocate(&intents, &claims, self.garden.pool)
+                .map_err(|e| match e {
+                    super::ports::AllocError::ClaimConflict { port, holder } => {
+                        CommandError::Conflict(format!(
+                            "host port {port} is held by garden member '{holder}'"
+                        ))
+                    }
+                    other => CommandError::Conflict(format!(
+                        "address allocation refused: {other}"
+                    )),
+                })?;
+            let spec = WorkloadSpec {
+                image: image.clone(),
+                named_ports: named_ports.clone(),
+                allocations: homes
+                    .iter()
+                    .map(|(role, home)| {
+                        (
+                            role.clone(),
+                            PortAllocation { home: *home, tier: super::ports::Tier::Flexible },
+                        )
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            (spec, None, plan.stem.clone(), category.unwrap_or_else(|| "misc".into()))
+        };
+
+        let placement = rt
+            .place(&plan.fqn, &workload)
+            .await
+            .map_err(CommandError::Runtime)?;
+        let now = chrono::Utc::now();
+        let offering = Offering {
+            offering_id: uuid::Uuid::now_v7().to_string(),
+            name: plan.fqn.clone(),
+            offering: stem,
+            category,
+            status: Status::Running,
+            location: super::model::Location {
+                host: "localhost".into(),
+                port: placement.named_host_ports.values().copied().next().unwrap_or(0),
+                protocol: "http".into(),
+            },
+            sub_capabilities: Default::default(),
+            mode_data: ModeData::Managed(ManagedData {
+                runtime_kind: kind.clone(),
+                spec: workload,
+                port_map: placement.named_host_ports,
+                plan: plan_value,
+            }),
+            registered_at: now,
+            updated_at: now,
+        };
+        self.garden.register_placed(offering.clone(), &kind);
+        Ok(offering)
     }
 }
 
@@ -216,27 +323,26 @@ impl OfferingService {
     pub fn provenance(&self) -> Provenance<'_> {
         Provenance::new(self)
     }
-}
 
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use super::*;
+    /// The placement persistence: the registry hears the incarnation and
+    /// the chain opens with Placed (Provenance decides — the service
+    /// owns what is remembered).
+    pub(crate) fn register_placed(&self, offering: Offering, world_kind: &str) {
+        self.registry.register(offering.clone());
+        self.audit(
+            &offering.name,
+            "Placed",
+            serde_json::json!({ "world": world_kind, "catalog": self.catalog.get(&offering.offering).is_some() }),
+        );
+    }
 
-    #[test]
-    fn install_plan_reports_what_it_can_see_without_placing() {
-        // The plan twin runs the SAME compile the install will run; the
-        // fixture proves the shape: verdict, reasons, no placement.
-        let plan = InstallPlan {
-            fqn: "ollama::default".into(),
-            stem: "ollama".into(),
-            can: true,
-            because: vec!["address.default: 7300 (service pool draw)".into()],
-            image: Some("ollama/ollama:latest".into()),
-            workload: None,
-            decisions: Vec::new(),
-        };
-        assert!(plan.can);
-        assert_eq!(plan.image.as_deref(), Some("ollama/ollama:latest"));
+    /// A runtime by world kind, for contexts that place directly.
+    pub(crate) fn runtime_for_kind(
+        &self,
+        kind: &str,
+    ) -> Result<Arc<dyn super::runtime::Runtime>, CommandError> {
+        self.worlds
+            .by_kind(kind)
+            .map_err(CommandError::WorldUnavailable)
     }
 }

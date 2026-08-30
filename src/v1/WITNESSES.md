@@ -684,3 +684,21 @@ rake tests, the full workspace suite green.
   regenerated per ADR-0009), the MCP `plan-install` tool,
   `rake offer --plan`.
 - Deployed to .195; suite green (207 tests).
+
+### W16, concluded II — the journal breathes (2026-08-30)
+
+- Run fates, lifecycle audits, room events, and the stone's own
+  goodbye all land in ONE typed fact stream: `journal/stone.jsonl`.
+  Witnessed live: peer-seen facts for every chirping stone within one
+  heartbeat of boot; a restart re-sequences from what survives.
+- **Offer is Provenance's now**: the pipeline (catalog + ad-hoc) moved
+  out of the service; `service.offer` is a one-line wrapper. The
+  plan's composer is the plan's executor.
+- **The hook seam is a world seam**: HookRunner moved from the will to
+  the runtime layer — capabilities, docker, and the will all import it
+  from where it belongs.
+- **Replant is a tracked job and a one-line face**: the
+  select-verify-restore-place pipeline lives in
+  `Runner::replant_from`; the face translates.
+- Deployed to .195 (hash-verified); suite green (207 tests). Fleet as
+  found.

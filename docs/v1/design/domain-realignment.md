@@ -53,9 +53,11 @@ directly anymore.
    (law 6) — witnessed live in W16.
 5. **DONE — rake has one router**: stone_op follows not-here once;
    offering_op deleted.
-6. **journal spine** (partially): journal.rs exists (typed, persisted,
-   replay) and the offering chains now carry run fates; absorbing
-   RunInfo map / JobTracker / pulse bus into it remains.
+6. **DONE — the journal breathes**: run fates, lifecycle audits,
+   room events (peers seen/expired), and the stone's own goodbye all
+   land in stone.jsonl (typed, seq'd, replayed at boot). Witnessed
+   live on .195. Pulse stays the live-rich feed (samplers, shapes);
+   jobs stay per-job documents — settled, see 14.
 7. **DONE — the room context is named and owned**: the wire plane is
    the `garden-room` crate (ingress, dispatch, announce, topology,
    responder, probe, pipeline, config); moss holds the room facade and

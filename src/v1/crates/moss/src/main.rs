@@ -353,7 +353,10 @@ async fn main() {
     // The stone's fact stream (ADR-0015): one typed, persisted record of
     // everything the stone states about itself and its room.
     let stone_journal = {
-        let p = dirs_root.join("journal").join("stone.jsonl");
+        let p = dirs_root
+            .parent()
+            .map(|p| p.join("journal").join("stone.jsonl"))
+            .unwrap_or_else(|| dirs_root.join("stone.jsonl"));
         match journal::Journal::open(p) {
             Ok(j) => Some(Arc::new(j)),
             Err(e) => {
@@ -392,6 +395,34 @@ async fn main() {
     // offering rebuilds from its own audit chain; runs left in flight by
     // a restart are marked interrupted, never forgotten.
     capture_runner.replay_runs(&OfferingsRoot::new(garden.dirs_root.base.clone()));
+    // The room's news lands in the fact stream (ADR-0015): peers seen
+    // and expired are the stone's facts about its room. Spawned at boot,
+    // beside every other listener (R2.8).
+    {
+        let j = stone_journal.clone();
+        let mut room_events = topology.events();
+        let room_token = token.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = room_token.cancelled() => return,
+                    ev = room_events.recv() => match ev {
+                        Ok(crate::room::topology::TopologyEvent::Seen(view)) => j.as_ref().map(|j| {
+                            j.append(crate::journal::Kind::PeerSeen { stone: view.body.stone.name.clone() })
+                        }),
+                        Ok(crate::room::topology::TopologyEvent::Expired { stone_name, .. }) |
+                        Ok(crate::room::topology::TopologyEvent::Goodbye { stone_name, .. }) => j.as_ref().map(|j| {
+                            j.append(crate::journal::Kind::PeerExpired { stone: stone_name })
+                        }),
+                        Err(_) => None,
+                    },
+                };
+            }
+        });
+    }
+
+
+
     let capture_runner = capture_runner.with_journal(stone_journal
         .clone()
         .unwrap_or_else(|| Arc::new(journal::Journal::memory())));
@@ -511,31 +542,6 @@ async fn main() {
         })
         .await
         .unwrap_or_else(|e| eprintln!("http server error: {e}"));
-
-    // The room's news lands in the fact stream (ADR-0015): peers seen
-    // and expired are the stone's facts about its room.
-    {
-        let j = stone_journal.clone();
-        let mut room_events = topology.events();
-        let room_token = token.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = room_token.cancelled() => return,
-                    ev = room_events.recv() => match ev {
-                        Ok(crate::room::topology::TopologyEvent::Seen(view)) => j.as_ref().map(|j| {
-                            j.append(crate::journal::Kind::PeerSeen { stone: view.body.stone.name.clone() })
-                        }),
-                        Ok(crate::room::topology::TopologyEvent::Expired { stone_name, .. }) |
-                        Ok(crate::room::topology::TopologyEvent::Goodbye { stone_name, .. }) => j.as_ref().map(|j| {
-                            j.append(crate::journal::Kind::PeerExpired { stone: stone_name })
-                        }),
-                        Err(_) => None,
-                    },
-                };
-            }
-        });
-    }
 
     // ---- farewell ----------------------------------------------------------
     // Let cancelled tasks wind down, then speak goodbye so peers drop us

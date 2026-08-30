@@ -112,6 +112,10 @@ enum Command {
     Offer {
         /// The offering's name; a catalog manifest wins when one exists.
         name: String,
+        /// The dry twin: report whether it can grow here, and why —
+        /// place NOTHING.
+        #[arg(long)]
+        plan: bool,
         /// Raw image reference — ad-hoc planting without a catalog entry.
         #[arg(long)]
         image: Option<String>,
@@ -2180,9 +2184,47 @@ fn render_storage(v: &serde_json::Value) -> Result<(), String> {
 
 async fn cmd_stone_op(cli: &Cli) -> Result<Answer, String> {
     match &cli.command {
-        Command::Offer { name, image, ports, inputs, runtime, category } => {
+        Command::Offer { name, image, ports, inputs, runtime, category, plan } => {
             let ports = parse_u16_pairs(ports)?;
             let inputs_map = parse_input_map(inputs)?;
+
+            if *plan {
+                // The dry twin: same decision path as install, nothing
+                // placed. The answer says can/cannot and WHY.
+                let mut body = serde_json::Map::new();
+                if let Some(v) = image {
+                    body.insert("image".into(), serde_json::json!(v));
+                }
+                body.insert("inputs".into(), serde_json::json!(inputs_map));
+                let (_, v) = cli
+                    .stone_op("POST", format!("/api/v1/provenance/{name}/plan"), Some(&body.into()))
+                    .await?;
+                return Ok(Answer::new(v).human(|v| {
+                    let plan = envelope_plain(v)?["plan"].clone();
+                    let can = plan["can"].as_bool().unwrap_or(false);
+                    let name = plan["fqn"].as_str().unwrap_or("?");
+                    if can {
+                        println!("{name} can grow here");
+                        if let Some(img) = plan["image"].as_str() {
+                            println!("  image    {img}");
+                        }
+                    } else {
+                        println!("{name} cannot grow here:");
+                    }
+                    for why in plan["because"].as_array().into_iter().flatten() {
+                        println!("  · {}", why.as_str().unwrap_or("?"));
+                    }
+                    for d in plan["decisions"].as_array().into_iter().flatten() {
+                        println!(
+                            "  · {} — {} ({})",
+                            d["rule"].as_str().unwrap_or("?"),
+                            d["chose"].as_str().unwrap_or("?"),
+                            d["because"].as_str().unwrap_or("declared")
+                        );
+                    }
+                    Ok(())
+                }));
+            }
             // Thin client honesty: only keys the operator set ride along.
             let mut body = serde_json::Map::new();
             let ports_json = serde_json::to_value(ports)

@@ -355,6 +355,77 @@ impl Offering {
     }
 }
 
+impl Offering {
+    /// REST: stopped, and convergence keeps it so. The world stops the
+    /// workload; the entity records the truth of itself. Managed only.
+    pub async fn rest(&mut self, rt: &dyn super::runtime::Runtime) -> Result<(), String> {
+        self.require_managed("rest")?;
+        rt.stop(&self.name)
+            .await
+            .map_err(|e| format!("rest: {e}"))?;
+        self.status = Status::Stopped;
+        Ok(())
+    }
+
+    /// WAKE: running again — resurrecting from the stored spec if
+    /// reality lost the workload behind our back. Returns what actually
+    /// happened, so the caller journals honestly.
+    pub async fn wake(
+        &mut self,
+        rt: &dyn super::runtime::Runtime,
+    ) -> Result<WakeOutcome, String> {
+        let spec = {
+            let managed = self.require_managed("wake")?;
+            managed.spec.clone()
+        };
+        let outcome = match rt.observe(&self.name).await {
+            None => {
+                tracing::warn!(offering = %self.name, "workload missing - resurrecting from stored spec");
+                rt.place(&self.name, &spec)
+                    .await
+                    .map_err(|e| format!("wake: {e}"))?;
+                WakeOutcome::Resurrected
+            }
+            Some(observed) if !observed.running => {
+                rt.start(&self.name)
+                    .await
+                    .map_err(|e| format!("wake: {e}"))?;
+                WakeOutcome::Started
+            }
+            Some(_) => WakeOutcome::AlreadyRunning, // idempotent wake
+        };
+        self.status = Status::Running;
+        Ok(outcome)
+    }
+
+    /// UPROOT: the workload is removed. Idempotent at the world's edge
+    /// (a husk whose placement never landed is already gone). Managed
+    /// only.
+    pub async fn uproot(&mut self, rt: &dyn super::runtime::Runtime) -> Result<(), String> {
+        self.require_managed("uproot")?;
+        rt.remove(&self.name)
+            .await
+            .map_err(|e| format!("uproot: {e}"))
+    }
+
+    /// The verb gate: rest/wake/uproot apply to managed work only.
+    fn require_managed(&self, verb: &str) -> Result<&ManagedData, String> {
+        self.managed()
+            .ok_or_else(|| format!("'{}' is not managed - {verb} applies to managed work", self.name))
+    }
+}
+
+/// What a wake actually did — the caller journals the difference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeOutcome {
+    /// The workload was running; wake was a no-op on the world.
+    AlreadyRunning,
+    /// The workload existed but was stopped; it was started.
+    Started,
+    /// The workload was GONE; it was resurrected from the stored spec.
+    Resurrected,
+}
+
 /// The last path segment under EITHER separator dialect. A stored
 /// spec's host paths speak the stone that wrote them; a checkpoint
 /// replanted across OS lines carries paths the local parser cannot

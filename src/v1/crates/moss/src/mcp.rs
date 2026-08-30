@@ -194,6 +194,23 @@ async fn run_tool(state: &Arc<AppState>, name: &str, args: &Value) -> Result<Val
                 .collect();
             Ok(json!({ "offerings": rows }))
         }
+        "plan-install" => {
+            let name = args["name"]
+                .as_str()
+                .ok_or("plan-install needs a 'name'")?
+                .to_string();
+            let mut inputs = std::collections::BTreeMap::new();
+            if let Some(map) = args["inputs"].as_object() {
+                for (k, v) in map {
+                    inputs.insert(k.clone(), v.as_str().unwrap_or_default().to_string());
+                }
+            }
+            let plan = state
+                .provenance()
+                .plan_install(&name, None, &inputs)
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "plan": plan }))
+        }
         "plant" => {
             let name = args["name"]
                 .as_str()

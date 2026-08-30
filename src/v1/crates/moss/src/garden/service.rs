@@ -7,7 +7,7 @@ use super::compile;
 use super::events::EventLog;
 use super::facts::Factsheet;
 use super::manifest::Catalog;
-use super::model::{Location, ManagedData, ModeData, Offering, PortAllocation, Status, WorkloadSpec};
+use super::model::{WakeOutcome, Location, ManagedData, ModeData, Offering, PortAllocation, Status, WorkloadSpec};
 use super::ports::{self, Claim, Pool};
 use super::registry::Registry;
 use super::runtime::{RuntimeRegistry, RuntimeError};
@@ -61,7 +61,7 @@ pub struct OfferingService {
     /// Where offering directories live (rehydration contract, OFFERINGS.md).
     pub dirs_root: OfferingsRoot,
     /// The stone's service pool for address allocation (ADR-0002 ruling 1).
-    pool: Pool,
+    pub(crate) pool: Pool,
     /// The exec seam for read-only in-container reads (the capability
     /// sweep's list channel). None where no world can run hooks.
     hooks: Option<Arc<dyn super::will::saga::HookRunner>>,
@@ -104,7 +104,7 @@ impl OfferingService {
     /// from its allocations — or, transitionally before directory migration,
     /// from whatever residence it last recorded. Rest counts; offline is
     /// not free.
-    fn ledger(&self) -> Vec<Claim> {
+    pub(crate) fn ledger(&self) -> Vec<Claim> {
         self.registry
             .snapshot()
             .iter()
@@ -555,57 +555,40 @@ impl OfferingService {
 
     /// Rest: stopped, and reconcile will keep it so (§3.2).
     pub async fn rest(&self, name: &str) -> Result<Offering, CommandError> {
-        let offering = self.managed(name)?;
+        let mut offering = self.managed(name)?;
         let rt = self.world_for(&offering)?;
-        let fqn = offering.name.clone();
-        rt.stop(&fqn).await.map_err(CommandError::Runtime)?;
+        offering.rest(rt.as_ref()).await.map_err(CommandError::Conflict)?;
         self.registry.mark_status(&offering.offering_id, Status::Stopped);
-        self.audit(&fqn, "Stopped", serde_json::json!({ "reason": "rest" }));
-        self.registry.get_by_name(&fqn).ok_or(CommandError::NotFound(fqn))
+        self.audit(&offering.name, "Stopped", serde_json::json!({ "reason": "rest" }));
+        self.registry
+            .get_by_name(&offering.name)
+            .ok_or(CommandError::NotFound(offering.name))
     }
 
     /// Wake: running again — resurrecting the workload from its stored spec
     /// if reality lost it behind our backs (PoC wake parity).
     pub async fn wake(&self, name: &str) -> Result<Offering, CommandError> {
-        let offering = self.managed(name)?;
+        let mut offering = self.managed(name)?;
         let rt = self.world_for(&offering)?;
         let fqn = offering.name.clone();
-        let managed = offering.managed().ok_or_else(|| {
-            CommandError::Conflict(format!("'{fqn}' is not managed"))
-        })?;
-
-        match rt.observe(&fqn).await {
-            None => {
-                tracing::warn!(offering = %fqn, "workload missing - resurrecting from stored spec");
-                // The stored spec already carries the ledgered allocations
-                // (ADR-0002): identity rides along; residence is chosen at
-                // the create edge (squatters relocate, homes remembered).
-                let spec = managed.spec.clone();
-                rt.place(&fqn, &spec).await.map_err(CommandError::Runtime)?;
-                self.audit(&fqn, "Resurrected", serde_json::json!({}));
-            }
-            Some(observed) if !observed.running => {
-                rt.start(&fqn).await.map_err(CommandError::Runtime)?;
-            }
-            Some(_) => {} // already running; idempotent wake
+        let outcome = offering.wake(rt.as_ref()).await.map_err(CommandError::Conflict)?;
+        match outcome {
+            WakeOutcome::Resurrected => self.audit(&fqn, "Resurrected", serde_json::json!({})),
+            _ => self.audit(&fqn, "Started", serde_json::json!({})),
         }
-
         self.registry.mark_status(&offering.offering_id, Status::Running);
-        self.audit(&fqn, "Started", serde_json::json!({}));
 
         // Port honesty: observe and refresh rather than lie about stale
         // mappings. Relocation under pressure is recorded, never denied.
-        let mut updated = offering;
-        updated.status = Status::Running; // the stale clone must not undo the mark above
-        if let ModeData::Managed(m) = &mut updated.mode_data
+        if let ModeData::Managed(m) = &mut offering.mode_data
             && let Some(observed) = rt.observe(&fqn).await
             && observed.named_host_ports != m.port_map
             && !observed.named_host_ports.is_empty()
         {
             m.port_map = observed.named_host_ports;
-            updated.location.port = m.port_map.values().copied().next().unwrap_or(0);
-            updated.updated_at = chrono::Utc::now();
-            self.registry.replace(updated.clone());
+            offering.location.port = m.port_map.values().copied().next().unwrap_or(0);
+            offering.updated_at = chrono::Utc::now();
+            self.registry.replace(offering.clone());
             tracing::info!(offering = %fqn, "host ports remapped after wake");
         }
         self.registry.get_by_name(&fqn).ok_or(CommandError::NotFound(fqn))
@@ -614,19 +597,18 @@ impl OfferingService {
     /// Uproot: remove the workload and forget the offering. Managed only —
     /// adopted release / borrowed return arrive with their modes (O3).
     pub async fn uproot(&self, name: &str) -> Result<(), CommandError> {
-        let offering = self.managed(name)?;
+        let mut offering = self.managed(name)?;
         let rt = self.world_for(&offering)?;
-        let fqn = offering.name.clone();
-        rt.remove(&fqn).await.map_err(CommandError::Runtime)?;
+        offering.uproot(rt.as_ref()).await.map_err(CommandError::Conflict)?;
         self.registry.remove(&offering.offering_id);
-        self.audit(&fqn, "Uprooted", serde_json::json!({}));
+        self.audit(&offering.name, "Uprooted", serde_json::json!({}));
 
         // Forgetting the offering means forgetting its directory too.
         // Workloads write uid-0 files into their volumes; when the moss's
         // own uid cannot delete them, the WORLD purges via the offering's
         // own image (D17) - and a world that cannot purge degrades with
         // an honest warning (R2.5), never a failed uproot.
-        let dir = self.dirs_root.dir_for(&fqn);
+        let dir = self.dirs_root.dir_for(&offering.name);
         if let Err(e) = dir.remove() {
             let image = offering
                 .managed()
@@ -635,11 +617,11 @@ impl OfferingService {
             match rt.purge_dir(&dir.root, &image).await {
                 Ok(()) => {
                     let _ = dir.remove();
-                    tracing::info!(offering = %fqn, "offering directory purged through the world");
+                    tracing::info!(offering = %offering.name, "offering directory purged through the world");
                 }
                 Err(pe) => {
                     tracing::warn!(
-                        offering = %fqn, dir = %dir.root.display(),
+                        offering = %offering.name, dir = %dir.root.display(),
                         rm_error = %e, purge_error = %pe,
                         "offering directory left in place - the world cannot clean it"
                     );

@@ -37,6 +37,12 @@
       "summary": "Local data (L22): this moss's live counters - ingest, dispatch, topology, offerings."
     },
     {
+      "face": "PlanInstall",
+      "method": "POST",
+      "path": "/api/v1/provenance/{stem}/plan",
+      "summary": "The dry twin of plant (ADR-0015): locate the manifest, compile the placement decisions against this stone, answer can/cannot and why - NOTHING is placed."
+    },
+    {
       "face": "GardenStones",
       "method": "GET",
       "path": "/api/v1/garden/stones",

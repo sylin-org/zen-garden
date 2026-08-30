@@ -23,6 +23,7 @@ pub enum Face {
     StonePosture,
     /// Garden data (L22): the room as this moss sees it - self spliced among the peers, every row a canonical frame.
     GardenStones,
+    PlanInstall,
     /// The catalog this stone can place from (derived).
     Catalog,
     /// This stone's banks, plus the removable volumes ready for adoption.
@@ -111,6 +112,7 @@ pub const FACES: &[FaceDef] = &[
     FaceDef { face: Face::StoneThis, method: "GET", path: "/api/v1/stone/this", summary: "Me, spelled explicitly (same SelfView)." },
     FaceDef { face: Face::StoneRef, method: "GET", path: "/api/v1/stone/{ref}", summary: "A stone by name or id: mine answered here; others answer 404 with a Location to their home stone (the garden's only true redirect)." },
     FaceDef { face: Face::StonePosture, method: "GET", path: "/api/v1/stone/posture", summary: "Local data (L22): this moss's live counters - ingest, dispatch, topology, offerings." },
+    FaceDef { face: Face::PlanInstall, method: "POST", path: "/api/v1/provenance/{stem}/plan", summary: "The dry twin of plant (ADR-0015): locate the manifest, compile the placement decisions against this stone, answer can/cannot and why - NOTHING is placed." },
     FaceDef { face: Face::GardenStones, method: "GET", path: "/api/v1/garden/stones", summary: "Garden data (L22): the room as this moss sees it - self spliced among the peers, every row a canonical frame." },
     FaceDef { face: Face::Catalog, method: "GET", path: "/api/v1/catalog", summary: "The catalog this stone can place from (derived)." },
     FaceDef { face: Face::StorageList, method: "GET", path: "/api/v1/storage", summary: "This stone's banks, plus the removable volumes ready for adoption." },

@@ -51,6 +51,15 @@ pub struct AppState {
     pub shutdown: tokio_util::sync::CancellationToken,
 }
 
+impl AppState {
+    /// The Moss root's provenance mouth (ADR-0015): plan and install
+    /// offerings by name — `state.provenance().plan_install("ollama")`
+    /// answers can/cannot and why, touching nothing.
+    pub fn provenance(&self) -> crate::garden::provenance::Provenance<'_> {
+        crate::garden::provenance::Provenance::new(&self.garden)
+    }
+}
+
 use crate::room::dispatch::Dispatcher;
 use crate::room::ingress::IngestCounters;
 
@@ -68,6 +77,7 @@ fn method_router(face: Face) -> axum::routing::MethodRouter<Arc<AppState>> {
             Face::StoneRef => get(stone_ref),
             Face::StonePosture => get(posture),
             Face::GardenStones => get(garden_stones),
+            Face::PlanInstall => post(plan_install),
             Face::Catalog => get(catalog),
             Face::StorageList => get(storage_list),
             Face::StorageAdopt => post(storage_adopt),
@@ -1272,13 +1282,35 @@ async fn plant_offering(
     Path(name): Path<String>,
     Json(req): Json<PlantRequest>,
 ) -> ApiResult {
-    let offering = state
-        .garden
-        .offer(&name, req.image, req.ports, Some(req.category), req.runtime.as_deref(), &req.inputs)
+    // Install runs as a JOB (ADR-0015): plan, place, start — steps and
+    // progress ride the pulse; the job id rides the answer.
+    let (offering, job_id) = state
+        .provenance()
+        .install(
+            &name,
+            req.image,
+            req.ports.into_iter().collect(),
+            Some(req.category),
+            req.runtime.as_deref(),
+            &req.inputs,
+            &state.jobs,
+        )
         .await?;
-    Ok(Json(
-        serde_json::json!({ "data": { "offering": record_view(&offering) } }),
-    ))
+    Ok(Json(serde_json::json!({
+        "data": { "offering": record_view(&offering) },
+        "job_id": job_id,
+    })))
+}
+
+/// The dry twin of plant (ADR-0015): same decision path, nothing
+/// placed. The answer says can/cannot and WHY — the decision trail.
+async fn plan_install(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(req): Json<PlantRequest>,
+) -> ApiResult {
+    let plan = state.provenance().plan_install(&name, req.image, &req.inputs)?;
+    Ok(Json(serde_json::json!({ "data": { "plan": plan } })))
 }
 
 /// Offerings render the sectioned record — disk and HTTP speak one shape

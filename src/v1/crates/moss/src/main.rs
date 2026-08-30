@@ -372,6 +372,10 @@ async fn main() {
         pool,
         Some(Arc::clone(&hook_runner)),
     ));
+    // Runs converge at boot (ADR-0015 law 3): the last run of every
+    // offering rebuilds from its own audit chain; runs left in flight by
+    // a restart are marked interrupted, never forgotten.
+    capture_runner.replay_runs(&OfferingsRoot::new(garden.dirs_root.base.clone()));
 
     // The Converger: reality chases the stored plans until cancelled.
     tokio::spawn(garden::converge::run(Arc::clone(&garden), token.clone()));

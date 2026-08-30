@@ -141,6 +141,9 @@ pub async fn send_discovery_request(
     Ok(())
 }
 
+/// Full-voice re-assertion period, in heartbeats (ADR-0015 law 6).
+pub const SONG_EVERY_HEARTBEATS: u64 = 10;
+
 /// Drive the announcer until cancelled: heartbeat on the clock, chirp on
 /// change (debounced to the heartbeat floor so a flap can't flood).
 pub async fn run(
@@ -165,6 +168,7 @@ pub async fn run(
     speak_full(&socket, group, port, source.as_ref(), seq).await;
     // Consume interval's immediate first tick so boot isn't a double-speak.
     heartbeat.tick().await;
+    let mut beat: u64 = 0;
     // Then ask who else is here — the room answers in one round-trip.
     if let Err(e) = send_discovery_request(&socket, group, port, &requester).await {
         tracing::warn!(error = %e, "boot discovery request failed");
@@ -184,11 +188,17 @@ pub async fn run(
                 speak_full(&socket, group, port, source.as_ref(), seq).await;
             }
             _ = heartbeat.tick() => {
-                // The heartbeat stays LEAN (ADR-0004 §1: presence must not
-                // amortize inventory).
+                beat += 1;
                 seq += 1;
-                let body = source.body();
-                if let Err(e) = send_chirp(&socket, group, port, body, seq).await {
+                // Every SONG_EVERY_HEARTBEATS beats the stone sings full
+                // voice: gossip must re-assert, because the room converges
+                // from loss (ADR-0015 law 6) — a stone whose boot-time
+                // answers were lost is re-taught without waiting for a
+                // change. The rest stay LEAN (ADR-0004 §1: presence must
+                // not amortize inventory).
+                if beat % SONG_EVERY_HEARTBEATS == 0 {
+                    speak_full(&socket, group, port, source.as_ref(), seq).await;
+                } else if let Err(e) = send_chirp(&socket, group, port, source.body(), seq).await {
                     tracing::warn!(error = %e, "heartbeat chirp failed");
                 }
             }

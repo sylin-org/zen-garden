@@ -49,6 +49,12 @@ impl EventLog {
         }
     }
 
+    /// The chain inside an offering directory ROOT (the saga knows the
+    /// root; the namespace law already applied).
+    pub fn for_root(root: &Path) -> Self {
+        Self { file: root.join("events.jsonl") }
+    }
+
     /// Append an event, chaining onto whatever exists.
     pub fn append(&self, kind: &str, details: serde_json::Value) -> Result<AuditEvent, String> {
         let (prev_hash, seq) = self.tail().unwrap_or((String::new(), 0));

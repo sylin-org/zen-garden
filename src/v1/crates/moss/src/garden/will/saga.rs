@@ -267,6 +267,82 @@ impl Runner {
         (runs.len(), failed)
     }
 
+    /// Boot convergence for runs (ADR-0015 law 3): rebuild the last run
+    /// of every offering from its own audit chain. A run left in flight
+    /// by a restart is honestly dead — marked failed, never silently
+    /// forgotten.
+    pub fn replay_runs(&self, dirs_root: &crate::garden::directory::OfferingsRoot) {
+        let Ok(stones_dirs) = std::fs::read_dir(&dirs_root.base) else {
+            return;
+        };
+        for stem in stones_dirs.flatten() {
+            let Some(stem_name) = stem.file_name().into_string().ok() else { continue };
+            let Ok(instances) = std::fs::read_dir(stem.path()) else { continue };
+            for instance in instances.flatten() {
+                let Some(instance_name) = instance.file_name().into_string().ok() else { continue };
+                let fqn = format!("{stem_name}::{instance_name}");
+                let chain = instance.path().join("events.jsonl");
+                if !chain.is_file() {
+                    continue;
+                }
+                let Ok(log) = super::super::events::EventLog::for_root(&instance.path())
+                    .validate()
+                else {
+                    eprintln!("replay: chain INVALID at {}", chain.display());
+                    continue;
+                };
+                let _ = log;
+                let Ok(content) = std::fs::read_to_string(&chain) else { continue };
+                let mut last: Option<Run> = None;
+                for line in content.lines() {
+                    let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+                    let kind = ev["kind"].as_str().unwrap_or_default().to_string();
+                    let details = ev["details"].clone();
+                    let Some(run_id) = details["run"].as_str().map(str::to_string) else { continue };
+                    let started = ev["at"].as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|t| t.with_timezone(&chrono::Utc));
+                    let mut fresh = |phase: &str| {
+                        Run::from_snapshot(RunInfo {
+                            fqn: fqn.clone(),
+                            run_id: run_id.clone(),
+                            started_at: started.unwrap_or_else(chrono::Utc::now),
+                            phase: phase.into(),
+                            error: None,
+                            checkpoint: None,
+                            ferried_to: None,
+                        })
+                    };
+                    match kind.as_str() {
+                        "RunStarted" => last = Some(fresh("imprint")),
+                        "CheckpointCommitted" => {
+                            if let Some(r) = last.as_mut() {
+                                r.advance(super::run::Phase::Done);
+                                r.info_mut().checkpoint = details["checkpoint"].as_str().map(str::to_string);
+                                r.delivered_to(
+                                    details["ferried"].as_array().map(|a| {
+                                        a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect()
+                                    }).unwrap_or_default(),
+                                );
+                            }
+                        }
+                        "RunFailed" => {
+                            if let Some(r) = last.as_mut() {
+                                r.fail(details["error"].as_str().unwrap_or("failed"));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(mut r) = last {
+                    if r.in_flight() {
+                        // The process died mid-run: honest, not forgotten.
+                        r.fail("interrupted by restart");
+                    }
+                    self.record(r);
+                }
+            }
+        }
+    }
+
     /// Publish the caller-visible "accepted" record before the task
     /// starts (a Run::begin snapshot — imprint is the first phase).
     pub fn announce(&self, info: RunInfo) {
@@ -284,6 +360,13 @@ impl Runner {
     ) -> Result<PathBuf, String> {
         let mut run = Run::begin(fqn, run_id);
         self.record(Run::from_snapshot(run.snapshot()));
+        // The offering's own chain carries the run's fate — it rides the
+        // checkpoint and replays at boot (a run is never amnesia).
+        let audit = super::super::events::EventLog::for_root(&workload.dir);
+        let _ = audit.append(
+            "RunStarted",
+            serde_json::json!({ "run": run_id, "mode": policy.mode.as_str() }),
+        );
         let workspace = self
             .workspace_root
             .join(crate::garden::directory::slug(fqn))
@@ -292,8 +375,24 @@ impl Runner {
             .execute_inner(fqn, policy, workload, &workspace, run_id, &mut run)
             .await;
         match &result {
-            Ok(checkpoint) => run.finish(checkpoint),
-            Err(e) => run.fail(e),
+            Ok(checkpoint) => {
+                run.finish(checkpoint);
+                let _ = audit.append(
+                    "CheckpointCommitted",
+                    serde_json::json!({
+                        "run": run_id,
+                        "checkpoint": checkpoint.display().to_string(),
+                        "ferried": run.info().ferried_to.clone().unwrap_or_default(),
+                    }),
+                );
+            }
+            Err(e) => {
+                run.fail(e);
+                let _ = audit.append(
+                    "RunFailed",
+                    serde_json::json!({ "run": run_id, "error": e.clone() }),
+                );
+            }
         }
         // Reclaim the workspace either way (§2 Phase B's last step; a
         // failed run must not leak disk). The emptied offering directory
@@ -752,6 +851,10 @@ pub async fn run_scheduler(
 ) {
     let mut ticker = tokio::time::interval(cadence);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // A boot is not a calendar: consume interval's immediate first tick
+    // so the will first runs one full cadence after boot, not at boot
+    // (W15: three boot-time captures witnessed).
+    ticker.tick().await;
     loop {
         tokio::select! {
             _ = token.cancelled() => return,
@@ -1189,6 +1292,49 @@ capture:
             .join("db__default")
             .join(checkpoint.file_name().unwrap());
         assert!(ferried.join("manifest.json").is_file(), "the sink holds the will");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Runs converge at boot from the offering's own audit chain: the
+    /// committed run returns with its checkpoint and sinks; a run left
+    /// in flight by a restart is marked interrupted, never forgotten.
+    #[test]
+    fn replay_runs_rebuilds_the_last_run_from_the_chain() {
+        use crate::garden::directory::{DirectoryStore, OfferingsRoot};
+        use crate::garden::events::EventLog;
+
+        let tmp = std::env::temp_dir().join(format!("zg-replay-{}", uuid::Uuid::now_v7()));
+        let base = tmp.join("offerings");
+        std::fs::create_dir_all(base.join("ntfy/default")).unwrap();
+
+        // The chain, as the saga would have written it.
+        let log = EventLog::for_dir(&base, "ntfy::default");
+        log.append("RunStarted", serde_json::json!({ "run": "r-early", "mode": "lock-and-copy" })).unwrap();
+        log.append("RunFailed", serde_json::json!({ "run": "r-early", "error": "imprint refused" })).unwrap();
+        log.append("RunStarted", serde_json::json!({ "run": "r-last", "mode": "lock-and-copy" })).unwrap();
+        log.append(
+            "CheckpointCommitted",
+            serde_json::json!({ "run": "r-last", "checkpoint": "/cp/r-last", "ferried": ["seed-vault::default"] }),
+        )
+        .unwrap();
+
+        let runner = Runner::new(
+            Arc::new(Storage::new()),
+            Arc::new(NullHooks),
+        );
+        runner.replay_runs(&OfferingsRoot::new(base.clone()));
+
+        let last = runner.last_run("ntfy::default").expect("the last run came home");
+        assert_eq!(last.run_id, "r-last");
+        assert_eq!(last.phase, "done");
+        assert_eq!(last.checkpoint.as_deref(), Some("/cp/r-last"));
+        assert_eq!(last.ferried_to.as_deref(), Some(&["seed-vault::default".to_string()][..]));
+
+        // The interrupted run is honestly dead, not forgotten.
+        let mut interrupted = Run::begin("ntfy::default", "r-early");
+        interrupted.fail("imprint refused");
+        assert!(!interrupted.in_flight());
+
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

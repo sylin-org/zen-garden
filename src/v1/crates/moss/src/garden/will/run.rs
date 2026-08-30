@@ -157,6 +157,12 @@ impl Run {
     pub fn info(&self) -> &RunInfo {
         &self.info
     }
+
+    /// Mutate the projection — replay paths only; live runs use the
+    /// transition methods.
+    pub fn info_mut(&mut self) -> &mut RunInfo {
+        &mut self.info
+    }
 }
 
 #[cfg(test)]

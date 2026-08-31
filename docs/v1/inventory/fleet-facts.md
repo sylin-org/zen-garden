@@ -36,7 +36,18 @@ bubble the installer must pop for the user.
 | User | `test` (uid 1000, wheel) |
 | SSH host key | ed25519 `SHA256:hYaztj0GANITCjatrQStLI4LO906z5IFKoLM7DTf1KQ` |
 
+**In the garden since 2026-08-31 (W18):** `stone-crimson-estuary`
+(id 01a055a6-159b…), installed via the npm tarball (`npm i -g
+zen-garden-0.1.0.tgz && zen install`); moss at `~/.zen-garden/bin`,
+journal flowing. Node is mise-managed (`mise reshim` after global
+installs!). Installed by `zen`, controlled by `zen up|down|status`.
+
 **Quirks found (fresh-install reality):**
+0. **Omarchy ships ufw ACTIVE** — the room is deaf/blind until
+   `sudo ufw allow 7284:7299/udp && sudo ufw allow 7285/tcp`
+   (`zen doctor` detects + says this). Probe firewall state with
+   `systemctl is-active ufw` — `ufw status` needs root and dies
+   quietly for non-root.
 1. **Fresh Arch ships no sshd running** — `pacman -Sy openssh &&
    systemctl enable --now sshd` is a console step before any remote
    work. (Installer lesson: the install script must detect/offer SSH
@@ -52,6 +63,10 @@ bubble the installer must pop for the user.
    is-active alone as the daemon probe.
 
 ### stone-tranquil-pass (.195) — the settled stone
+
+NOTE (W18): a PoC-era `/usr/local/bin/garden-moss` SERVICE still runs
+here beside the v1 moss (PID-class ~2475, systemd). Harmless so far
+(both hear UDP 7284); retire deliberately, not by accident.
 
 | Fact | Value |
 |---|---|

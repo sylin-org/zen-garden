@@ -755,3 +755,40 @@ both binaries hash-fresh.
 **State left behind**: none. **Debts carried**: none new. The
 realignment is not just architecture — it runs the garden's whole
 story, start to finish, on the shape the laws demanded.
+
+## W18 — npm delivery + the third stone (2026-08-31, test-02)
+
+ADR-0016's first acceptance: the garden installs by package manager,
+and a brand-new machine joins the room as a full citizen.
+
+- **The delivery is real**: `dist/npm` — a zero-dependency Node shim
+  (`zen`) over the self-contained Rust binaries, per-platform dirs,
+  `npm pack` tarball. On test-02 (Arch/Omarchy, node 26): `npm i -g
+  zen-garden-0.1.0.tgz` → `zen doctor` (docker ok, group ok, port
+  free — "the garden can grow here") → `zen install` → moss deployed,
+  started, verified singing. No archaeology, no deploy ritual.
+- **The poetic mint asked the room**: the new stone named itself
+  `stone-crimson-estuary` (id 01a055a6-159b…), collision-checked
+  against the live room — the delight, witnessed.
+- **The three-stone garden**: tranquil-pass, crimson-estuary, and the
+  .82 bystander all visible from every v1 stone; entry-glass joins by
+  discovery. The two-stone ceiling of W15–W17 is broken.
+- **Findings (each became a fix or a KB entry)**:
+  1. Omarchy ships **ufw ACTIVE** — the room was deaf/blind until
+     `ufw allow 7284:7299/udp + 7285/tcp`. The doctor now detects
+     active ufw via `systemctl is-active` (root-free; `ufw status`
+     needs root and lies by exception) and prints the exact fix.
+  2. **Journal dir**: a fresh install has no `~/.zen-garden/journal/`
+     and the moss warned instead of creating it — `Journal::open` now
+     self-heals the directory; `zen install` pre-creates the tree.
+  3. **A race taught patience**: observing "the room can't hear the
+     new stone" at 02:33 was wrong — the ufw fix landed 02:31, the
+     first through-chirp arrived 02:34:03; tcpdump on .195 (installed
+     en route — the first "silent wire" capture was a missing binary)
+     proved the wire healthy and the room re-converged on its own.
+  4. Leftover from the old world: .195 still runs a PoC-era
+     `/usr/local/bin/garden-moss` service beside the v1 moss —
+     documented in fleet-facts, not killed unilaterally.
+**State left**: test-02 runs the garden via zen (moss at
+~/.zen-garden/bin, journal flowing); .195 as found; tarball 0.1.0 in
+dist/npm.

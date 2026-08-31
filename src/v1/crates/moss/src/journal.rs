@@ -93,8 +93,13 @@ pub struct Journal {
 
 impl Journal {
     /// Open (or create) the stream and re-seq from what survives.
-    /// Boot convergence is replay, not amnesia.
+    /// Boot convergence is replay, not amnesia. The directory is made
+    /// too — a fresh install (zen install) may not have pre-created it
+    /// (W18's find on test-02: journal could not open, facts lost).
     pub fn open(path: PathBuf) -> std::io::Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let seq = Self::replay_seq(&path)?;
         let file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
         let (tx, _) = broadcast::channel(1024);

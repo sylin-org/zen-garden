@@ -36,9 +36,13 @@ npx zen-garden observe …       → passthrough to rake
 
 ```
 dist/npm/
-  package.json          bin: { zen: bin/zen.js }   (node >= 18)
+  package.json          bin: { zen, zen-moss, zen-rake }  (node >= 18)
   bin/zen.js            ~200 lines of plain Node: platform shim,
                         verbs, exec passthrough — no deps, no build
+  bin/zen-{moss,rake}.js  thin aliases: the raw binaries, globally
+                        reachable under the zen- prefix (a bare `rake`
+                        bin would shadow Ruby's rake; a bare `moss`
+                        risks the same)
   binaries/
     linux-x64/{moss,rake}
     win32-x64/{moss.exe,rake.exe}
